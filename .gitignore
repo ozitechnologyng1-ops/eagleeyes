@@ -10,3 +10,5 @@ documentation.md
 csvs/
 .temp/
 .csv
+
+supabase/.temp/
