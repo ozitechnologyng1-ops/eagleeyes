@@ -43,7 +43,7 @@ export default function Layout() {
           <div className="w-8 h-8 bg-[#d4af37] rounded-full flex items-center justify-center font-bold text-[#004d25]">EE</div>
           <span className="font-bold text-lg tracking-tight">EagleEye 2027</span>
         </div>
-        <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-1">
+        <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-1 cursor-pointer">
           {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
         </button>
       </div>
@@ -78,7 +78,7 @@ export default function Layout() {
                   setIsMobileMenuOpen(false);
                 }}
                 className={cn(
-                  "w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-left",
+                  "w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-left cursor-pointer",
                   isActive 
                     ? "bg-[#d4af37] text-[#004d25] font-semibold shadow-md" 
                     : "text-green-100 hover:bg-[#006331] hover:text-white"
@@ -99,7 +99,7 @@ export default function Layout() {
               setIsMobileMenuOpen(false);
             }}
             className={cn(
-              "w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
+              "w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors cursor-pointer",
               location.pathname === '/profile'
                 ? "bg-[#d4af37] text-[#004d25] font-semibold shadow-md" 
                 : "text-green-100 hover:bg-[#006331] hover:text-white"
@@ -110,7 +110,7 @@ export default function Layout() {
           </button>
           <button 
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-green-100 hover:bg-red-600 hover:text-white transition-colors"
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-green-100 hover:bg-red-600 hover:text-white transition-colors cursor-pointer"
           >
             <LogOut size={20} />
             <span>Sign Out</span>

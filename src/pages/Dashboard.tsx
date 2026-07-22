@@ -6,9 +6,36 @@ import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import ResultFilters from '../components/ResultFilters';
 
+import { supabase } from '../lib/supabase';
+
 export default function Dashboard() {
-  const { user, stats, agents, locations, getDescendantLocations, voters, totalVotersCount, electionResults } = useApp();
+  const { user, stats, agents, locations, getDescendantLocations, voters, totalVotersCount, electionResults, voterPuFilter, setVoterPuFilter } = useApp();
   const [activeTab, setActiveTab] = useState<'canvassing' | 'elections'>('canvassing');
+  const [wardAgents, setWardAgents] = useState<any[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState<string>('');
+
+  React.useEffect(() => {
+    if (user?.role === 'ward_admin' && user?.wardId) {
+      supabase
+        .from('agents')
+        .select('id, name, phone, polling_units_id')
+        .eq('wards_id', user.wardId)
+        .eq('role', 'pu_agent')
+        .then(({ data }) => {
+          const list = data || [];
+          setWardAgents(list);
+          if (list.length > 0) {
+            if (!voterPuFilter) {
+              setVoterPuFilter(list[0].polling_units_id);
+              setSelectedAgent(list[0].id);
+            } else {
+              const matching = list.find(a => a.polling_units_id === voterPuFilter);
+              if (matching) setSelectedAgent(matching.id);
+            }
+          }
+        });
+    }
+  }, [user, voterPuFilter, setVoterPuFilter]);
 
   if (!user) return null;
 
@@ -23,6 +50,33 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <DashboardHeader user={user} locations={locations} />
+      
+      {user.role === 'ward_admin' && wardAgents.length > 0 && (
+        <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <h2 className="text-sm font-semibold text-[#004d25] uppercase tracking-wider">Agent Monitoring</h2>
+            <p className="text-xs text-gray-400">Select a polling unit agent in your ward to monitor their canvassing progress</p>
+          </div>
+          <select 
+            value={selectedAgent} 
+            onChange={(e) => {
+              const val = e.target.value;
+              setSelectedAgent(val);
+              const agent = wardAgents.find(a => a.id === val);
+              if (agent) {
+                setVoterPuFilter(agent.polling_units_id);
+              }
+            }} 
+            className="w-full sm:w-72 border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-[#004d25] font-medium text-gray-700 bg-white"
+          >
+            {wardAgents.map(a => (
+              <option key={a.id} value={a.id}>
+                {a.name} ({a.phone})
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       
       {(user.role === 'pu_agent' || user.role === 'ward_admin') && (
         <AgentQuickActions user={user} locations={locations} />
@@ -173,32 +227,14 @@ function CanvassingDashboard({ stats, agents, locations, user, voters, totalVote
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Individuals" value={totalVotersCount > 0 ? totalVotersCount.toLocaleString() : '0'} icon={Users} colorClass="bg-blue-50 text-blue-600" />
-        <StatCard title="Individual Canvassed" value={canvassing.canvassed.toLocaleString()} subtitle={`${Math.round((canvassing.canvassed / canvassing.target) * 100)}% of target`} icon={Target} colorClass="bg-green-50 text-green-600" />
-        <StatCard 
-          title="Active Agents" 
-          value={stats.agents.active} 
-          subtitle={
-            Object.entries(stats.agents.byRole)
-              .filter(([_, count]) => (count as number) > 0)
-              .map(([role, count]) => {
-                const label = role === 'pu_agent' ? 'PU' : 
-                             role === 'ward_admin' ? 'Ward' : 
-                             role === 'lga_admin' ? 'LGA' : 
-                             role === 'state_admin' ? 'State' : 'National';
-                return `${label}: ${count as number}`;
-              }).join(', ') || 'No agents registered'
-          }
-          icon={Activity} 
-          colorClass="bg-purple-50 text-purple-600" 
-        />
-        <StatCard title="Locations Covered" value={locations.length} icon={MapPin} colorClass="bg-orange-50 text-orange-600" />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <StatCard title="Voters" value={totalVotersCount > 0 ? totalVotersCount.toLocaleString() : '0'} icon={Users} colorClass="bg-blue-50 text-blue-600" />
+        <StatCard title="Voters Canvassed" value={canvassing.canvassed.toLocaleString()} subtitle={`${Math.round((canvassing.canvassed / (canvassing.target || 1)) * 100)}% of target`} icon={Target} colorClass="bg-green-50 text-green-600" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h3 className="text-lg font-semibold mb-4">Individual Stances</h3>
+          <h3 className="text-lg font-semibold mb-4">Voter Stances</h3>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useApp, Agent, Location, Role } from '../context/AppContext';
-import { X, Upload } from 'lucide-react';
+import { X, Upload, Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface AgentModalProps {
@@ -16,6 +16,7 @@ interface AgentModalProps {
 export default function AgentModal({ isOpen, onClose, onSave, initialData, fixedLocation, locations, userRole }: AgentModalProps) {
   const { user } = useApp();
   const [tab, setTab] = useState<'personal' | 'jurisdiction'>('personal');
+  const [isSaving, setIsSaving] = useState(false);
   const [form, setForm] = useState<Partial<Agent>>({
     firstName: '',
     lastName: '',
@@ -66,25 +67,21 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Determine role if location is selected and role isn't explicitly set
-    let finalRole = form.role;
-    if (form.locationId && !initialData?.id) {
-      if (form.locationId.startsWith('nat')) finalRole = 'national_admin';
-      else if (form.locationId.startsWith('state_')) finalRole = 'state_admin';
-      else if (form.locationId.startsWith('lga_')) finalRole = 'lga_admin';
-      else if (form.locationId.startsWith('ward_')) finalRole = 'ward_admin';
-      else finalRole = 'pu_agent';
+    setIsSaving(true);
+    try {
+      const finalRole = (form.role || userRole) as Role;
+      await onSave({
+        ...form,
+        name: `${form.firstName} ${form.lastName}`.trim(),
+        role: finalRole,
+        status: initialData?.status || 'active'
+      });
+    } finally {
+      setIsSaving(false);
     }
-
-    onSave({
-      ...form,
-      name: `${form.firstName} ${form.lastName}`.trim(),
-      role: finalRole,
-      status: initialData?.status || 'active'
-    });
   };
 
   return (
@@ -179,9 +176,17 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
                 user={user}
               />
               <div className="pt-4 flex gap-3">
-                <button type="button" onClick={() => setTab('personal')} className="px-4 py-2 border rounded-lg hover:bg-gray-50">Back</button>
-                <button type="submit" className="flex-1 px-4 py-2 bg-[#004d25] text-white rounded-lg hover:bg-[#006331]">
-                  {initialData?.id ? 'Save Changes' : 'Register Agent'}
+                <button type="button" onClick={() => setTab('personal')} className="px-4 py-2 border rounded-lg hover:bg-gray-50 cursor-pointer">Back</button>
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="flex-1 px-4 py-2 bg-[#004d25] text-white rounded-lg hover:bg-[#006331] disabled:opacity-70 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2 transition-colors"
+                >
+                  {isSaving ? (
+                    <><Loader2 size={16} className="animate-spin" /> {initialData?.id ? 'Saving...' : 'Registering...'}</>
+                  ) : (
+                    initialData?.id ? 'Save Changes' : 'Register Agent'
+                  )}
                 </button>
               </div>
             </div>
@@ -226,23 +231,21 @@ function JurisdictionSelector({ locations, selectedLocationId, onChange, fixedLo
       if (selectedLocationId.startsWith('state_')) st = selectedLocationId.replace('state_', '');
       else if (selectedLocationId.startsWith('lga_')) {
         lg = selectedLocationId.replace('lga_', '');
-        const { data } = await supabase.from('local_governments').select('state_id').eq('id', lg).single();
+        const isLagosLGA = user?.stateId === 24 || (parseInt(lg) <= 20);
+        const table = isLagosLGA ? 'local_governments_lagos' : 'local_governments';
+        const { data } = await supabase.from(table).select('state_id').eq('id', lg).single();
         if (data) st = data.state_id?.toString() || '';
       }
       else if (selectedLocationId.startsWith('ward_')) {
         wd = selectedLocationId.replace('ward_', '');
-        const { data: wData } = await supabase.from('wards').select('localgovernment_id').eq('id', wd).single();
-        if (wData?.localgovernment_id) {
-          lg = wData.localgovernment_id.toString();
-          const { data: lData } = await supabase.from('local_governments').select('state_id').eq('id', lg).single();
-          if (lData) st = lData.state_id?.toString() || '';
-        }
-      }
-      else if (selectedLocationId.startsWith('pu_')) {
-        pu = selectedLocationId.replace('pu_', '');
-        const { data: pData } = await supabase.from('polling_units').select('ward_id').eq('id', pu).single();
-        if (pData?.ward_id) {
-          wd = pData.ward_id.toString();
+        const isLagosWard = user?.stateId === 24 || (parseInt(wd) < 1000);
+        if (isLagosWard) {
+          const { data: wData } = await supabase.from('wards_lagos').select('localgovernment_lagos_id').eq('id', wd).single();
+          if (wData?.localgovernment_lagos_id) {
+            lg = wData.localgovernment_lagos_id.toString();
+            st = '24';
+          }
+        } else {
           const { data: wData } = await supabase.from('wards').select('localgovernment_id').eq('id', wd).single();
           if (wData?.localgovernment_id) {
             lg = wData.localgovernment_id.toString();
@@ -251,13 +254,45 @@ function JurisdictionSelector({ locations, selectedLocationId, onChange, fixedLo
           }
         }
       }
+      else if (selectedLocationId.startsWith('pu_')) {
+        pu = selectedLocationId.replace('pu_', '');
+        const { data: lagosPu } = await supabase.from('polling_units_lagos').select('id, ward_id, localgovernment_id').eq('id', pu).single();
+        if (lagosPu) {
+          pu = lagosPu.id.toString();
+          wd = lagosPu.ward_id.toString();
+          lg = lagosPu.localgovernment_id.toString();
+          st = '24';
+        } else {
+          const { data: pData } = await supabase.from('polling_units').select('ward_id').eq('id', pu).single();
+          if (pData?.ward_id) {
+            wd = pData.ward_id.toString();
+            const { data: wData } = await supabase.from('wards').select('localgovernment_id').eq('id', wd).single();
+            if (wData?.localgovernment_id) {
+              lg = wData.localgovernment_id.toString();
+              const { data: lData } = await supabase.from('local_governments').select('state_id').eq('id', lg).single();
+              if (lData) st = lData.state_id?.toString() || '';
+            }
+          }
+        }
+      }
       
       setSelectedState(st);
-      if (st) supabase.from('local_governments').select('id,name').eq('state_id', st).order('name').then(res => setLgas(res.data || []));
+      const isLagos = st === '24' || user?.stateId === 24;
+      if (st) {
+        const table = isLagos ? 'local_governments_lagos' : 'local_governments';
+        supabase.from(table).select('id,name').eq('state_id', st).order('name').then(res => setLgas(res.data || []));
+      }
       setSelectedLga(lg);
-      if (lg) supabase.from('wards').select('id,name').eq('localgovernment_id', lg).order('name').then(res => setWards(res.data || []));
+      if (lg) {
+        const table = isLagos ? 'wards_lagos' : 'wards';
+        const filterCol = isLagos ? 'localgovernment_lagos_id' : 'localgovernment_id';
+        supabase.from(table).select('id,name').eq(filterCol, lg).order('name').then(res => setWards(res.data || []));
+      }
       setSelectedWard(wd);
-      if (wd) supabase.from('polling_units').select('id,name').eq('ward_id', wd).order('name').then(res => setPus(res.data || []));
+      if (wd) {
+        const table = isLagos ? 'polling_units_lagos' : 'polling_units';
+        supabase.from(table).select('id,name').eq('ward_id', wd).order('name').then(res => setPus(res.data || []));
+      }
       setSelectedPu(pu);
 
       // CRITICAL: Sync the resolved hierarchy back to the parent form
@@ -271,6 +306,8 @@ function JurisdictionSelector({ locations, selectedLocationId, onChange, fixedLo
 
     resolvePath();
   }, [selectedLocationId, fixedLocation]);
+
+  const isLagos = selectedState === '24' || user?.stateId === 24;
 
   const handleStateChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
@@ -288,7 +325,8 @@ function JurisdictionSelector({ locations, selectedLocationId, onChange, fixedLo
     
     if (val) {
       setLoading(true);
-      const { data } = await supabase.from('local_governments').select('id,name').eq('state_id', val).order('name');
+      const table = val === '24' ? 'local_governments_lagos' : 'local_governments';
+      const { data } = await supabase.from(table).select('id,name').eq('state_id', val).order('name');
       setLgas(data || []);
       setLoading(false);
     }
@@ -309,7 +347,9 @@ function JurisdictionSelector({ locations, selectedLocationId, onChange, fixedLo
     
     if (val) {
       setLoading(true);
-      const { data } = await supabase.from('wards').select('id,name').eq('localgovernment_id', val).order('name');
+      const table = isLagos ? 'wards_lagos' : 'wards';
+      const filterCol = isLagos ? 'localgovernment_lagos_id' : 'localgovernment_id';
+      const { data } = await supabase.from(table).select('id,name').eq(filterCol, val).order('name');
       setWards(data || []);
       setLoading(false);
     }
@@ -329,7 +369,8 @@ function JurisdictionSelector({ locations, selectedLocationId, onChange, fixedLo
     
     if (val) {
       setLoading(true);
-      const { data } = await supabase.from('polling_units').select('id,name').eq('ward_id', val).order('name');
+      const table = isLagos ? 'polling_units_lagos' : 'polling_units';
+      const { data } = await supabase.from(table).select('id,name').eq('ward_id', val).order('name');
       setPus(data || []);
       setLoading(false);
     }

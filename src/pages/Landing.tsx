@@ -89,10 +89,10 @@ export default function Landing() {
       </main>
       
       <footer className="relative z-10 border-t border-gray-200 bg-white py-8 text-center text-gray-500 text-sm font-medium ">
-        <p className="mb-4">&copy; {new Date().getFullYear()} Election Management System. All rights reserved.</p>
+        {/* <p className="mb-4">&copy; {new Date().getFullYear()} Election Management System. All rights reserved.</p> */}
 
 
-    <div className="absolute -bottom-7 p-4 mb-4 sm:-bottom-12 left-0 right-0 w-full flex flex-col items-center sm:items-end pointer-events-none">
+    <div className="absolute -bottom-7 p-4 mt-14 mb-2 sm:-bottom-12 left-0 right-0 w-full flex flex-col items-center  pointer-events-none">
   
   {/* Side-by-side flex block with precise margin-offsets to account for larger images */}
   <div className="flex flex-row items-center justify-center gap-0 px-1 -mb-10 sm:-mb-8 md:-mb-6 z-20">
@@ -106,7 +106,7 @@ export default function Landing() {
     <img
       src={Rvtech}
       alt="RVTech"
-      className="-ml-6 h-32 sm:h-36 md:h-40 object-contain filter brightness-[.15] sepia-[0.3] saturate-[3.5] hue-rotate-[25deg] contrast-[.1] drop-shadow-[0_0_8px_rgba(212,175,55,0.35)]"
+      className="-ml-6 h-36 sm:h-36 md:h-40 object-contain filter brightness-[.15] sepia-[0.3] saturate-[3.5] hue-rotate-[25deg] contrast-[.1] drop-shadow-[0_0_8px_rgba(212,175,55,0.35)]"
     />
   </div>
 

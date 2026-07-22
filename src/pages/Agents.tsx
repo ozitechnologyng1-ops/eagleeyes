@@ -4,6 +4,7 @@ import { Users, Plus, Search, ShieldAlert, CheckCircle, XCircle, Loader2 } from 
 import { cn } from '../lib/utils';
 import AgentModal from '../components/AgentModal';
 import { supabase } from '../lib/supabase';
+import toast from 'react-hot-toast';
 
 const JurisdictionCell = ({ id, locations }: { id: string, locations: Location[] }) => {
   const existing = locations.find(l => l.id === id);
@@ -160,14 +161,21 @@ export default function Agents() {
 
   const creatableRoles = getCreatableRoles();
 
-  const handleSaveAgent = (agentData: Partial<Agent>) => {
-    if (editAgent) {
-      updateAgent(editAgent.id, agentData);
-    } else {
-      addAgent(agentData as Omit<Agent, 'id'>).then(() => fetchLocalAgents());
+  const handleSaveAgent = async (agentData: Partial<Agent>) => {
+    try {
+      if (editAgent) {
+        await updateAgent(editAgent.id, agentData);
+        toast.success('Agent updated successfully');
+      } else {
+        await addAgent(agentData as Omit<Agent, 'id'>);
+        toast.success('Agent registered successfully');
+      }
+      setShowAddModal(false);
+      setEditAgent(null);
+      fetchLocalAgents();
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to save agent');
     }
-    setShowAddModal(false);
-    setEditAgent(null);
   };
 
   return (

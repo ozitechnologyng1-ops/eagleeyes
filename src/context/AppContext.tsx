@@ -37,6 +37,7 @@ export interface User {
   lgaId?: number | null;
   wardId?: number | null;
   puId?: number | null;
+  lagosPollingUnitId?: number | null;
   picture?: string;
   bankName?: string;
   accountName?: string;
@@ -60,6 +61,7 @@ export interface Agent {
   lgaId?: number | null;
   wardId?: number | null;
   puId?: number | null;
+  lagosPollingUnitId?: number | null;
 }
 
 export interface CoverageStat {
@@ -88,10 +90,17 @@ export interface Voter {
   puId?: string;
   phone?: string;
   dob?: string;
+  image?: string;
   status: 'ADC Supporter' | 'Undecided' | 'Opposition' | 'Unreachable';
   locationId: string; // PU id
   stateId?: number | null;
   notes?: VoterNote[];
+  contact_logs?: {
+    type: 'whatsapp' | 'sms' | 'call';
+    agentId: string;
+    agentName: string;
+    timestamp: string;
+  }[];
 }
 
 interface AppState {
@@ -132,11 +141,13 @@ interface AppState {
   login: (phone: string, password: string) => Promise<void>;
   logout: () => void;
   updateVoterStatus: (id: string, status: Voter['status']) => void;
+  updateVoterDetails: (id: string, updates: Partial<Voter>) => Promise<void>;
+  logVoterContact: (id: string, type: 'whatsapp' | 'sms' | 'call') => Promise<void>;
   addVoterNote: (id: string, text: string) => Promise<void>;
   submitResult: (puId: string, electionId: string, data: any, imageFile: File | null) => Promise<void>;
   addAgent: (agent: Omit<Agent, 'id'>) => Promise<void>;
-  updateAgent: (id: string, updates: Partial<Agent>) => void;
-  updateAgentStatus: (id: string, status: Agent['status']) => void;
+  updateAgent: (id: string, updates: Partial<Agent>) => Promise<void>;
+  updateAgentStatus: (id: string, status: Agent['status']) => Promise<void>;
   addLocation: (location: Omit<Location, 'id'>) => void;
   updateLocation: (id: string, updates: Partial<Location>) => void;
   getDescendantLocations: (locationId: string) => Location[];
@@ -144,6 +155,8 @@ interface AppState {
   votersPage: number;
   isLoadingVoters: boolean;
   fetchVotersPage: (page: number) => Promise<void>;
+  voterPuFilter: number | null;
+  setVoterPuFilter: (puId: number | null) => void;
 }
 
 const AppContext = createContext<AppState | undefined>(undefined);
@@ -165,6 +178,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [totalVotersCount, setTotalVotersCount] = useState<number>(0);
   const [votersPage, setVotersPage] = useState<number>(1);
   const [isLoadingVoters, setIsLoadingVoters] = useState<boolean>(false);
+  const [voterPuFilter, setVoterPuFilter] = useState<number | null>(null);
   const [locations, setLocations] = useState<Location[]>([
     { id: 'nat1', type: 'national', name: 'Nigeria', parentId: null }
   ]);
@@ -413,6 +427,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [user]);
 
+  // Syncing with user headers is now fully handled in the custom fetch client configuration in supabase.ts
+
   useEffect(() => {
     refreshElectionStats();
     refreshAgentStats();
@@ -445,11 +461,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const end = start + pageSize - 1;
 
       let votersQuery = supabase.from('voters').select('*', { count: 'exact' });
-      if (user?.stateId) {
+
+      if (user?.role === 'pu_agent' && user?.lagosPollingUnitId) {
+        votersQuery = votersQuery.eq('pollingunit_lagos_id', user.lagosPollingUnitId);
+      } else if (user?.role === 'ward_admin' && voterPuFilter) {
+        // Ward admin viewing a specific agent's PU
+        votersQuery = votersQuery.eq('pollingunit_lagos_id', voterPuFilter);
+      } else if (user?.role === 'lga_admin' && user?.lgaId) {
+        votersQuery = votersQuery.eq('localgovernment_lagos_id', user.lgaId);
+      } else if (user?.stateId) {
         votersQuery = votersQuery.eq('state_id', user.stateId);
       }
       
-      const { data: votersData } = await votersQuery.range(start, end);
+      const { data: votersData, error: votersError } = await votersQuery.range(start, end);
+      if (votersError) {
+        console.error('Voters query error:', votersError.message, votersError.details, votersError.hint);
+      }
       
       if (votersData && votersData.length > 0) {
         setVoters(votersData.map((v: any) => ({
@@ -459,10 +486,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
            puId: v.puid || '',
            phone: v.phone_number,
            dob: v.dob,
+           image: v.image || '',
            status: (v.status || 'Undecided') as Voter['status'],
            locationId: `pu_${v.pollingunit_lagos_id}` || 'nat1',
            stateId: v.state_id,
            notes: v.notes || [],
+           contact_logs: v.contact_logs || [],
         })));
       } else {
         setVoters([]);
@@ -472,7 +501,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoadingVoters(false);
     }
-  }, [user?.stateId]);
+  }, [user?.stateId, user?.role, user?.lagosPollingUnitId, user?.lgaId, voterPuFilter]);
 
   useEffect(() => {
     const fetchSupabaseData = async () => {
@@ -510,7 +539,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
         await fetchVotersPage(1);
 
         // ── Exact voter count via Postgres RPC ──────────────────────────
-        const rpcParams = user?.stateId ? { p_state_id: user.stateId } : {};
+        // Build scoped RPC params based on role hierarchy
+        const rpcParams: Record<string, any> = {};
+        if (user?.role === 'pu_agent' && user?.lagosPollingUnitId) {
+          rpcParams.p_polling_unit_lagos_id = user.lagosPollingUnitId;
+        } else if (user?.role === 'ward_admin' && voterPuFilter) {
+          rpcParams.p_polling_unit_lagos_id = voterPuFilter;
+        } else if (user?.role === 'lga_admin' && user?.lgaId) {
+          rpcParams.p_lga_id = user.lgaId;
+        } else if (user?.stateId) {
+          rpcParams.p_state_id = user.stateId;
+        }
+
         const { data: countData, error: countErr } = await supabase.rpc('get_voters_count', rpcParams);
         let currentTarget = 0;
         if (!countErr && countData !== null) {
@@ -526,12 +566,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
             { name: 'Opposition', count: 0 },
             { name: 'Unreachable', count: 0 }
           ];
-          let canvassed = 0;
           stanceData.forEach((row: any) => {
             const index = stances.findIndex(s => s.name === row.status);
             if (index !== -1) stances[index].count = Number(row.count);
-            if (row.status !== 'Undecided') canvassed += Number(row.count);
           });
+          
+          const { data: canvassedCountData } = await supabase.rpc('get_canvassed_voters_count', rpcParams);
+          const canvassed = canvassedCountData !== null ? Number(canvassedCountData) : 0;
           
           setStats(prev => ({
             ...prev,
@@ -547,7 +588,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     };
     fetchSupabaseData();
-  }, [user?.id, user?.stateId]);
+  }, [user?.id, user?.stateId, user?.lagosPollingUnitId, voterPuFilter]);
 
   const toggleMockMode = () => setIsMockMode(!isMockMode);
   const endAllMockElections = () => setIsMockMode(false);
@@ -573,13 +614,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     //   throw new Error('Password must be at least 8 characters with uppercase, lowercase, and a number.');
     // }
 
-    const { data: agentData, error } = await supabase
-      .from('agents')
-      .select('*')
-      .eq('phone', phone)
-      .single();
+    // Temporarily set phone header in sessionStorage for initial query to pass RLS policy before login is finalized
+    sessionStorage.setItem('temp_login_phone', phone);
+
+    let agentData: any = null;
+    let error: any = null;
+    try {
+      const res = await supabase
+        .from('agents')
+        .select('*')
+        .eq('phone', phone)
+        .single();
+      agentData = res.data;
+      error = res.error;
+    } finally {
+      sessionStorage.removeItem('temp_login_phone');
+    }
 
     if (error || !agentData) {
+      console.error("Login database error details:", error);
       throw new Error('Agent not found. Check your phone number.');
     }
 
@@ -606,20 +659,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Build locationId from the most specific jurisdiction available
     let locationId = 'nat1';
     let locationName = 'Nigeria';
+    const isLagos = agentData.state_id === 24;
     
     if (agentData.polling_units_id) {
       locationId = `pu_${agentData.polling_units_id}`;
-      const { data } = await supabase.from('polling_units').select('name').eq('id', agentData.polling_units_id).single();
+      const table = isLagos ? 'polling_units_lagos' : 'polling_units';
+      const { data } = await supabase.from(table).select('name').eq('id', agentData.polling_units_id).single();
       if (data) locationName = data.name;
     }
     else if (agentData.wards_id) {
       locationId = `ward_${agentData.wards_id}`;
-      const { data } = await supabase.from('wards').select('name').eq('id', agentData.wards_id).single();
+      const table = isLagos ? 'wards_lagos' : 'wards';
+      const { data } = await supabase.from(table).select('name').eq('id', agentData.wards_id).single();
       if (data) locationName = data.name;
     }
     else if (agentData.local_governments_id) {
       locationId = `lga_${agentData.local_governments_id}`;
-      const { data } = await supabase.from('local_governments').select('name').eq('id', agentData.local_governments_id).single();
+      const table = isLagos ? 'local_governments_lagos' : 'local_governments';
+      const { data } = await supabase.from(table).select('name').eq('id', agentData.local_governments_id).single();
       if (data) locationName = data.name;
     }
     else if (agentData.state_id) {
@@ -645,6 +702,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       lgaId: agentData.local_governments_id ?? null,
       wardId: agentData.wards_id ?? null,
       puId: agentData.polling_units_id ?? null,
+      lagosPollingUnitId: agentData.pollingunit_lagos_id ?? null,
       picture: agentData.profile_picture_url || undefined,
       bankName: agentData.bank_name || undefined,
       accountName: agentData.account_name || undefined,
@@ -683,12 +741,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const buildScopedRpcParams = (): Record<string, any> => {
+    if (user?.role === 'pu_agent' && user?.lagosPollingUnitId) {
+      return { p_polling_unit_lagos_id: user.lagosPollingUnitId };
+    } else if (user?.role === 'ward_admin' && voterPuFilter) {
+      return { p_polling_unit_lagos_id: voterPuFilter };
+    } else if (user?.role === 'lga_admin' && user?.lgaId) {
+      return { p_lga_id: user.lgaId };
+    } else if (user?.stateId) {
+      return { p_state_id: user.stateId };
+    }
+    return {};
+  };
+
   const updateVoterStatus = async (id: string, status: Voter['status']) => {
     setVoters(prev => prev.map(v => String(v.id) === String(id) ? { ...v, status } : v));
     
     try {
       await supabase.from('voters').update({ status }).eq('id', id);
-      const rpcParams = user?.stateId ? { p_state_id: user.stateId } : {};
+      const rpcParams = buildScopedRpcParams();
       const { data: stanceData } = await supabase.rpc('get_voter_status_counts', rpcParams);
       if (stanceData) {
         const stances = [
@@ -715,6 +786,128 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     } catch (err) {
       console.error('Failed to update voter status', err);
+    }
+  };
+
+  const updateVoterDetails = async (id: string, updates: Partial<Voter>) => {
+    setVoters(prev => prev.map(v => String(v.id) === String(id) ? { ...v, ...updates } : v));
+
+    try {
+      const payload: any = {};
+      if (updates.name !== undefined) {
+        const parts = updates.name.trim().split(/\s+/);
+        payload.first_name = parts[0] || '';
+        payload.last_name = parts.slice(1).join(' ') || '';
+      }
+      if (updates.phone !== undefined) {
+        payload.phone_number = updates.phone;
+      }
+      if (updates.dob !== undefined) {
+        payload.dob = updates.dob;
+      }
+      if (updates.puId !== undefined) {
+        payload.puid = updates.puId;
+      }
+      if (updates.status !== undefined) {
+        payload.status = updates.status;
+      }
+      if (updates.notes !== undefined) {
+        payload.notes = updates.notes;
+      }
+
+      if (Object.keys(payload).length > 0) {
+        const { error } = await supabase.from('voters').update(payload).eq('id', parseInt(id, 10));
+        if (error) throw error;
+        
+        // If status changed, refresh the stats
+        if (updates.status !== undefined) {
+          const rpcParams = buildScopedRpcParams();
+          const { data: stanceData } = await supabase.rpc('get_voter_status_counts', rpcParams);
+          if (stanceData) {
+            const stances = [
+              { name: 'ADC Supporter', count: 0 },
+              { name: 'Undecided', count: 0 },
+              { name: 'Opposition', count: 0 },
+              { name: 'Unreachable', count: 0 }
+            ];
+            stanceData.forEach((row: any) => {
+              const index = stances.findIndex(s => s.name === row.status);
+              if (index !== -1) stances[index].count = Number(row.count);
+            });
+            
+            const { data: canvassedCountData } = await supabase.rpc('get_canvassed_voters_count', rpcParams);
+            const canvassed = canvassedCountData !== null ? Number(canvassedCountData) : 0;
+            
+            setStats(prev => ({
+              ...prev,
+              canvassing: {
+                ...prev.canvassing,
+                canvassed,
+                stances
+              }
+            }));
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to update voter details', err);
+      // Revert local state to keep sync
+      await fetchVotersPage(votersPage);
+      throw err;
+    }
+  };
+
+  const logVoterContact = async (id: string, type: 'whatsapp' | 'sms' | 'call') => {
+    if (!user) return;
+    const newLog = {
+      type,
+      agentId: user.id,
+      agentName: user.name,
+      timestamp: new Date().toISOString()
+    };
+
+    setVoters(prev => prev.map(v => {
+      if (String(v.id) === String(id)) {
+        const logs = v.contact_logs || [];
+        return {
+          ...v,
+          contact_logs: [...logs, newLog]
+        };
+      }
+      return v;
+    }));
+
+    try {
+      const { data: voterData } = await supabase
+        .from('voters')
+        .select('contact_logs')
+        .eq('id', parseInt(id, 10))
+        .single();
+        
+      const currentLogs = voterData?.contact_logs || [];
+      const updatedLogs = [...currentLogs, newLog];
+
+      const { error } = await supabase
+        .from('voters')
+        .update({ contact_logs: updatedLogs })
+        .eq('id', parseInt(id, 10));
+
+      if (error) throw error;
+
+      // Refresh stats
+      const rpcParams = buildScopedRpcParams();
+      const { data: canvassedCountData } = await supabase.rpc('get_canvassed_voters_count', rpcParams);
+      const canvassed = canvassedCountData !== null ? Number(canvassedCountData) : 0;
+
+      setStats(prev => ({
+        ...prev,
+        canvassing: {
+          ...prev.canvassing,
+          canvassed
+        }
+      }));
+    } catch (err) {
+      console.error('Failed to log voter contact:', err);
     }
   };
 
@@ -859,11 +1052,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const addAgent = async (agent: Omit<Agent, 'id'>) => {
     const locId = agent.locationId || '';
     
-    // Use IDs from agent object (modal state) or parse from locId
-    let stateId = agent.stateId || (locId.startsWith('state_') ? parseInt(locId.replace('state_', '')) : null);
-    let lgaId = agent.lgaId || (locId.startsWith('lga_') ? parseInt(locId.replace('lga_', '')) : null);
-    let wardId = agent.wardId || (locId.startsWith('ward_') ? parseInt(locId.replace('ward_', '')) : null);
-    let puId = agent.puId || (locId.startsWith('pu_') ? parseInt(locId.replace('pu_', '')) : null);
+    // Use IDs from agent object (modal state) or parse from locId, forcing integer type conversion
+    let stateId = agent.stateId ? parseInt(String(agent.stateId), 10) : (locId.startsWith('state_') ? parseInt(locId.replace('state_', ''), 10) : null);
+    let lgaId = agent.lgaId ? parseInt(String(agent.lgaId), 10) : (locId.startsWith('lga_') ? parseInt(locId.replace('lga_', ''), 10) : null);
+    let wardId = agent.wardId ? parseInt(String(agent.wardId), 10) : (locId.startsWith('ward_') ? parseInt(locId.replace('ward_', ''), 10) : null);
+    let puId = agent.puId ? parseInt(String(agent.puId), 10) : (locId.startsWith('pu_') ? parseInt(locId.replace('pu_', ''), 10) : null);
 
     // Resolve parents from locations context if still missing
     const resolveParents = (targetId: string) => {
@@ -903,6 +1096,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
       polling_units_id: puId,
     };
 
+    // Auto-resolve pollingunit_lagos_id for pu_agents by matching puId text
+    let lagosPollingUnitId: number | null = null;
+    if (puId) {
+      if (stateId === 24) {
+        lagosPollingUnitId = puId;
+      } else {
+        try {
+          const { data: puData } = await supabase
+            .from('polling_units')
+            .select('"puId"')
+            .eq('id', puId)
+            .single();
+          if (puData?.puId) {
+            const { data: lagosData } = await supabase
+              .from('polling_units_lagos')
+              .select('id')
+              .eq('puId', puData.puId)
+              .single();
+            if (lagosData?.id) lagosPollingUnitId = lagosData.id;
+          }
+        } catch (_) {}
+      }
+      if (lagosPollingUnitId) dbRecord.pollingunit_lagos_id = lagosPollingUnitId;
+    }
+
     try {
       const { data, error } = await supabase.from('agents').insert([dbRecord]).select().single();
       if (error) throw error;
@@ -919,6 +1137,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         lgaId,
         wardId,
         puId,
+        lagosPollingUnitId,
       }]);
     } catch (err: any) {
       console.error('Failed to add agent:', err);
@@ -926,12 +1145,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const updateAgent = (id: string, updates: Partial<Agent>) => {
+  const updateAgent = async (id: string, updates: Partial<Agent>) => {
     setAgents(prev => prev.map(a => a.id === id ? { ...a, ...updates } : a));
+    try {
+      const payload: any = {};
+      if (updates.name !== undefined) payload.name = updates.name;
+      if (updates.firstName !== undefined) payload.first_name = updates.firstName;
+      if (updates.lastName !== undefined) payload.last_name = updates.lastName;
+      if (updates.phone !== undefined) payload.phone = updates.phone;
+      if (updates.role !== undefined) payload.role = updates.role;
+      if (updates.status !== undefined) {
+        payload.status = updates.status.charAt(0).toUpperCase() + updates.status.slice(1);
+      }
+      if (updates.picture !== undefined) payload.profile_picture_url = updates.picture;
+      if (updates.bankName !== undefined) payload.bank_name = updates.bankName;
+      if (updates.accountName !== undefined) payload.account_name = updates.accountName;
+      if (updates.accountNumber !== undefined) payload.account_number = updates.accountNumber;
+
+      if (Object.keys(payload).length > 0) {
+        const { error } = await supabase.from('agents').update(payload).eq('id', id);
+        if (error) throw error;
+      }
+    } catch (err) {
+      console.error('Failed to update agent in db', err);
+      throw err;
+    }
   };
 
-  const updateAgentStatus = (id: string, status: Agent['status']) => {
+  const updateAgentStatus = async (id: string, status: Agent['status']) => {
     setAgents(prev => prev.map(a => a.id === id ? { ...a, status } : a));
+    try {
+      const dbStatus = status.charAt(0).toUpperCase() + status.slice(1);
+      const { error } = await supabase.from('agents').update({ status: dbStatus }).eq('id', id);
+      if (error) throw error;
+    } catch (err) {
+      console.error('Failed to update agent status in db', err);
+      throw err;
+    }
   };
 
   const addLocation = (location: Omit<Location, 'id'>) => {
@@ -963,7 +1213,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider value={{ 
       user, locations, agents, voters, stats, isMockMode, activeElectionGroup, totalVotersCount, electionResults,
       votersPage, isLoadingVoters, fetchVotersPage,
-      login, logout, updateUser, updateVoterStatus, addVoterNote, submitResult, toggleMockMode, endAllMockElections, setActiveElectionGroup,
+      login, logout, updateUser, updateVoterStatus, updateVoterDetails, logVoterContact, addVoterNote, submitResult, toggleMockMode, endAllMockElections, setActiveElectionGroup,
       addAgent, updateAgent, updateAgentStatus, addLocation, updateLocation, getDescendantLocations, analyzeResultImage
     }}>
       {children}

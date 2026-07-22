@@ -46,11 +46,12 @@ interface NodeProps {
   onAddAgent: (loc: Location) => void;
   onEditAgent: (agent: Agent) => void;
   depth?: number;
+  isLagos?: boolean;
 }
 
 const TreeNode: React.FC<NodeProps> = ({
   location, userRole, userStateId, userLgaId, userWardId,
-  onAddAgent, onEditAgent, depth = 0
+  onAddAgent, onEditAgent, depth = 0, isLagos: isLagosProp
 }) => {
   const [open, setOpen] = useState(false);
   const [children, setChildren] = useState<Location[]>([]);
@@ -60,7 +61,17 @@ const TreeNode: React.FC<NodeProps> = ({
   const [agentsLoaded, setAgentsLoaded] = useState(false);
   const [coverage, setCoverage] = useState<{ covered: number; total: number } | null>(null);
 
-  const cfg = childConfig[location.type as LocationType];
+  const isLagosNode = isLagosProp || location.id === 'state_24';
+
+  // Pick Lagos-specific or national child config
+  const lagosChildConfig: typeof childConfig = {
+    state: { table: 'local_governments_lagos', filterCol: 'state_id',                idPrefix: 'lga',  childType: 'lga'  },
+    lga:   { table: 'wards_lagos',             filterCol: 'localgovernment_lagos_id', idPrefix: 'ward', childType: 'ward' },
+    ward:  { table: 'polling_units_lagos',     filterCol: 'ward_id',                  idPrefix: 'pu',   childType: 'pu'   },
+  };
+  const cfg = isLagosNode
+    ? lagosChildConfig[location.type as LocationType]
+    : childConfig[location.type as LocationType];
   const canExpand = !!cfg;
 
   const loadChildren = useCallback(async () => {
@@ -252,6 +263,7 @@ const TreeNode: React.FC<NodeProps> = ({
               onAddAgent={onAddAgent}
               onEditAgent={onEditAgent}
               depth={depth + 1}
+              isLagos={isLagosNode}
             />
           ))}
         </div>
@@ -347,7 +359,7 @@ export default function Jurisdictions() {
       setAddAgentLoc(null);
       setEditAgent(null);
     } catch (err: any) {
-      toast.error(err?.message?.includes('duplicate') ? 'Phone number already exists' : 'Failed to save agent');
+      toast.error(err?.message || 'Failed to save agent');
     }
   };
 

@@ -7,4 +7,36 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const customFetch = (input: RequestInfo | URL, init?: RequestInit) => {
+  const headers = new Headers(init?.headers);
+
+  // 1. Retrieve the active logged-in agent session
+  const savedUser = localStorage.getItem('eagleeye_user');
+  if (savedUser) {
+    try {
+      const parsed = JSON.parse(savedUser);
+      if (parsed?.id) {
+        headers.set('x-agent-id', parsed.id);
+      }
+      if (parsed?.phone) {
+        headers.set('x-agent-phone', parsed.phone);
+      }
+    } catch (e) {
+      console.error('Failed to parse saved user for custom RLS headers:', e);
+    }
+  }
+
+  // 2. Check for temporary login phone number (for authenticating/looking up the agent)
+  const tempPhone = sessionStorage.getItem('temp_login_phone');
+  if (tempPhone) {
+    headers.set('x-agent-phone', tempPhone);
+  }
+
+  return fetch(input, { ...init, headers });
+};
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  global: {
+    fetch: customFetch
+  }
+});
