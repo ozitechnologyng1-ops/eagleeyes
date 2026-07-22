@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { supabase } from '../lib/supabase';
-import { Wallet, Landmark, CreditCard, CheckCircle, Clock, ChevronRight, Loader2, AlertCircle, Building2, Send, Filter, Settings, X } from 'lucide-react';
+import { Wallet, Landmark, CreditCard, CheckCircle, Clock, ChevronRight, Loader2, AlertCircle, Building2, Send, Filter, Settings, X, FileText, Upload } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '../lib/utils';
+import FileUpload, { UploadedFile } from '../components/FileUpload';
 
 export default function Payment() {
   const { user, updateUser, stats } = useApp();
@@ -20,6 +21,13 @@ export default function Payment() {
   const [isAutoPaying, setIsAutoPaying] = useState(false);
   const [myWithdrawalRequested, setMyWithdrawalRequested] = useState(false);
   const [myResults, setMyResults] = useState<any[]>([]);
+
+  // Supporting file uploads state
+  const [myDocuments, setMyDocuments] = useState<UploadedFile[]>([]);
+  const [adminBatchDocs, setAdminBatchDocs] = useState<UploadedFile[]>([]);
+  const [selectedAgentForUpload, setSelectedAgentForUpload] = useState<any | null>(null);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadedModalDocs, setUploadedModalDocs] = useState<UploadedFile[]>([]);
   
   const [showAllocationModal, setShowAllocationModal] = useState(false);
   const [allocations, setAllocations] = useState({ lga: 50000, ward: 20000, pu: 10000 });
@@ -270,35 +278,53 @@ export default function Payment() {
           <h1 className="text-3xl font-bold tracking-tight text-gray-900">Payments & Remuneration</h1>
           <p className="text-gray-500 mt-1">Manage disbursements, track eligibility, and request withdrawals.</p>
         </div>
-        {isStateAdmin && (
-          <div className="flex flex-col sm:flex-row items-end sm:items-center gap-3">
-            {allocatedAmount > 0 && (
-              <div className="flex gap-3 mr-2 animate-in fade-in zoom-in-95 duration-300">
-                <div className="bg-white px-4 py-2 rounded-xl shadow-sm border border-gray-100 text-right">
-                  <p className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">Allocated</p>
-                  <p className="text-sm font-bold text-gray-800">₦{allocatedAmount.toLocaleString('en-NG')}</p>
-                </div>
-                <div className="bg-white px-4 py-2 rounded-xl shadow-sm border border-green-100 text-right">
-                  <p className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">Remaining</p>
-                  <p className="text-sm font-bold text-[#004d25]">₦{(treasuryBalance - allocatedAmount).toLocaleString('en-NG')}</p>
-                </div>
-              </div>
+        
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Top-Right Upload Button - Always visible regardless of banking setup */}
+          <button
+            type="button"
+            onClick={() => setShowUploadModal(true)}
+            className="bg-[#004d25] hover:bg-[#003d1e] text-white px-4 py-2.5 rounded-xl shadow-md flex items-center gap-2 text-sm font-bold transition-all cursor-pointer border border-green-800"
+          >
+            <Upload size={18} className="text-[#d4af37]" />
+            <span>Upload Documents</span>
+            {uploadedModalDocs.length > 0 && (
+              <span className="bg-[#d4af37] text-[#004d25] text-xs px-2 py-0.5 rounded-full font-extrabold ml-1">
+                {uploadedModalDocs.length}
+              </span>
             )}
-            <div 
-              onClick={() => setShowAllocationModal(true)}
-              className="bg-[#004d25] text-white px-5 py-2.5 rounded-xl shadow-md flex items-center gap-3 cursor-pointer hover:bg-[#003d1e] transition-colors group"
-            >
-              <Building2 size={20} className="text-[#d4af37]" />
-              <div>
-                <p className="text-xs text-green-200 uppercase tracking-wider font-semibold">Central Bank Treasury</p>
-                <p className="font-mono text-xl font-bold">₦{treasuryBalance.toLocaleString('en-NG', { minimumFractionDigits: 2 })}</p>
-              </div>
-              <div className="pl-3 ml-2 border-l border-green-700 text-green-400 group-hover:text-white transition-colors">
-                <Settings size={18} />
+          </button>
+
+          {isStateAdmin && (
+            <div className="flex flex-col sm:flex-row items-end sm:items-center gap-3">
+              {allocatedAmount > 0 && (
+                <div className="flex gap-3 mr-2 animate-in fade-in zoom-in-95 duration-300">
+                  <div className="bg-white px-4 py-2 rounded-xl shadow-sm border border-gray-100 text-right">
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">Allocated</p>
+                    <p className="text-sm font-bold text-gray-800">₦{allocatedAmount.toLocaleString('en-NG')}</p>
+                  </div>
+                  <div className="bg-white px-4 py-2 rounded-xl shadow-sm border border-green-100 text-right">
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">Remaining</p>
+                    <p className="text-sm font-bold text-[#004d25]">₦{(treasuryBalance - allocatedAmount).toLocaleString('en-NG')}</p>
+                  </div>
+                </div>
+              )}
+              <div 
+                onClick={() => setShowAllocationModal(true)}
+                className="bg-[#004d25] text-white px-5 py-2.5 rounded-xl shadow-md flex items-center gap-3 cursor-pointer hover:bg-[#003d1e] transition-colors group"
+              >
+                <Building2 size={20} className="text-[#d4af37]" />
+                <div>
+                  <p className="text-xs text-green-200 uppercase tracking-wider font-semibold">Central Bank Treasury</p>
+                  <p className="font-mono text-xl font-bold">₦{treasuryBalance.toLocaleString('en-NG', { minimumFractionDigits: 2 })}</p>
+                </div>
+                <div className="pl-3 ml-2 border-l border-green-700 text-green-400 group-hover:text-white transition-colors">
+                  <Settings size={18} />
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {isEditingBank ? (
@@ -439,11 +465,23 @@ export default function Payment() {
                 )}
               </div>
 
+              {/* Supporting Document Upload Feature */}
+              <div className="mb-4 pt-3 border-t border-gray-100">
+                <FileUpload
+                  label="Supporting Documents"
+                  description="Upload ID proof, payment voucher (PDF, DOCX) or bank statement (PDF, Excel)"
+                  value={myDocuments}
+                  onChange={setMyDocuments}
+                  allowedExtensions={['pdf', 'xlsx', 'xls', 'docx', 'doc', 'csv']}
+                  maxFiles={3}
+                />
+              </div>
+
               <button
                 onClick={handleRequestWithdrawal}
                 disabled={!myEligibility.eligible || myWithdrawalRequested}
                 className={cn(
-                  "w-full py-3 rounded-xl font-bold text-sm transition-all flex justify-center items-center gap-2",
+                  "w-full py-3 rounded-xl font-bold text-sm transition-all flex justify-center items-center gap-2 cursor-pointer",
                   myWithdrawalRequested 
                     ? "bg-gray-100 text-gray-400 cursor-not-allowed" 
                     : myEligibility.eligible
@@ -729,6 +767,18 @@ export default function Payment() {
                 )}
               </div>
 
+              {/* Batch Allocation File Attachment */}
+              <div className="pt-2">
+                <FileUpload
+                  label="Batch Payout Schedule & Approval Docs"
+                  description="Attach allocation sheets (.xlsx, .csv) or official authorization letters (.pdf, .docx)"
+                  value={adminBatchDocs}
+                  onChange={setAdminBatchDocs}
+                  allowedExtensions={['xlsx', 'xls', 'csv', 'pdf', 'docx', 'doc']}
+                  maxFiles={3}
+                />
+              </div>
+
               <div className="pt-4 border-t border-gray-100 mt-6">
                 <button 
                   onClick={async () => {
@@ -753,6 +803,72 @@ export default function Payment() {
                   className="w-full bg-[#004d25] text-white font-bold py-3 rounded-lg hover:bg-[#003d1e] transition-colors"
                 >
                   Save Allocations
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Popout Modal */}
+      {showUploadModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200 border border-gray-100">
+            <div className="p-5 bg-gradient-to-r from-[#004d25] to-[#00381b] text-white flex justify-between items-center relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl -mr-10 -mt-10" />
+              <h3 className="font-bold text-lg flex items-center gap-2 relative z-10">
+                <Upload size={20} className="text-[#d4af37]" />
+                Upload Payment Documents
+              </h3>
+              <button 
+                type="button"
+                onClick={() => setShowUploadModal(false)} 
+                className="text-white/70 hover:text-white transition-colors relative z-10 cursor-pointer p-1.5 rounded-lg hover:bg-white/10"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-600">
+                Upload any supporting payment verification documents, receipts, bank statements (PDF, Excel), or vouchers (DOCX).
+              </p>
+
+              <FileUpload
+                label="Payment & Supporting Documents"
+                description="Supports PDF (.pdf), Excel (.xlsx, .csv), and Word (.docx) up to 10MB"
+                value={uploadedModalDocs}
+                onChange={(newFiles) => {
+                  setUploadedModalDocs(newFiles);
+                  setMyDocuments(newFiles);
+                }}
+                allowedExtensions={['pdf', 'xlsx', 'xls', 'docx', 'doc', 'csv', 'png', 'jpg']}
+                maxFiles={10}
+              />
+
+              <div className="pt-4 border-t border-gray-100 flex justify-end items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowUploadModal(false)}
+                  className="px-5 py-2.5 rounded-xl font-bold text-sm bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors cursor-pointer border border-gray-200"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (uploadedModalDocs.length === 0) {
+                      toast.error('Please attach at least one file before uploading');
+                      return;
+                    }
+                    setShowUploadModal(false);
+                    toast.success(`Successfully uploaded ${uploadedModalDocs.length} document(s)`);
+                  }}
+                  className="px-5 py-2.5 rounded-xl font-bold text-sm bg-[#004d25] hover:bg-[#00381b] text-white shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer"
+                >
+                  <Upload size={16} className="text-[#d4af37]" />
+                  <span>Upload ({uploadedModalDocs.length})</span>
                 </button>
               </div>
             </div>
