@@ -12,3 +12,7 @@ csvs/
 .csv
 
 supabase/.temp/
+.agent/
+.agents/
+*skill.md
+*SKILL.md

@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useApp, Agent, Location, Role } from '../context/AppContext';
-import { X, Upload, Loader2, Eye, EyeOff, Lock, Unlock, Camera, Trash2, RefreshCw, Check, AlertCircle, ChevronRight, ShieldCheck } from 'lucide-react';
+import { X, Upload, Loader2, Eye, EyeOff, Lock, Unlock, Camera, Trash2, RefreshCw, Check, AlertCircle, ChevronRight, ShieldCheck, Landmark, CheckCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
+import toast from 'react-hot-toast';
+import { fetchBanks, verifyAccount, verifyNameMatch, checkAccountExistsInDb, PaystackBank } from '../lib/paystack';
 
 interface AgentModalProps {
   isOpen: boolean;
@@ -15,7 +17,7 @@ interface AgentModalProps {
 
 export default function AgentModal({ isOpen, onClose, onSave, initialData, fixedLocation, locations, userRole }: AgentModalProps) {
   const { user } = useApp();
-  const [tab, setTab] = useState<'personal' | 'jurisdiction'>('personal');
+  const [tab, setTab] = useState<'personal' | 'bank' | 'jurisdiction'>('personal');
   const [isSaving, setIsSaving] = useState(false);
   const [form, setForm] = useState<Partial<Agent>>({
     firstName: '',
@@ -28,6 +30,14 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
     locationId: '',
     role: 'pu_agent'
   });
+
+  // Paystack bank verification state
+  const [banksList, setBanksList] = useState<PaystackBank[]>([]);
+  const [selectedBankCode, setSelectedBankCode] = useState('');
+  const [isFetchingBanks, setIsFetchingBanks] = useState(false);
+  const [isVerifyingAccount, setIsVerifyingAccount] = useState(false);
+  const [bankVerificationError, setBankVerificationError] = useState('');
+  const [isAccountVerified, setIsAccountVerified] = useState(false);
 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -138,16 +148,32 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
       setShowConfirmPassword(false);
       setIsPasswordChangeEnabled(false);
       setPasswordError('');
+      const hasBank = Boolean(initialData?.bankName && initialData?.accountNumber);
+      setIsAccountVerified(hasBank);
+      setBankVerificationError('');
+      setSelectedBankCode('');
       setTab('personal');
     }
   }, [isOpen, initialData, fixedLocation, user]);
 
+  // Fetch banks from Paystack when entering bank tab
   useEffect(() => {
-    // Auto-fill account name if empty
-    if (!form.accountName && (form.firstName || form.lastName)) {
-      setForm(prev => ({ ...prev, accountName: `${prev.firstName || ''} ${prev.lastName || ''}`.trim() }));
+    if (isOpen && tab === 'bank' && banksList.length === 0) {
+      setIsFetchingBanks(true);
+      fetchBanks()
+        .then(list => {
+          setBanksList(list);
+          if (form.bankName) {
+            const match = list.find(b => b.name.toLowerCase() === form.bankName?.toLowerCase());
+            if (match) setSelectedBankCode(match.code);
+          }
+        })
+        .catch(err => {
+          console.error('Failed to load banks list:', err);
+        })
+        .finally(() => setIsFetchingBanks(false));
     }
-  }, [form.firstName, form.lastName]);
+  }, [isOpen, tab, banksList.length, form.bankName]);
 
   const commonWeakPasswords = new Set([
     '123456', '1234567', '12345678', '123456789', 'password', 'qwerty',
@@ -193,7 +219,7 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
 
   const isDev = import.meta.env.DEV;
 
-  const handleNextTab = () => {
+  const handleNextFromPersonal = () => {
     if (!form.firstName?.trim()) {
       setPasswordError("Please enter the agent's first name");
       return;
@@ -260,6 +286,81 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
     }
 
     setPasswordError('');
+    setTab('bank');
+  };
+
+  const handleVerifyBankInModal = async () => {
+    if (!selectedBankCode) {
+      setBankVerificationError('Please select a bank first.');
+      return;
+    }
+    const cleanNum = form.accountNumber?.trim() || '';
+    if (cleanNum.length !== 10 || !/^\d{10}$/.test(cleanNum)) {
+      setBankVerificationError('Account number must be exactly 10 digits.');
+      return;
+    }
+
+    setIsVerifyingAccount(true);
+    setBankVerificationError('');
+
+    try {
+      // 1. Paystack resolve
+      const result = await verifyAccount(cleanNum, selectedBankCode);
+      const resolvedName = result.account_name;
+
+      // 2. Check if already exists in DB
+      const existsResult = await checkAccountExistsInDb(cleanNum, initialData?.id);
+      if (existsResult.exists) {
+        setBankVerificationError(`Bank account already exists in the system (registered to ${existsResult.registeredTo}).`);
+        setIsAccountVerified(false);
+        return;
+      }
+
+      // 3. Check name tallying with agent firstName or lastName
+      const matchResult = verifyNameMatch(
+        resolvedName,
+        form.firstName,
+        form.lastName,
+        `${form.firstName || ''} ${form.lastName || ''}`.trim()
+      );
+      if (!matchResult.isMatch) {
+        setBankVerificationError(
+          matchResult.reason ||
+          `Bank account name ("${resolvedName}") does not match agent name. Must match first name or last name.`
+        );
+        setIsAccountVerified(false);
+        return;
+      }
+
+      const selectedBank = banksList.find(b => b.code === selectedBankCode);
+      setForm(prev => ({
+        ...prev,
+        accountName: resolvedName,
+        bankName: selectedBank?.name || prev.bankName,
+        accountNumber: cleanNum
+      }));
+      setIsAccountVerified(true);
+      setBankVerificationError('');
+      toast.success(`Account verified: ${resolvedName}`);
+    } catch (err: any) {
+      setBankVerificationError(err.message || 'Could not verify account. Please check the bank and account number.');
+      setIsAccountVerified(false);
+    } finally {
+      setIsVerifyingAccount(false);
+    }
+  };
+
+  const handleNextFromBank = () => {
+    const cleanNum = form.accountNumber?.trim() || '';
+    if (cleanNum.length > 0 && !isAccountVerified) {
+      // Discard unverified bank details so registration is not hindered
+      setForm(prev => ({ ...prev, bankName: '', accountNumber: '', accountName: '' }));
+      setSelectedBankCode('');
+      setBankVerificationError('');
+      toast('Unverified bank details discarded. You can complete them in the Payment section later.', { icon: 'ℹ️' });
+    } else {
+      setBankVerificationError('');
+    }
     setTab('jurisdiction');
   };
 
@@ -308,8 +409,21 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
     setIsSaving(true);
     try {
       const finalRole = (form.role || userRole) as Role;
+      
+      // If bank account was not verified, discard bank details so registration succeeds cleanly
+      const finalBankDetails = isAccountVerified ? {
+        bankName: form.bankName || '',
+        accountNumber: form.accountNumber || '',
+        accountName: form.accountName || ''
+      } : {
+        bankName: '',
+        accountNumber: '',
+        accountName: ''
+      };
+
       const savePayload: any = {
         ...form,
+        ...finalBankDetails,
         name: `${form.firstName} ${form.lastName}`.trim(),
         role: finalRole,
         status: initialData?.status || 'active'
@@ -320,6 +434,9 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
       }
 
       await onSave(savePayload);
+      if (!isAccountVerified) {
+        toast('Agent registered! Remember to complete bank details in the Payment tab before stipend disbursement.', { duration: 5000, icon: '💡' });
+      }
     } finally {
       setIsSaving(false);
     }
@@ -343,7 +460,7 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
           <button 
             type="button"
             onClick={() => setTab('personal')}
-            className={cn("flex-1 py-3 text-sm font-medium text-center border-b-2 transition-colors", tab === 'personal' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
+            className={cn("flex-1 py-3 text-sm font-medium text-center border-b-2 transition-colors cursor-pointer", tab === 'personal' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
           >
             Personal
           </button>
@@ -351,7 +468,22 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
             type="button"
             onClick={() => {
               if (tab === 'personal') {
-                handleNextTab();
+                handleNextFromPersonal();
+              } else {
+                setTab('bank');
+              }
+            }}
+            className={cn("flex-1 py-3 text-sm font-medium text-center border-b-2 transition-colors cursor-pointer", tab === 'bank' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
+          >
+            Bank Details
+          </button>
+          <button 
+            type="button"
+            onClick={() => {
+              if (tab === 'personal') {
+                handleNextFromPersonal();
+              } else if (tab === 'bank') {
+                handleNextFromBank();
               } else {
                 setTab('jurisdiction');
               }
@@ -709,12 +841,181 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
               <div className="pt-4 flex justify-end">
                 <button 
                   type="button" 
-                  onClick={handleNextTab} 
+                  onClick={handleNextFromPersonal} 
                   className="px-5 py-2.5 bg-[#004d25] hover:bg-[#006331] text-white text-sm font-semibold rounded-lg shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
                 >
-                  <span>Next: Jurisdiction</span>
+                  <span>Next: Bank Details</span>
                   <ChevronRight size={16} />
                 </button>
+              </div>
+            </div>
+          ) : tab === 'bank' ? (
+            <div className="space-y-4">
+              <div className="bg-blue-50/80 p-3.5 rounded-xl border border-blue-200/60 flex items-start gap-3">
+                <Landmark size={22} className="text-blue-600 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-bold text-gray-900">Bank Account Details</h4>
+                    <span className="text-[10px] bg-blue-100 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full font-semibold">Optional</span>
+                  </div>
+                  <p className="text-[11px] text-gray-600 mt-1">
+                    You can skip this step and complete it later in the <strong>Payment</strong> section. Bank details are only required for stipend disbursement.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { setBankVerificationError(''); setTab('jurisdiction'); }}
+                    className="mt-2 text-[11px] font-semibold text-blue-600 hover:text-blue-800 underline underline-offset-2 cursor-pointer"
+                  >
+                    Skip for now → Proceed to Jurisdiction
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Bank Name
+                </label>
+                <select
+                  value={selectedBankCode}
+                  onChange={e => {
+                    const code = e.target.value;
+                    setSelectedBankCode(code);
+                    const selected = banksList.find(b => b.code === code);
+                    if (selected) {
+                      setForm(prev => ({ ...prev, bankName: selected.name }));
+                    }
+                    setIsAccountVerified(false);
+                    setBankVerificationError('');
+                  }}
+                  disabled={isFetchingBanks}
+                  className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-[#004d25] text-sm bg-white cursor-pointer"
+                >
+                  <option value="">{isFetchingBanks ? 'Loading Nigerian banks...' : '-- Select Bank --'}</option>
+                  {banksList.map(b => (
+                    <option key={`${b.code}-${b.id}`} value={b.code}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Account Number
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    maxLength={10}
+                    placeholder="10 digit account number"
+                    value={form.accountNumber || ''}
+                    onChange={e => {
+                      const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                      setForm(prev => ({ ...prev, accountNumber: val }));
+                      setIsAccountVerified(false);
+                      setBankVerificationError('');
+                    }}
+                    className="flex-1 border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-[#004d25] font-mono text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleVerifyBankInModal}
+                    disabled={isVerifyingAccount || !selectedBankCode || (form.accountNumber?.length !== 10)}
+                    className="px-4 py-2 bg-[#004d25] hover:bg-[#006331] disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg shadow-sm flex items-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    {isVerifyingAccount ? (
+                      <>
+                        <Loader2 size={15} className="animate-spin" />
+                        <span>Verifying...</span>
+                      </>
+                    ) : isAccountVerified ? (
+                      <>
+                        <Check size={15} className="text-green-300" />
+                        <span>Verified</span>
+                      </>
+                    ) : (
+                      <span>Verify</span>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Verified Account Name Display */}
+              {isAccountVerified && form.accountName && (
+                <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-lg flex items-start gap-2.5 animate-in fade-in">
+                  <CheckCircle size={18} className="text-emerald-600 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[11px] uppercase tracking-wider font-semibold text-emerald-800">Verified Name</p>
+                      <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded">Name Matches</span>
+                    </div>
+                    <p className="text-sm font-bold text-emerald-950 font-mono mt-0.5">{form.accountName}</p>
+                    <p className="text-[10px] text-emerald-700 mt-0.5">Verified via Paystack & checked against database</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Verification Error Box */}
+              {bankVerificationError && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2 text-xs text-amber-900 animate-in fade-in">
+                  <div className="flex items-start gap-2 text-red-700">
+                    <AlertCircle size={16} className="text-red-500 shrink-0 mt-0.5" />
+                    <span className="font-medium leading-relaxed">{bankVerificationError}</span>
+                  </div>
+                  <div className="pt-1.5 flex items-center justify-between border-t border-amber-200/60 text-[11px]">
+                    <span className="text-gray-600">Don&apos;t have matching bank details right now?</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForm(prev => ({ ...prev, bankName: '', accountNumber: '', accountName: '' }));
+                        setSelectedBankCode('');
+                        setIsAccountVerified(false);
+                        setBankVerificationError('');
+                        setTab('jurisdiction');
+                        toast('Bank details discarded. You can complete them in the Payment tab later.', { icon: 'ℹ️' });
+                      }}
+                      className="font-bold text-[#004d25] hover:underline cursor-pointer"
+                    >
+                      Skip & Complete Later →
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-4 flex justify-between items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setTab('personal')}
+                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700 text-sm font-medium cursor-pointer"
+                >
+                  Back
+                </button>
+                <div className="flex items-center gap-3">
+                  {!isAccountVerified && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForm(prev => ({ ...prev, bankName: '', accountNumber: '', accountName: '' }));
+                        setSelectedBankCode('');
+                        setIsAccountVerified(false);
+                        setBankVerificationError('');
+                        setTab('jurisdiction');
+                        toast('Bank details skipped. You can add them in the Payment section later.', { icon: 'ℹ️' });
+                      }}
+                      className="text-xs font-semibold text-gray-500 hover:text-gray-800 underline cursor-pointer"
+                    >
+                      Skip Bank Details
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleNextFromBank}
+                    className="px-5 py-2.5 bg-[#004d25] hover:bg-[#006331] text-white text-sm font-semibold rounded-lg shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
+                  >
+                    <span>{isAccountVerified ? 'Next: Jurisdiction' : 'Continue to Jurisdiction'}</span>
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
@@ -727,7 +1028,7 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
                 user={user}
               />
               <div className="pt-4 flex gap-3">
-                <button type="button" onClick={() => setTab('personal')} className="px-4 py-2 border rounded-lg hover:bg-gray-50 cursor-pointer">Back</button>
+                <button type="button" onClick={() => setTab('bank')} className="px-4 py-2 border rounded-lg hover:bg-gray-50 cursor-pointer">Back</button>
                 <button
                   type="submit"
                   disabled={isSaving}

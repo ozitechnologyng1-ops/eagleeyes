@@ -1,18 +1,50 @@
 import React, { useState } from 'react';
-import { useApp, roleHierarchy } from '../context/AppContext';
-import { Users, Target, UploadCloud, MapPin, Activity, CheckCircle, Smartphone, Camera, FileText, PieChart as PieChartIcon, ChevronRight } from 'lucide-react';
+import { useApp, roleHierarchy, Agent, Location, Role } from '../context/AppContext';
+import { 
+  Users, Target, UploadCloud, MapPin, Activity, CheckCircle, Smartphone, Camera, 
+  FileText, PieChart as PieChartIcon, ChevronRight, UserPlus, BookOpen, AlertTriangle, 
+  CheckCircle2, XCircle, Search, ChevronDown, ChevronUp, UserCheck, UserX, Shield, 
+  Landmark, Sparkles, HelpCircle, Phone, Award, Layers, Loader2
+} from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList } from 'recharts';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import ResultFilters from '../components/ResultFilters';
+import AgentModal from '../components/AgentModal';
+import toast from 'react-hot-toast';
 
 import { supabase } from '../lib/supabase';
 
 export default function Dashboard() {
-  const { user, stats, agents, locations, getDescendantLocations, voters, totalVotersCount, electionResults, voterPuFilter, setVoterPuFilter } = useApp();
+  const { 
+    user, stats, agents, locations, getDescendantLocations, voters, totalVotersCount, 
+    electionResults, voterPuFilter, setVoterPuFilter, addAgent, updateAgent 
+  } = useApp();
   const [activeTab, setActiveTab] = useState<'canvassing' | 'elections'>('canvassing');
   const [wardAgents, setWardAgents] = useState<any[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<string>('');
+
+  // Agent Modal & quick assign state
+  const [isAgentModalOpen, setIsAgentModalOpen] = useState(false);
+  const [agentModalLocation, setAgentModalLocation] = useState<Location | null>(null);
+  const [agentModalInitialData, setAgentModalInitialData] = useState<Partial<Agent> | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  const handleSaveAgent = async (agentData: Partial<Agent>) => {
+    try {
+      if (agentModalInitialData?.id) {
+        await updateAgent(agentModalInitialData.id, agentData);
+        toast.success('Agent updated successfully');
+      } else {
+        await addAgent(agentData);
+        toast.success('Agent registered successfully');
+      }
+      setIsAgentModalOpen(false);
+      setRefreshTrigger(prev => prev + 1);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save agent');
+    }
+  };
 
   React.useEffect(() => {
     if (user?.role === 'ward_admin' && user?.wardId) {
@@ -47,10 +79,41 @@ export default function Dashboard() {
   );
 
 
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
+
   return (
     <div className="space-y-6">
-      <DashboardHeader user={user} locations={locations} />
-      
+      <DashboardHeader 
+        user={user} 
+        locations={locations} 
+        onOpenRegisterAgent={() => {
+          setAgentModalLocation(null);
+          setAgentModalInitialData(null);
+          setIsAgentModalOpen(true);
+        }}
+        onOpenGuide={() => setIsGuideOpen(true)}
+      />
+
+      {/* Field Operations Guide – floating modal */}
+      <DashboardOperatingGuide user={user} isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
+
+      {/* Jurisdiction Deployment Summary based on user level */}
+      <JurisdictionDeploymentSummary
+        user={user}
+        locations={locations}
+        onAddAgent={(loc, targetRole) => {
+          setAgentModalLocation(loc);
+          setAgentModalInitialData({ role: targetRole });
+          setIsAgentModalOpen(true);
+        }}
+        onEditAgent={(agent) => {
+          setAgentModalLocation(null);
+          setAgentModalInitialData(agent);
+          setIsAgentModalOpen(true);
+        }}
+        refreshTrigger={refreshTrigger}
+      />
+
       {user.role === 'ward_admin' && wardAgents.length > 0 && (
         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
@@ -67,7 +130,7 @@ export default function Dashboard() {
                 setVoterPuFilter(agent.polling_units_id);
               }
             }} 
-            className="w-full sm:w-72 border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-[#004d25] font-medium text-gray-700 bg-white"
+            className="w-full sm:w-72 border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-[#004d25] font-medium text-gray-700 bg-white cursor-pointer"
           >
             {wardAgents.map(a => (
               <option key={a.id} value={a.id}>
@@ -85,13 +148,13 @@ export default function Dashboard() {
       <div className="flex border-b border-gray-200">
         <button 
           onClick={() => setActiveTab('canvassing')}
-          className={cn("px-6 py-3 text-sm font-medium border-b-2 transition-colors", activeTab === 'canvassing' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
+          className={cn("px-6 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer", activeTab === 'canvassing' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
         >
           Canvassing Overview
         </button>
         <button 
           onClick={() => setActiveTab('elections')}
-          className={cn("px-6 py-3 text-sm font-medium border-b-2 transition-colors", activeTab === 'elections' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
+          className={cn("px-6 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer", activeTab === 'elections' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
         >
           Election Results
         </button>
@@ -107,27 +170,63 @@ export default function Dashboard() {
       ) : (
         <ElectionsDashboard stats={stats} voters={voters} totalVotersCount={totalVotersCount} electionResults={electionResults} user={user} locations={locations} />
       )}
+
+      {/* Register / Edit Agent Modal */}
+      <AgentModal
+        isOpen={isAgentModalOpen}
+        onClose={() => {
+          setIsAgentModalOpen(false);
+          setAgentModalLocation(null);
+          setAgentModalInitialData(null);
+        }}
+        onSave={handleSaveAgent}
+        initialData={agentModalInitialData || undefined}
+        fixedLocation={agentModalLocation || undefined}
+        locations={locations}
+        userRole={user.role}
+      />
     </div>
   );
 }
 
-function DashboardHeader({ user, locations }: any) {
+function DashboardHeader({ user, locations, onOpenRegisterAgent, onOpenGuide }: any) {
   const { isMockMode, toggleMockMode } = useApp();
   const locationName = user.locationName || locations.find((l: any) => l.id === user.locationId)?.name || 'National';
   
   return (
-    <div className="flex justify-between items-center">
+    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-5 rounded-2xl border border-gray-100 shadow-xs">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">
           {user.role === 'national_admin' ? 'National Headquarters' : `${locationName} Dashboard`}
         </h1>
-        <p className="text-gray-500">
-          {user.role === 'national_admin' ? 'Nigeria Overview' : 'Jurisdiction Overview'}
+        <p className="text-sm text-gray-500 mt-0.5">
+          {user.role === 'national_admin' ? 'Nigeria Overview' : `${user.role.replace('_', ' ').toUpperCase()} • Jurisdiction Overview`}
         </p>
+      </div>
+
+      <div className="flex items-center gap-2 shrink-0">
+        <button
+          type="button"
+          onClick={onOpenGuide}
+          className="flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-gray-50 text-[#004d25] text-sm font-semibold rounded-xl border border-[#004d25]/30 shadow-xs transition-all cursor-pointer"
+        >
+          <BookOpen size={17} />
+          <span>Operations Guide</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenRegisterAgent}
+          className="flex items-center gap-2 px-4 py-2.5 bg-[#004d25] hover:bg-[#006331] text-white text-sm font-semibold rounded-xl shadow-xs transition-all cursor-pointer"
+        >
+          <UserPlus size={17} />
+          <span>Register Agent</span>
+        </button>
       </div>
     </div>
   );
 }
+
 
 function StatCard({ title, value, icon: Icon, subtitle, colorClass }: any) {
   return (
@@ -970,7 +1069,7 @@ function AgentQuickActions({ user, locations }: any) {
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
       <button 
         onClick={() => navigate('/voters')}
-        className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4 hover:bg-green-50 transition-colors group"
+        className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4 hover:bg-green-50 transition-colors group cursor-pointer"
       >
         <div className="p-3 bg-green-100 rounded-lg text-[#004d25] group-hover:bg-[#004d25] group-hover:text-white transition-colors">
           <Users size={24} />
@@ -983,7 +1082,7 @@ function AgentQuickActions({ user, locations }: any) {
 
       <button 
         onClick={() => navigate('/capture')}
-        className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4 hover:bg-green-50 transition-colors group"
+        className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4 hover:bg-green-50 transition-colors group cursor-pointer"
       >
         <div className="p-3 bg-[#d4af37]/20 rounded-lg text-[#004d25] group-hover:bg-[#004d25] group-hover:text-white transition-colors">
           <Camera size={24} />
@@ -996,4 +1095,765 @@ function AgentQuickActions({ user, locations }: any) {
     </div>
   );
 }
+
+function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgent, refreshTrigger }: {
+  user: any;
+  locations: Location[];
+  onAddAgent: (loc: Location, targetRole: Role) => void;
+  onEditAgent: (agent: Partial<Agent>) => void;
+  refreshTrigger: number;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [subUnits, setSubUnits] = useState<{ id: string; name: string; numId: number }[]>([]);
+  const [unitAgents, setUnitAgents] = useState<any[]>([]);
+  const [activeListTab, setActiveListTab] = useState<'vacant' | 'assigned'>('vacant');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const isLagos = user?.stateId === 24;
+
+  React.useEffect(() => {
+    let isCancelled = false;
+
+    async function fetchDeployment() {
+      setLoading(true);
+      try {
+        if (user.role === 'ward_admin' && user.wardId) {
+          // Ward Admin -> Polling Units
+          const table = isLagos ? 'polling_units_lagos' : 'polling_units';
+          const [unitsRes, agentsRes] = await Promise.all([
+            supabase.from(table).select('id, name').eq('ward_id', user.wardId).order('name'),
+            supabase.from('agents').select('*').eq('wards_id', user.wardId).eq('role', 'pu_agent')
+          ]);
+
+          if (!isCancelled) {
+            const units = (unitsRes.data || []).map((u: any) => ({ id: `pu_${u.id}`, name: u.name, numId: u.id }));
+            setSubUnits(units);
+            setUnitAgents(agentsRes.data || []);
+          }
+        } else if (user.role === 'lga_admin' && user.lgaId) {
+          // LGA Admin -> Wards
+          const table = isLagos ? 'wards_lagos' : 'wards';
+          const filterCol = isLagos ? 'localgovernment_lagos_id' : 'local_government_id';
+          const [unitsRes, agentsRes] = await Promise.all([
+            supabase.from(table).select('id, name').eq(filterCol, user.lgaId).order('name'),
+            supabase.from('agents').select('*').eq('local_governments_id', user.lgaId).eq('role', 'ward_admin')
+          ]);
+
+          if (!isCancelled) {
+            const units = (unitsRes.data || []).map((u: any) => ({ id: `ward_${u.id}`, name: u.name, numId: u.id }));
+            setSubUnits(units);
+            setUnitAgents(agentsRes.data || []);
+          }
+        } else if (user.role === 'state_admin' && user.stateId) {
+          // State Admin -> LGAs
+          const table = isLagos ? 'local_governments_lagos' : 'local_governments';
+          const [unitsRes, agentsRes] = await Promise.all([
+            supabase.from(table).select('id, name').eq('state_id', user.stateId).order('name'),
+            supabase.from('agents').select('*').eq('state_id', user.stateId).eq('role', 'lga_admin')
+          ]);
+
+          if (!isCancelled) {
+            const units = (unitsRes.data || []).map((u: any) => ({ id: `lga_${u.id}`, name: u.name, numId: u.id }));
+            setSubUnits(units);
+            setUnitAgents(agentsRes.data || []);
+          }
+        } else if (user.role === 'national_admin') {
+          // National -> States
+          const [unitsRes, agentsRes] = await Promise.all([
+            supabase.from('states').select('id, name').order('name'),
+            supabase.from('agents').select('*').eq('role', 'state_admin')
+          ]);
+
+          if (!isCancelled) {
+            const units = (unitsRes.data || []).map((u: any) => ({ id: `state_${u.id}`, name: u.name, numId: u.id }));
+            setSubUnits(units);
+            setUnitAgents(agentsRes.data || []);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load deployment summary:', err);
+      } finally {
+        if (!isCancelled) setLoading(false);
+      }
+    }
+
+    fetchDeployment();
+    return () => { isCancelled = true; };
+  }, [user, isLagos, refreshTrigger]);
+
+  if (user.role === 'pu_agent') {
+    // PU Agent deployment card
+    return (
+      <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-xs">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-xl bg-emerald-50 text-[#004d25] flex items-center justify-center font-bold">
+              <MapPin size={24} />
+            </div>
+            <div>
+              <span className="text-[11px] uppercase tracking-wider font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full">
+                Your Assigned Polling Unit
+              </span>
+              <h3 className="text-lg font-bold text-gray-900 mt-1">
+                {user.locationName || 'Polling Unit'}
+              </h3>
+              <p className="text-xs text-gray-500">
+                You are registered as the primary polling unit agent for this location.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-green-100 text-green-800">
+              <CheckCircle2 size={14} className="text-green-600" />
+              Active on Duty
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Figure out child target type and role
+  const childTypeLabel = 
+    user.role === 'ward_admin' ? 'Polling Unit' :
+    user.role === 'lga_admin' ? 'Ward' :
+    user.role === 'state_admin' ? 'LGA' : 'State';
+
+  const targetChildRole: Role = 
+    user.role === 'ward_admin' ? 'pu_agent' :
+    user.role === 'lga_admin' ? 'ward_admin' :
+    user.role === 'state_admin' ? 'lga_admin' : 'state_admin';
+
+  // Match subUnits with agents
+  const assignedList: { unit: { id: string; name: string; numId: number }; agent: any }[] = [];
+  const vacantList: { id: string; name: string; numId: number }[] = [];
+
+  subUnits.forEach(unit => {
+    let matchAgent: any = null;
+    if (user.role === 'ward_admin') {
+      matchAgent = unitAgents.find(a => a.polling_units_id === unit.numId || a.pollingunit_lagos_id === unit.numId || a.jurisdiction_id === unit.id);
+    } else if (user.role === 'lga_admin') {
+      matchAgent = unitAgents.find(a => a.wards_id === unit.numId || a.jurisdiction_id === unit.id);
+    } else if (user.role === 'state_admin') {
+      matchAgent = unitAgents.find(a => a.local_governments_id === unit.numId || a.jurisdiction_id === unit.id);
+    } else {
+      matchAgent = unitAgents.find(a => a.state_id === unit.numId || a.jurisdiction_id === unit.id);
+    }
+
+    if (matchAgent) {
+      assignedList.push({ unit, agent: matchAgent });
+    } else {
+      vacantList.push(unit);
+    }
+  });
+
+  const totalCount = subUnits.length;
+  const assignedCount = assignedList.length;
+  const vacantCount = vacantList.length;
+  const coveragePercent = totalCount > 0 ? Math.round((assignedCount / totalCount) * 100) : 0;
+
+  // Filtered lists for search
+  const filteredVacant = vacantList.filter(u => u.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const filteredAssigned = assignedList.filter(item => 
+    item.unit.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    item.agent.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    item.agent.phone?.includes(searchQuery)
+  );
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-xs space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-2 border-b border-gray-100">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-green-50 text-[#004d25] flex items-center justify-center font-bold">
+            <Layers size={20} />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">
+              {childTypeLabel}s Agent Deployment Summary
+            </h2>
+            <p className="text-xs text-gray-500">
+              Coverage & agent appointment status across your {childTypeLabel.toLowerCase()}s
+            </p>
+          </div>
+        </div>
+
+        {vacantCount > 0 && (
+          <span className="text-xs font-semibold px-3 py-1 bg-amber-50 border border-amber-200 text-amber-800 rounded-full flex items-center gap-1.5 animate-pulse">
+            <AlertTriangle size={13} className="text-amber-600" />
+            {vacantCount} {childTypeLabel}{vacantCount > 1 ? 's' : ''} Need Agent Assignment
+          </span>
+        )}
+      </div>
+
+      {/* Metrics Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="bg-gray-50/80 p-4 rounded-xl border border-gray-100">
+          <span className="text-xs text-gray-500 font-medium">Total {childTypeLabel}s</span>
+          <p className="text-2xl font-bold text-gray-900 mt-1">{totalCount}</p>
+        </div>
+
+        <div className="bg-emerald-50/70 p-4 rounded-xl border border-emerald-100/80">
+          <span className="text-xs text-emerald-800 font-medium flex items-center gap-1">
+            <UserCheck size={14} className="text-emerald-600" /> Assigned
+          </span>
+          <p className="text-2xl font-bold text-emerald-900 mt-1">{assignedCount}</p>
+        </div>
+
+        <div className={cn(
+          "p-4 rounded-xl border transition-colors",
+          vacantCount > 0 ? "bg-amber-50/80 border-amber-200/70" : "bg-gray-50 border-gray-100"
+        )}>
+          <span className={cn(
+            "text-xs font-medium flex items-center gap-1",
+            vacantCount > 0 ? "text-amber-800" : "text-gray-500"
+          )}>
+            <UserX size={14} className={vacantCount > 0 ? "text-amber-600" : "text-gray-400"} /> Vacant
+          </span>
+          <p className={cn(
+            "text-2xl font-bold mt-1",
+            vacantCount > 0 ? "text-amber-900" : "text-gray-700"
+          )}>{vacantCount}</p>
+        </div>
+
+        <div className="bg-blue-50/70 p-4 rounded-xl border border-blue-100/80">
+          <span className="text-xs text-blue-800 font-medium">Deployment Rate</span>
+          <p className="text-2xl font-bold text-blue-900 mt-1">{coveragePercent}%</p>
+        </div>
+      </div>
+
+      {/* View Switcher & Search */}
+      <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 pt-2">
+        <div className="flex gap-2 p-1 bg-gray-100 rounded-xl">
+          <button
+            type="button"
+            onClick={() => setActiveListTab('vacant')}
+            className={cn(
+              "px-4 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5",
+              activeListTab === 'vacant' 
+                ? "bg-white text-amber-900 shadow-xs" 
+                : "text-gray-600 hover:text-gray-900"
+            )}
+          >
+            <AlertTriangle size={14} className={activeListTab === 'vacant' ? "text-amber-600" : "text-gray-400"} />
+            <span>Vacant {childTypeLabel}s ({vacantCount})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveListTab('assigned')}
+            className={cn(
+              "px-4 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5",
+              activeListTab === 'assigned' 
+                ? "bg-white text-[#004d25] shadow-xs" 
+                : "text-gray-600 hover:text-gray-900"
+            )}
+          >
+            <CheckCircle2 size={14} className={activeListTab === 'assigned' ? "text-[#004d25]" : "text-gray-400"} />
+            <span>Assigned Agents ({assignedCount})</span>
+          </button>
+        </div>
+
+        <div className="relative">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            placeholder={`Search ${childTypeLabel.toLowerCase()}s or agents...`}
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="w-full sm:w-64 pl-9 pr-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#004d25] outline-none"
+          />
+        </div>
+      </div>
+
+      {/* Lists */}
+      {loading ? (
+        <div className="py-12 flex justify-center items-center text-sm text-gray-400">
+          <Loader2 className="animate-spin mr-2" size={18} />
+          Loading deployment records...
+        </div>
+      ) : activeListTab === 'vacant' ? (
+        vacantList.length === 0 ? (
+          <div className="p-8 text-center bg-emerald-50/50 rounded-xl border border-emerald-100 flex flex-col items-center gap-2">
+            <CheckCircle2 size={32} className="text-emerald-600" />
+            <h4 className="font-bold text-emerald-900 text-sm">100% Coverage Reached!</h4>
+            <p className="text-xs text-emerald-700">All {childTypeLabel.toLowerCase()}s under your jurisdiction have assigned agents.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-100 border border-gray-100 rounded-xl overflow-hidden max-h-80 overflow-y-auto">
+            {filteredVacant.map(unit => (
+              <div key={unit.id} className="p-3.5 hover:bg-amber-50/30 flex items-center justify-between gap-4 transition-colors">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-xs shrink-0">
+                    <UserX size={15} />
+                  </div>
+                  <div>
+                    <h5 className="font-bold text-sm text-gray-900">{unit.name}</h5>
+                    <span className="text-[11px] text-gray-400">ID: #{unit.numId} • No agent assigned</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onAddAgent({
+                    id: unit.id,
+                    name: unit.name,
+                    type: (user.role === 'ward_admin' ? 'polling_unit' : user.role === 'lga_admin' ? 'ward' : 'lga') as any,
+                    parentId: user.locationId
+                  }, targetChildRole)}
+                  className="px-3.5 py-1.5 bg-[#004d25] hover:bg-[#006331] text-white text-xs font-bold rounded-lg transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <UserPlus size={14} />
+                  <span>Assign Agent</span>
+                </button>
+              </div>
+            ))}
+          </div>
+        )
+      ) : (
+        assignedList.length === 0 ? (
+          <div className="p-8 text-center bg-gray-50 rounded-xl border border-gray-100 text-gray-500 text-xs">
+            No assigned agents found yet. Click &quot;Register Agent&quot; above to appoint agents.
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-100 border border-gray-100 rounded-xl overflow-hidden max-h-80 overflow-y-auto">
+            {filteredAssigned.map(({ unit, agent }) => (
+              <div key={unit.id} className="p-3.5 hover:bg-gray-50/80 flex items-center justify-between gap-4 transition-colors">
+                <div className="flex items-center gap-3">
+                  {agent.profile_picture_url ? (
+                    <img src={agent.profile_picture_url} alt={agent.name} className="w-9 h-9 rounded-full object-cover border border-gray-200 shrink-0" />
+                  ) : (
+                    <div className="w-9 h-9 rounded-full bg-emerald-100 text-[#004d25] flex items-center justify-center font-bold text-xs shrink-0">
+                      {agent.name ? agent.name.charAt(0).toUpperCase() : 'A'}
+                    </div>
+                  )}
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h5 className="font-bold text-sm text-gray-900">{agent.name}</h5>
+                      <span className="text-[10px] bg-emerald-100 text-emerald-800 font-semibold px-2 py-0.2 rounded-full">
+                        {agent.role.replace('_', ' ').toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3 text-[11px] text-gray-500 mt-0.5">
+                      <span className="font-medium text-gray-700">{unit.name}</span>
+                      {agent.phone && (
+                        <span className="flex items-center gap-1 text-gray-400">
+                          <Phone size={11} /> {agent.phone}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onEditAgent({
+                    id: agent.id,
+                    name: agent.name,
+                    firstName: agent.first_name,
+                    lastName: agent.last_name,
+                    phone: agent.phone,
+                    role: agent.role,
+                    picture: agent.profile_picture_url,
+                    bankName: agent.bank_name,
+                    accountName: agent.account_name,
+                    accountNumber: agent.account_number,
+                    locationId: unit.id,
+                    status: agent.status
+                  })}
+                  className="px-3 py-1.5 border border-gray-200 hover:bg-gray-100 text-gray-700 text-xs font-semibold rounded-lg transition-colors cursor-pointer shrink-0"
+                >
+                  Edit Agent
+                </button>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+function DashboardOperatingGuide({ user, isOpen, onClose }: { user: any; isOpen: boolean; onClose: () => void }) {
+  const [activeGuideTab, setActiveGuideTab] = useState<'dashboard' | 'jurisdiction' | 'voters' | 'results' | 'incidents' | 'payments'>('dashboard');
+
+  const roleText: Record<string, string> = {
+    pu_agent: 'Arrive at your Polling Unit by 7:30 AM. Observe accreditation, count votes openly, and snap a clear photo of the signed EC8A result sheet immediately after sorting.',
+    ward_admin: 'Ensure all polling units in your ward have appointed PU agents. Use the Deployment Summary to recruit agents for vacant units before voting starts.',
+    lga_admin: 'Monitor ward coordinators across all wards in your LGA. Ensure real-time verification of uploaded polling unit results.',
+    state_admin: 'Oversee LGA administration, monitor election day turnaround, and coordinate with security & logistics teams.',
+    national_admin: 'National oversight: Monitor nationwide polling unit turnout, party vote margins, and incident alerts across all 36 states and the FCT.',
+  };
+
+  const guideSections = [
+    {
+      id: 'dashboard',
+      title: 'Dashboard',
+      icon: Layers,
+      content: (
+        <div className="space-y-4 text-sm text-gray-700">
+          <p className="text-gray-500 text-xs leading-relaxed">
+            The Dashboard is your mission control. It shows real-time data on voter contact progress, agent deployment, and election results — all in one place.
+          </p>
+
+          <div className="space-y-2">
+            <p className="font-bold text-gray-800 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-[10px] font-black shrink-0">1</span>
+              Canvassing Overview
+            </p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-gray-600 pl-2">
+              <li>Shows how many voters have been contacted in your jurisdiction.</li>
+              <li>Tracks voter stance breakdown: <strong>ADC Supporter</strong>, <strong>Opposition</strong>, and <strong>Undecided</strong>.</li>
+              <li>Progress bar shows % of target voters reached — aim for 100% before Election Day.</li>
+            </ul>
+          </div>
+
+          <div className="space-y-2">
+            <p className="font-bold text-gray-800 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-[10px] font-black shrink-0">2</span>
+              Election Results Overview
+            </p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-gray-600 pl-2">
+              <li>Live tallies of votes per party as polling units submit results.</li>
+              <li>Shows accredited voters vs total registered voters per unit/ward/LGA.</li>
+              <li>Percentage turnout is automatically calculated — watch for suspicious low-turnout areas.</li>
+            </ul>
+          </div>
+
+          <div className="space-y-2">
+            <p className="font-bold text-gray-800 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-[10px] font-black shrink-0">3</span>
+              Agent Deployment Summary
+            </p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-gray-600 pl-2">
+              <li>Shows how many polling units / wards under you have an assigned agent.</li>
+              <li>Vacant units are shown in amber — click <strong>"Assign Agent"</strong> to appoint one immediately.</li>
+              <li>Use the <strong>"Register Agent"</strong> button at the top to add a new agent to your team.</li>
+            </ul>
+          </div>
+
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
+            💡 <strong>Tip:</strong> Check this dashboard every morning on Election Day for a full picture of your ground situation.
+          </div>
+        </div>
+      )
+    },
+    {
+      id: 'jurisdiction',
+      title: 'Jurisdiction',
+      icon: MapPin,
+      content: (
+        <div className="space-y-4 text-sm text-gray-700">
+          <p className="text-gray-500 text-xs leading-relaxed">
+            The Jurisdiction page shows the full hierarchy of your electoral coverage — from State down to individual Polling Units — so you can see where agents are deployed and where gaps exist.
+          </p>
+
+          <div className="space-y-2">
+            <p className="font-bold text-gray-800">How to Navigate</p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-gray-600 pl-2">
+              <li>The tree goes: <strong>State → LGA → Ward → Polling Unit</strong>.</li>
+              <li>Click on any node (e.g., a Ward) to expand and see the polling units inside it.</li>
+              <li>Each node shows a <strong>coverage badge</strong> — green means agents are assigned, amber means some are missing, red means no agents at all.</li>
+            </ul>
+          </div>
+
+          <div className="space-y-2">
+            <p className="font-bold text-gray-800">Appointing an Agent</p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-gray-600 pl-2">
+              <li>Click the <strong>green "+"</strong> button beside any unassigned unit to open the Agent Registration form.</li>
+              <li>Fill in the agent's personal details, verify their bank account, and assign their jurisdiction.</li>
+              <li>Once saved, the node turns green and the agent can log in with their phone number and password.</li>
+            </ul>
+          </div>
+
+          <div className="space-y-2">
+            <p className="font-bold text-gray-800">Editing or Reassigning an Agent</p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-gray-600 pl-2">
+              <li>Click the agent's badge/name on a node to edit their profile, update their photo, or reset their password.</li>
+              <li>You can only manage agents who are <strong>below your role level</strong> in the hierarchy.</li>
+            </ul>
+          </div>
+
+          <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-800">
+            💡 <strong>Tip:</strong> Before Election Day, make sure every Polling Unit node in your jurisdiction shows green. No green = no agent on ground.
+          </div>
+        </div>
+      )
+    },
+    {
+      id: 'voters',
+      title: 'Voters / Canvassing',
+      icon: Users,
+      content: (
+        <div className="space-y-4 text-sm text-gray-700">
+          <p className="text-gray-500 text-xs leading-relaxed">
+            The Voters page is where field agents record every voter they make contact with. This builds the ground intelligence that the party uses to predict turnout and mobilise supporters.
+          </p>
+
+          <div className="space-y-2">
+            <p className="font-bold text-gray-800">Finding a Voter</p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-gray-600 pl-2">
+              <li>Search by <strong>full name</strong>, <strong>phone number</strong>, or <strong>Voter Identification Number (VIN)</strong>.</li>
+              <li>The system shows voters registered under your assigned Polling Unit first.</li>
+              <li>If a voter is not found, you can add them as a new contact manually.</li>
+            </ul>
+          </div>
+
+          <div className="space-y-2">
+            <p className="font-bold text-gray-800">Recording Voter Stance</p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-gray-600 pl-2">
+              <li><strong className="text-emerald-700">ADC Supporter</strong> — Voter has confirmed they will vote ADC. Prioritise ensuring they have their PVC and know their polling unit.</li>
+              <li><strong className="text-amber-700">Undecided</strong> — Voter is undecided. Schedule a follow-up conversation or refer to your ward coordinator.</li>
+              <li><strong className="text-red-700">Opposition</strong> — Voter supports another party. Still record them — useful for planning counter-mobilisation.</li>
+            </ul>
+          </div>
+
+          <div className="space-y-2">
+            <p className="font-bold text-gray-800">PVC Check</p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-gray-600 pl-2">
+              <li>Ask every voter if they have collected their Permanent Voter Card (PVC).</li>
+              <li>If not, note it and refer them to the ward coordinator for PVC collection assistance.</li>
+            </ul>
+          </div>
+
+          <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-xs text-emerald-800">
+            💡 <strong>Tip:</strong> Aim to contact every registered voter in your PU at least once before Election Day. Focus follow-ups on ADC Supporters who haven't confirmed their PVC status.
+          </div>
+        </div>
+      )
+    },
+    {
+      id: 'results',
+      title: 'Election Results',
+      icon: Camera,
+      content: (
+        <div className="space-y-4 text-sm text-gray-700">
+          <p className="text-gray-500 text-xs leading-relaxed">
+            After voting closes, PU Agents must submit the official result from their polling unit. Follow these steps carefully — accuracy is critical and legally binding.
+          </p>
+
+          <div className="space-y-3">
+            <div className="flex gap-3 items-start">
+              <span className="w-6 h-6 rounded-full bg-[#004d25] text-white flex items-center justify-center text-xs font-black shrink-0 mt-0.5">1</span>
+              <div>
+                <p className="font-bold text-gray-800 text-xs">Enter Accredited Voter Count</p>
+                <p className="text-xs text-gray-600 mt-0.5">After voting ends, INEC officials announce the number of voters accredited by the BVAS machine. Enter this exact figure — do not guess.</p>
+              </div>
+            </div>
+            <div className="flex gap-3 items-start">
+              <span className="w-6 h-6 rounded-full bg-[#004d25] text-white flex items-center justify-center text-xs font-black shrink-0 mt-0.5">2</span>
+              <div>
+                <p className="font-bold text-gray-800 text-xs">Enter Party Vote Scores</p>
+                <p className="text-xs text-gray-600 mt-0.5">Input the votes for each political party exactly as announced by the Presiding Officer and written on the Form EC8A. Double-check every figure before submitting.</p>
+              </div>
+            </div>
+            <div className="flex gap-3 items-start">
+              <span className="w-6 h-6 rounded-full bg-[#004d25] text-white flex items-center justify-center text-xs font-black shrink-0 mt-0.5">3</span>
+              <div>
+                <p className="font-bold text-gray-800 text-xs">Photograph the EC8A Form</p>
+                <p className="text-xs text-gray-600 mt-0.5">Take a clear, well-lit photo of the signed INEC Form EC8A immediately after results are announced. Ensure all signatures, stamps, and figures are fully visible. Avoid glare and blurry shots.</p>
+              </div>
+            </div>
+            <div className="flex gap-3 items-start">
+              <span className="w-6 h-6 rounded-full bg-[#004d25] text-white flex items-center justify-center text-xs font-black shrink-0 mt-0.5">4</span>
+              <div>
+                <p className="font-bold text-gray-800 text-xs">Submit for AI Validation</p>
+                <p className="text-xs text-gray-600 mt-0.5">The AI will cross-check your uploaded photo against the numbers you entered. If they match, the result is marked verified. Your Ward and LGA coordinators are notified immediately.</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-800">
+            ⚠️ <strong>Important:</strong> Never leave the polling unit before the EC8A form is signed by all agents and the INEC Presiding Officer. Request your own copy before departing.
+          </div>
+        </div>
+      )
+    },
+    {
+      id: 'incidents',
+      title: 'Incidents',
+      icon: AlertTriangle,
+      content: (
+        <div className="space-y-4 text-sm text-gray-700">
+          <p className="text-gray-500 text-xs leading-relaxed">
+            The Incidents tab is for reporting irregularities, threats, or election violations in real time. Every second counts — report immediately so the command team can respond.
+          </p>
+
+          <div className="space-y-2">
+            <p className="font-bold text-gray-800">What to Report</p>
+            <ul className="list-disc list-inside space-y-1.5 text-xs text-gray-600 pl-2">
+              <li><strong>BVAS Machine Failure</strong> — Machine not working or refusing to accredit voters.</li>
+              <li><strong>Late INEC Arrival</strong> — Election materials or officials arrive significantly past opening time.</li>
+              <li><strong>Ballot Snatching / Stuffing</strong> — Report with photo evidence immediately.</li>
+              <li><strong>Voter Intimidation or Violence</strong> — Any threats or physical altercations at or near the polling unit.</li>
+              <li><strong>Underage Voting</strong> — Persons who appear under 18 attempting to vote.</li>
+              <li><strong>Result Sheet Manipulation</strong> — Any alteration to Form EC8A before or during signing.</li>
+            </ul>
+          </div>
+
+          <div className="space-y-2">
+            <p className="font-bold text-gray-800">How to Report</p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-gray-600 pl-2">
+              <li>Go to the <strong>Incidents</strong> tab and tap <strong>"Report Incident"</strong>.</li>
+              <li>Select the incident type, write a brief but clear description, and attach a photo if safe to do so.</li>
+              <li>Your location and timestamp are automatically included.</li>
+              <li>The report goes directly to your Ward and LGA coordinators and the national command centre.</li>
+            </ul>
+          </div>
+
+          <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-800">
+            ⚠️ <strong>Safety First:</strong> If you feel physically threatened, move to safety first. Report afterwards. Your safety is more important than any report.
+          </div>
+        </div>
+      )
+    },
+    {
+      id: 'payments',
+      title: 'Payments & Banking',
+      icon: Landmark,
+      content: (
+        <div className="space-y-4 text-sm text-gray-700">
+          <p className="text-gray-500 text-xs leading-relaxed">
+            Stipend payments are processed directly to your verified bank account via Paystack after your polling unit results are submitted and validated. Here's how to get set up correctly.
+          </p>
+
+          <div className="space-y-2">
+            <p className="font-bold text-gray-800">Step 1 — Select Your Bank</p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-gray-600 pl-2">
+              <li>Go to the <strong>Payments</strong> tab and open the bank dropdown.</li>
+              <li>Select your Nigerian bank from the list (all active Nigerian banks are included).</li>
+            </ul>
+          </div>
+
+          <div className="space-y-2">
+            <p className="font-bold text-gray-800">Step 2 — Enter Account Number</p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-gray-600 pl-2">
+              <li>Type your 10-digit NUBAN account number carefully.</li>
+              <li>Click <strong>"Verify Account"</strong> — the system uses Paystack to instantly confirm the account name from your bank.</li>
+            </ul>
+          </div>
+
+          <div className="space-y-2">
+            <p className="font-bold text-gray-800">Step 3 — Name Matching</p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-gray-600 pl-2">
+              <li>The verified bank account name must share your <strong>first name or last name</strong> as registered in the system.</li>
+              <li>If you're using a close relative's account (e.g., spouse or parent), it must still share your surname.</li>
+              <li>If the name does not match, the account will be rejected — contact your coordinator to resolve this.</li>
+            </ul>
+          </div>
+
+          <div className="space-y-2">
+            <p className="font-bold text-gray-800">Step 4 — Payout After Verification</p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-gray-600 pl-2">
+              <li>Once your EC8A result is submitted and verified, your stipend is automatically queued for payment.</li>
+              <li>Payments are processed in batches — expect credit within 24–48 hours of result verification.</li>
+            </ul>
+          </div>
+
+          <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-800">
+            💡 <strong>Tip:</strong> Set up your bank account <strong>before Election Day</strong> — not after. Accounts added after voting closes will be processed in a later batch.
+          </div>
+        </div>
+      )
+    }
+  ];
+
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-end p-4 sm:p-6 pointer-events-none"
+      aria-modal="true"
+      role="dialog"
+      aria-label="Field Operations Guide"
+    >
+      {/* Backdrop – click to close */}
+      <div
+        className="fixed inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"
+        onClick={onClose}
+      />
+
+      {/* Modal panel */}
+      <div className="relative pointer-events-auto w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-gray-100 flex flex-col overflow-hidden animate-in fade-in slide-in-from-right-4 duration-250 max-h-[90vh]">
+        {/* Header */}
+        <div className="bg-gradient-to-r from-emerald-900 to-[#004d25] px-6 py-5 flex items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center text-green-200 shrink-0">
+              <BookOpen size={18} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-white text-sm">Field Operations Guide</h3>
+                <span className="text-[10px] bg-green-500/20 text-green-200 border border-green-500/30 px-2 py-0.5 rounded-full font-bold hidden sm:inline">
+                  Quick SOP
+                </span>
+              </div>
+              <p className="text-[11px] text-green-100/70 mt-0.5">Standard Operating Procedures for all dashboard sections</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors cursor-pointer shrink-0"
+            aria-label="Close guide"
+          >
+            <XCircle size={18} />
+          </button>
+        </div>
+
+        {/* Role Tip */}
+        <div className="bg-emerald-950/95 px-5 py-3 flex items-start gap-2.5 shrink-0">
+          <Sparkles size={15} className="text-[#d4af37] shrink-0 mt-0.5" />
+          <p className="text-xs text-green-50 leading-relaxed">
+            <span className="font-bold text-[#d4af37] mr-1.5">
+              Your Role ({user.role.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}):
+            </span>
+            {roleText[user.role] || 'Monitor your jurisdiction and ensure all agents are on ground.'}
+          </p>
+        </div>
+
+        {/* Section Tabs */}
+        <div className="border-b border-gray-100 overflow-x-auto shrink-0">
+          <div className="flex min-w-max px-5 pt-3 gap-1">
+            {guideSections.map(sec => {
+              const Icon = sec.icon;
+              const isActive = activeGuideTab === sec.id;
+              return (
+                <button
+                  key={sec.id}
+                  type="button"
+                  onClick={() => setActiveGuideTab(sec.id as any)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold rounded-t-lg whitespace-nowrap transition-all cursor-pointer border-b-2",
+                    isActive
+                      ? "border-[#004d25] text-[#004d25] bg-green-50/70"
+                      : "border-transparent text-gray-500 hover:text-gray-800 hover:bg-gray-50"
+                  )}
+                >
+                  <Icon size={13} />
+                  <span>{sec.title}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="px-6 py-5 overflow-y-auto flex-1">
+          {guideSections.find(s => s.id === activeGuideTab)?.content}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 pb-4 pt-2 border-t border-gray-100 shrink-0">
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full py-2.5 text-sm font-semibold bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl transition-colors cursor-pointer"
+          >
+            Close Guide
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 

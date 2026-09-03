@@ -637,17 +637,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       throw new Error('Agent not found. Check your phone number.');
     }
 
-    // TODO: re-enable password hash check
-    // if (!agentData.password_hash) {
-    //   const hash = await sha256Hex(password);
-    //   await supabase.from('agents').update({ password_hash: hash }).eq('id', agentData.id);
-    //   agentData.password_hash = hash;
-    // } else {
-    //   const hash = await sha256Hex(password);
-    //   if (hash !== agentData.password_hash) {
-    //     throw new Error('Incorrect password. Please try again.');
-    //   }
-    // }
+    // Password check: if the agent has a stored hash, verify it. Old accounts without a hash bypass this check.
+    if (agentData.password_hash) {
+      const hash = await sha256Hex(password);
+      if (hash !== agentData.password_hash) {
+        throw new Error('Incorrect password. Please try again.');
+      }
+    }
 
     // TODO: re-enable status checks
     // if (agentData.status && agentData.status.toLowerCase() === 'suspended') {

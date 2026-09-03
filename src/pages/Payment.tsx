@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { supabase } from '../lib/supabase';
-import { Wallet, Landmark, CreditCard, CheckCircle, Clock, ChevronRight, Loader2, AlertCircle, Building2, Send, Filter, Settings, X, FileText, Upload } from 'lucide-react';
+import { Wallet, Landmark, CreditCard, CheckCircle, Clock, ChevronRight, Loader2, AlertCircle, Building2, Send, Filter, Settings, X, FileText, Upload, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '../lib/utils';
 import FileUpload, { UploadedFile } from '../components/FileUpload';
+import { fetchBanks, verifyAccount, verifyNameMatch, checkAccountExistsInDb, PaystackBank } from '../lib/paystack';
 
 export default function Payment() {
   const { user, updateUser, stats } = useApp();
@@ -12,6 +13,14 @@ export default function Payment() {
   const [bankName, setBankName] = useState(user?.bankName || '');
   const [accountName, setAccountName] = useState(user?.accountName || '');
   const [accountNumber, setAccountNumber] = useState(user?.accountNumber || '');
+  
+  // Paystack bank verification state
+  const [banksList, setBanksList] = useState<PaystackBank[]>([]);
+  const [selectedBankCode, setSelectedBankCode] = useState('');
+  const [isFetchingBanks, setIsFetchingBanks] = useState(false);
+  const [isVerifyingAccount, setIsVerifyingAccount] = useState(false);
+  const [verificationError, setVerificationError] = useState('');
+  const [isAccountVerified, setIsAccountVerified] = useState(Boolean(user?.accountName && user?.accountNumber));
   
   const [isSaving, setIsSaving] = useState(false);
 
@@ -207,10 +216,89 @@ export default function Payment() {
     }
   }, [user, isEditingBank, isCentralBank]);
 
+  // Fetch Nigerian banks from Paystack when editing bank details
+  useEffect(() => {
+    if (isEditingBank && banksList.length === 0) {
+      setIsFetchingBanks(true);
+      fetchBanks()
+        .then(list => {
+          setBanksList(list);
+          if (bankName) {
+            const match = list.find(b => b.name.toLowerCase() === bankName.toLowerCase());
+            if (match) setSelectedBankCode(match.code);
+          }
+        })
+        .catch(err => {
+          console.error('Failed to load banks:', err);
+          toast.error('Failed to load Nigerian banks from Paystack');
+        })
+        .finally(() => setIsFetchingBanks(false));
+    }
+  }, [isEditingBank, banksList.length, bankName]);
+
+  const handleVerifyAccount = async () => {
+    if (!selectedBankCode) {
+      setVerificationError('Please select your bank first.');
+      return;
+    }
+    const cleanNumber = accountNumber.trim();
+    if (cleanNumber.length !== 10 || !/^\d{10}$/.test(cleanNumber)) {
+      setVerificationError('Account number must be exactly 10 digits.');
+      return;
+    }
+
+    setIsVerifyingAccount(true);
+    setVerificationError('');
+
+    try {
+      // 1. Resolve with Paystack
+      const result = await verifyAccount(cleanNumber, selectedBankCode);
+      const resolvedName = result.account_name;
+
+      // 2. Check if already registered in the database by someone else
+      const existsResult = await checkAccountExistsInDb(cleanNumber, user?.id);
+      if (existsResult.exists) {
+        setVerificationError(`Bank account already exists in the system (registered to ${existsResult.registeredTo}).`);
+        setIsAccountVerified(false);
+        return;
+      }
+
+      // 3. Verify account name tallies with agent name (first or last name)
+      const userFirstName = (user as any)?.firstName;
+      const userLastName = (user as any)?.lastName;
+      const userFullName = user?.name;
+
+      const matchResult = verifyNameMatch(resolvedName, userFirstName, userLastName, userFullName);
+      if (!matchResult.isMatch) {
+        setVerificationError(
+          matchResult.reason ||
+          `Bank account name ("${resolvedName}") does not match your registered name. Must match first name or last name.`
+        );
+        setIsAccountVerified(false);
+        return;
+      }
+
+      // Verified successfully!
+      setAccountName(resolvedName);
+      setIsAccountVerified(true);
+      setVerificationError('');
+      toast.success(`Account verified: ${resolvedName}`);
+    } catch (err: any) {
+      setVerificationError(err.message || 'Could not verify account. Please check the bank and account number.');
+      setIsAccountVerified(false);
+    } finally {
+      setIsVerifyingAccount(false);
+    }
+  };
+
   const handleSaveBankDetails = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!bankName || !accountName || !accountNumber) {
-      toast.error('Please fill in all bank details');
+    if (!bankName || !accountNumber) {
+      toast.error('Please select a bank and enter your account number');
+      return;
+    }
+    if (!isAccountVerified) {
+      toast.error('Please verify your account number before saving');
       return;
     }
     setIsSaving(true);
@@ -341,44 +429,114 @@ export default function Payment() {
           
           <form onSubmit={handleSaveBankDetails} className="space-y-5">
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Bank Name</label>
-              <input 
-                type="text" 
-                placeholder="e.g. Access Bank, GTBank" 
-                value={bankName}
-                onChange={e => setBankName(e.target.value)}
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#004d25] focus:border-transparent transition-all outline-none"
-              />
+              <label className="block text-sm font-semibold text-gray-700 mb-1">
+                Select Bank <span className="text-red-500">*</span>
+              </label>
+              <select 
+                value={selectedBankCode}
+                onChange={e => {
+                  const code = e.target.value;
+                  setSelectedBankCode(code);
+                  const selected = banksList.find(b => b.code === code);
+                  if (selected) setBankName(selected.name);
+                  setIsAccountVerified(false);
+                  setVerificationError('');
+                }}
+                disabled={isFetchingBanks}
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#004d25] focus:border-transparent transition-all outline-none text-sm cursor-pointer"
+              >
+                <option value="">{isFetchingBanks ? 'Loading Nigerian banks...' : '-- Select your bank --'}</option>
+                {banksList.map(b => (
+                  <option key={`${b.code}-${b.id}`} value={b.code}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
             </div>
+
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Account Name</label>
-              <input 
-                type="text" 
-                placeholder="e.g. John Doe" 
-                value={accountName}
-                onChange={e => setAccountName(e.target.value)}
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#004d25] focus:border-transparent transition-all outline-none"
-              />
+              <label className="block text-sm font-semibold text-gray-700 mb-1">
+                Account Number <span className="text-red-500">*</span>
+              </label>
+              <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  maxLength={10}
+                  placeholder="10 digit account number (e.g. 8131000117)" 
+                  value={accountNumber}
+                  onChange={e => {
+                    const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                    setAccountNumber(val);
+                    setIsAccountVerified(false);
+                    setVerificationError('');
+                  }}
+                  className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#004d25] focus:border-transparent transition-all outline-none font-mono text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={handleVerifyAccount}
+                  disabled={isVerifyingAccount || accountNumber.length !== 10 || !selectedBankCode}
+                  className="px-5 py-3 bg-[#004d25] hover:bg-[#006331] disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-1.5 shrink-0 cursor-pointer"
+                >
+                  {isVerifyingAccount ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      <span>Verifying...</span>
+                    </>
+                  ) : isAccountVerified ? (
+                    <>
+                      <Check size={16} className="text-green-300" />
+                      <span>Verified</span>
+                    </>
+                  ) : (
+                    <span>Verify Account</span>
+                  )}
+                </button>
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Account Number</label>
-              <input 
-                type="text" 
-                placeholder="10 digit account number" 
-                value={accountNumber}
-                onChange={e => setAccountNumber(e.target.value)}
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#004d25] focus:border-transparent transition-all outline-none font-mono"
-              />
-            </div>
+
+            {/* Verified Account Name Display */}
+            {isAccountVerified && accountName && (
+              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-3 animate-in fade-in">
+                <CheckCircle size={20} className="text-emerald-600 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] uppercase tracking-wider font-semibold text-emerald-800">Verified Account Name</p>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">Name Matches</span>
+                  </div>
+                  <p className="text-base font-bold text-emerald-950 font-mono mt-0.5">{accountName}</p>
+                  <p className="text-[11px] text-emerald-700 mt-1">Confirmed with Paystack & verified against registered database.</p>
+                </div>
+              </div>
+            )}
+
+            {/* Verification Error Box */}
+            {verificationError && (
+              <div className="p-3.5 bg-red-50 border border-red-200 rounded-xl flex items-start gap-2.5 text-xs text-red-700 animate-in fade-in">
+                <AlertCircle size={17} className="text-red-500 shrink-0 mt-0.5" />
+                <span className="font-medium leading-relaxed">{verificationError}</span>
+              </div>
+            )}
             
-            <button 
-              type="submit" 
-              disabled={isSaving}
-              className="w-full bg-[#004d25] hover:bg-[#006331] text-white font-bold py-3.5 px-4 rounded-xl transition-all shadow-md hover:shadow-lg disabled:opacity-70 flex justify-center items-center gap-2 mt-4"
-            >
-              {isSaving ? <Loader2 className="animate-spin" size={20} /> : <CheckCircle size={20} />}
-              <span>Save Details & Continue</span>
-            </button>
+            <div className="flex gap-3 pt-2">
+              {user?.bankName && user?.accountNumber && (
+                <button
+                  type="button"
+                  onClick={() => setIsEditingBank(false)}
+                  className="px-5 py-3.5 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+              )}
+              <button 
+                type="submit" 
+                disabled={isSaving || !isAccountVerified}
+                className="flex-1 bg-[#004d25] hover:bg-[#006331] text-white font-bold py-3.5 px-4 rounded-xl transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2 cursor-pointer"
+              >
+                {isSaving ? <Loader2 className="animate-spin" size={20} /> : <CheckCircle size={20} />}
+                <span>Save Bank Details</span>
+              </button>
+            </div>
           </form>
         </div>
       ) : (
