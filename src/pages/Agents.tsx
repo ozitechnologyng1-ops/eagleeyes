@@ -117,11 +117,18 @@ export default function Agents() {
                     a.local_governments_id ? `lga_${a.local_governments_id}` :
                     a.state_id ? `state_${a.state_id}` :
                     a.jurisdiction_id || 'nat1',
+        firstName: a.first_name || (a.name ? a.name.split(' ')[0] : ''),
+        lastName: a.last_name || (a.name ? a.name.split(' ').slice(1).join(' ') : ''),
         phone: a.phone,
+        picture: a.profile_picture_url || '',
+        bankName: a.bank_name || '',
+        accountName: a.account_name || '',
+        accountNumber: a.account_number || '',
         stateId: a.state_id,
         lgaId: a.local_governments_id,
         wardId: a.wards_id,
-        puId: a.polling_units_id
+        puId: a.polling_units_id,
+        lagosPollingUnitId: a.pollingunit_lagos_id
       })));
     } catch (err) {
       console.error('Failed to fetch agents', err);

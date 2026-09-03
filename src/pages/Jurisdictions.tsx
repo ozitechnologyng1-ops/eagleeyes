@@ -47,11 +47,12 @@ interface NodeProps {
   onEditAgent: (agent: Agent) => void;
   depth?: number;
   isLagos?: boolean;
+  refreshKey?: number;
 }
 
 const TreeNode: React.FC<NodeProps> = ({
   location, userRole, userStateId, userLgaId, userWardId,
-  onAddAgent, onEditAgent, depth = 0, isLagos: isLagosProp
+  onAddAgent, onEditAgent, depth = 0, isLagos: isLagosProp, refreshKey
 }) => {
   const [open, setOpen] = useState(false);
   const [children, setChildren] = useState<Location[]>([]);
@@ -101,18 +102,29 @@ const TreeNode: React.FC<NodeProps> = ({
     }
   }, [location.id, cfg, loaded]);
 
-  const loadNodeAgents = useCallback(async () => {
-    if (agentsLoaded) return;
+  const loadNodeAgents = useCallback(async (force = false) => {
+    if (agentsLoaded && !force) return;
     try {
       const { data } = await supabase.from('agents').select('*').eq('jurisdiction_id', location.id);
       if (data) {
         setNodeAgents((data as any[]).map(a => ({
           id: a.id,
           name: a.name,
+          firstName: a.first_name || (a.name ? a.name.split(' ')[0] : ''),
+          lastName: a.last_name || (a.name ? a.name.split(' ').slice(1).join(' ') : ''),
           role: a.role as Role,
           status: (a.status || 'active').toLowerCase() as Agent['status'],
           locationId: location.id,
-          phone: a.phone
+          phone: a.phone,
+          picture: a.profile_picture_url || '',
+          bankName: a.bank_name || '',
+          accountName: a.account_name || '',
+          accountNumber: a.account_number || '',
+          stateId: a.state_id,
+          lgaId: a.local_governments_id,
+          wardId: a.wards_id,
+          puId: a.polling_units_id,
+          lagosPollingUnitId: a.pollingunit_lagos_id
         })).filter(a => roleHierarchy[a.role] < roleHierarchy[userRole]));
       }
       setAgentsLoaded(true);
@@ -120,6 +132,12 @@ const TreeNode: React.FC<NodeProps> = ({
       console.error('Failed to load node agents', err);
     }
   }, [location.id, agentsLoaded, userRole]);
+
+  useEffect(() => {
+    if (open && agentsLoaded) {
+      loadNodeAgents(true);
+    }
+  }, [refreshKey]);
 
   const loadCoverageStats = useCallback(async () => {
     if (!cfg || coverage) return;
@@ -181,12 +199,15 @@ const TreeNode: React.FC<NodeProps> = ({
           <span className="font-medium text-gray-900 text-sm truncate">{location.name}</span>
 
           {coverage && coverage.total > 0 && (
-            <span className={cn(
-              "text-[10px] px-1.5 py-0.5 rounded-full font-bold",
-              coverage.covered === coverage.total ? "bg-green-100 text-green-700" :
-              coverage.covered > 0 ? "bg-yellow-100 text-yellow-700" :
-              "bg-red-50 text-red-600"
-            )}>
+            <span 
+              title={`Coverage: ${coverage.covered} of ${coverage.total} ${cfg?.childType === 'lga' ? 'LGAs' : cfg?.childType === 'ward' ? 'Wards' : 'Polling Units'} have assigned agents (${Math.round((coverage.covered / coverage.total) * 100)}%)`}
+              className={cn(
+                "text-[10px] px-1.5 py-0.5 rounded-full font-bold cursor-help",
+                coverage.covered === coverage.total ? "bg-green-100 text-green-700" :
+                coverage.covered > 0 ? "bg-yellow-100 text-yellow-700" :
+                "bg-red-50 text-red-600"
+              )}
+            >
               {Math.round((coverage.covered / coverage.total) * 100)}%
             </span>
           )}
@@ -235,11 +256,21 @@ const TreeNode: React.FC<NodeProps> = ({
                 <button
                   key={a.id}
                   onClick={() => onEditAgent(a)}
-                  className="flex items-center gap-1.5 bg-blue-50 text-blue-700 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-blue-100 hover:bg-blue-100 transition-colors cursor-pointer group"
+                  className="flex items-center gap-2 bg-blue-50 text-blue-700 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-blue-100 hover:bg-blue-100 transition-colors cursor-pointer group shadow-xs"
                 >
-                  <User size={11} />
+                  {a.picture ? (
+                    <img 
+                      src={a.picture} 
+                      alt={a.name} 
+                      className="w-5 h-5 rounded-full object-cover border border-blue-200 shrink-0" 
+                    />
+                  ) : (
+                    <div className="w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 shrink-0">
+                      <User size={11} />
+                    </div>
+                  )}
                   <div className="flex flex-col items-start">
-                    <span>{a.name}</span>
+                    <span className="font-semibold">{a.name}</span>
                     <span className="text-[9px] opacity-70 group-hover:opacity-100">{a.role.replace(/_/g, ' ')}</span>
                   </div>
                   <span className={cn('w-1.5 h-1.5 rounded-full ml-0.5', statusDot[a.status] || 'bg-gray-400')} />
@@ -264,6 +295,7 @@ const TreeNode: React.FC<NodeProps> = ({
               onEditAgent={onEditAgent}
               depth={depth + 1}
               isLagos={isLagosNode}
+              refreshKey={refreshKey}
             />
           ))}
         </div>
@@ -278,6 +310,7 @@ export default function Jurisdictions() {
   const [jurisdictionName, setJurisdictionName] = useState('');
   const [roots, setRoots] = useState<Location[]>([]);
   const [rootLoading, setRootLoading] = useState(true);
+  const [agentRefreshKey, setAgentRefreshKey] = useState(0);
 
   const [addAgentLoc, setAddAgentLoc] = useState<Location | null>(null);
   const [editAgent, setEditAgent] = useState<Agent | null>(null);
@@ -350,12 +383,13 @@ export default function Jurisdictions() {
   const handleSaveAgent = async (agentData: Partial<Agent>) => {
     try {
       if (editAgent) {
-        updateAgent(editAgent.id, agentData);
+        await updateAgent(editAgent.id, agentData);
         toast.success('Agent updated');
       } else {
         await addAgent(agentData as Omit<Agent, 'id'>);
         toast.success('Agent registered successfully');
       }
+      setAgentRefreshKey(k => k + 1);
       setAddAgentLoc(null);
       setEditAgent(null);
     } catch (err: any) {
@@ -427,6 +461,7 @@ export default function Jurisdictions() {
                 userWardId={user.wardId}
                 onAddAgent={loc => { setAddAgentLoc(loc); setEditAgent(null); }}
                 onEditAgent={agent => { setEditAgent(agent); setAddAgentLoc(null); }}
+                refreshKey={agentRefreshKey}
               />
             ))
           )}

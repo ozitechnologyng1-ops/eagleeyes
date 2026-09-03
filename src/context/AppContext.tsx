@@ -62,6 +62,7 @@ export interface Agent {
   wardId?: number | null;
   puId?: number | null;
   lagosPollingUnitId?: number | null;
+  password?: string;
 }
 
 export interface CoverageStat {
@@ -1096,6 +1097,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       polling_units_id: puId,
     };
 
+    if (agent.password) {
+      dbRecord.password_hash = await sha256Hex(agent.password);
+    }
+
     // Auto-resolve pollingunit_lagos_id for pu_agents by matching puId text
     let lagosPollingUnitId: number | null = null;
     if (puId) {
@@ -1161,6 +1166,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (updates.bankName !== undefined) payload.bank_name = updates.bankName;
       if (updates.accountName !== undefined) payload.account_name = updates.accountName;
       if (updates.accountNumber !== undefined) payload.account_number = updates.accountNumber;
+      if (updates.password) {
+        payload.password_hash = await sha256Hex(updates.password);
+      }
 
       if (Object.keys(payload).length > 0) {
         const { error } = await supabase.from('agents').update(payload).eq('id', id);
