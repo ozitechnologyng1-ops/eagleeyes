@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useApp, Role, Location, Agent, roleHierarchy } from '../context/AppContext';
 import { Users, Plus, Search, ShieldAlert, CheckCircle, XCircle, Loader2 } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, getFriendlyErrorMessage } from '../lib/utils';
 import AgentModal from '../components/AgentModal';
 import { supabase } from '../lib/supabase';
 import toast from 'react-hot-toast';
@@ -181,7 +181,7 @@ export default function Agents() {
       setEditAgent(null);
       fetchLocalAgents();
     } catch (err: any) {
-      toast.error(err?.message || 'Failed to save agent');
+      toast.error(getFriendlyErrorMessage(err));
     }
   };
 

@@ -4,7 +4,7 @@ import {
   Map, ChevronRight, ChevronDown,
   UserPlus, User, Shield, Loader2
 } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, getFriendlyErrorMessage } from '../lib/utils';
 import AgentModal from '../components/AgentModal';
 import toast from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
@@ -62,7 +62,7 @@ const TreeNode: React.FC<NodeProps> = ({
   const [agentsLoaded, setAgentsLoaded] = useState(false);
   const [coverage, setCoverage] = useState<{ covered: number; total: number } | null>(null);
 
-  const isLagosNode = isLagosProp || location.id === 'state_24';
+  const isLagosNode = isLagosProp || location.id === 'state_24' || userStateId === 24;
 
   // Pick Lagos-specific or national child config
   const lagosChildConfig: typeof childConfig = {
@@ -105,7 +105,20 @@ const TreeNode: React.FC<NodeProps> = ({
   const loadNodeAgents = useCallback(async (force = false) => {
     if (agentsLoaded && !force) return;
     try {
-      const { data } = await supabase.from('agents').select('*').eq('jurisdiction_id', location.id);
+      const rawId = numId(location.id);
+      let query = supabase.from('agents').select('*');
+      if (location.type === 'pu') {
+        query = query.or(`jurisdiction_id.eq.${location.id},polling_units_id.eq.${rawId},pollingunit_lagos_id.eq.${rawId}`);
+      } else if (location.type === 'ward') {
+        query = query.or(`jurisdiction_id.eq.${location.id},wards_id.eq.${rawId}`);
+      } else if (location.type === 'lga') {
+        query = query.or(`jurisdiction_id.eq.${location.id},local_governments_id.eq.${rawId}`);
+      } else if (location.type === 'state') {
+        query = query.or(`jurisdiction_id.eq.${location.id},state_id.eq.${rawId}`);
+      } else {
+        query = query.eq('jurisdiction_id', location.id);
+      }
+      const { data } = await query;
       if (data) {
         setNodeAgents((data as any[]).map(a => ({
           id: a.id,
@@ -131,7 +144,14 @@ const TreeNode: React.FC<NodeProps> = ({
     } catch (err) {
       console.error('Failed to load node agents', err);
     }
-  }, [location.id, agentsLoaded, userRole]);
+  }, [location.id, location.type, agentsLoaded, userRole]);
+
+  // For terminal leaf nodes (polling units), load agents immediately so status shows on the row
+  useEffect(() => {
+    if (location.type === 'pu' && !agentsLoaded) {
+      loadNodeAgents();
+    }
+  }, [location.type, agentsLoaded, loadNodeAgents]);
 
   useEffect(() => {
     if (open && agentsLoaded) {
@@ -215,7 +235,32 @@ const TreeNode: React.FC<NodeProps> = ({
           {loaded && children.length > 0 && (
             <span className="text-[10px] text-gray-400 shrink-0">{children.length}</span>
           )}
-          {nodeAgents.length > 0 && (
+          {location.type === 'pu' && nodeAgents.length > 0 ? (
+            <div className="flex items-center gap-1.5 ml-2 shrink-0">
+              {nodeAgents.map(a => (
+                <button
+                  key={a.id}
+                  onClick={(e) => { 
+                    e.stopPropagation(); 
+                    if (userRole !== 'pu_agent') onEditAgent(a); 
+                  }}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold transition-colors",
+                    userRole !== 'pu_agent' ? "hover:bg-emerald-100 cursor-pointer" : "cursor-default"
+                  )}
+                  title={userRole !== 'pu_agent' ? "Click to edit agent" : undefined}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                  <span>{a.name}</span>
+                  <span className="text-[10px] text-emerald-600 font-normal">({a.phone})</span>
+                </button>
+              ))}
+            </div>
+          ) : location.type === 'pu' && agentsLoaded && nodeAgents.length === 0 ? (
+            <span className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200/80 px-2 py-0.5 rounded-full font-medium shrink-0 ml-2">
+              Vacant
+            </span>
+          ) : nodeAgents.length > 0 && (
             <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded shrink-0 font-bold">
               {nodeAgents.length} agent{nodeAgents.length > 1 ? 's' : ''}
             </span>
@@ -223,14 +268,25 @@ const TreeNode: React.FC<NodeProps> = ({
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-1 shrink-0 ml-2">
-          <button
-            onClick={e => { e.stopPropagation(); onAddAgent(location); }}
-            className="text-xs font-medium text-blue-600 hover:bg-blue-50 px-2 py-1 rounded-md flex items-center gap-1 transition-colors cursor-pointer"
-          >
-            <UserPlus size={12} /> Agent
-          </button>
-        </div>
+        {userRole !== 'pu_agent' && (
+          <div className="flex items-center gap-1 shrink-0 ml-2">
+            {location.type === 'pu' && nodeAgents.length > 0 ? (
+              <button
+                onClick={e => { e.stopPropagation(); onEditAgent(nodeAgents[0]); }}
+                className="text-xs font-medium text-gray-700 hover:bg-gray-100 border border-gray-200 px-2.5 py-1 rounded-md transition-colors cursor-pointer"
+              >
+                Edit
+              </button>
+            ) : (
+              <button
+                onClick={e => { e.stopPropagation(); onAddAgent(location); }}
+                className="text-xs font-medium text-[#004d25] hover:bg-green-50 px-2 py-1 rounded-md flex items-center gap-1 transition-colors cursor-pointer"
+              >
+                <UserPlus size={12} /> {location.type === 'pu' ? 'Assign Agent' : 'Agent'}
+              </button>
+            )}
+          </div>
+        )}
       </div>
       
       {/* Percentage Progress Bar */}
@@ -255,8 +311,11 @@ const TreeNode: React.FC<NodeProps> = ({
               {nodeAgents.map(a => (
                 <button
                   key={a.id}
-                  onClick={() => onEditAgent(a)}
-                  className="flex items-center gap-2 bg-blue-50 text-blue-700 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-blue-100 hover:bg-blue-100 transition-colors cursor-pointer group shadow-xs"
+                  onClick={() => { if (userRole !== 'pu_agent') onEditAgent(a); }}
+                  className={cn(
+                    "flex items-center gap-2 bg-blue-50 text-blue-700 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-blue-100 transition-colors shadow-xs",
+                    userRole !== 'pu_agent' ? "hover:bg-blue-100 cursor-pointer group" : "cursor-default"
+                  )}
                 >
                   {a.picture ? (
                     <img 
@@ -325,6 +384,7 @@ export default function Jurisdictions() {
     async function fetchRoot() {
       try {
         let result: Location[] = [];
+        const isLagosUser = user!.stateId === 24;
 
         if (user!.role === 'national_admin') {
           setJurisdictionName('Nigeria');
@@ -334,26 +394,33 @@ export default function Jurisdictions() {
           if (user!.stateId) {
             const { data: st } = await supabase.from('states').select('name').eq('id', user!.stateId).single();
             if (st) setJurisdictionName(st.name);
-            const { data } = await supabase.from('local_governments').select('id,name,state_id').eq('state_id', user!.stateId).order('name');
+            const lgaTable = isLagosUser ? 'local_governments_lagos' : 'local_governments';
+            const { data } = await supabase.from(lgaTable).select('id,name,state_id').eq('state_id', user!.stateId).order('name');
             result = (data || []).map((lga: any) => ({ id: `lga_${lga.id}`, type: 'lga', name: lga.name, parentId: `state_${lga.state_id}` }));
           }
         } else if (user!.role === 'lga_admin') {
           if (user!.lgaId) {
-            const { data: lg } = await supabase.from('local_governments').select('name').eq('id', user!.lgaId).single();
+            const lgaTable = isLagosUser ? 'local_governments_lagos' : 'local_governments';
+            const wardTable = isLagosUser ? 'wards_lagos' : 'wards';
+            const filterCol = isLagosUser ? 'localgovernment_lagos_id' : 'localgovernment_id';
+            const { data: lg } = await supabase.from(lgaTable).select('name').eq('id', user!.lgaId).single();
             if (lg) setJurisdictionName(lg.name);
-            const { data } = await supabase.from('wards').select('id,name,localgovernment_id').eq('localgovernment_id', user!.lgaId).order('name');
-            result = (data || []).map((ward: any) => ({ id: `ward_${ward.id}`, type: 'ward', name: ward.name, parentId: `lga_${ward.localgovernment_id}` }));
+            const { data } = await supabase.from(wardTable).select('id,name').eq(filterCol, user!.lgaId).order('name');
+            result = (data || []).map((ward: any) => ({ id: `ward_${ward.id}`, type: 'ward', name: ward.name, parentId: `lga_${user!.lgaId}` }));
           }
         } else if (user!.role === 'ward_admin') {
           if (user!.wardId) {
-            const { data: wr } = await supabase.from('wards').select('name').eq('id', user!.wardId).single();
+            const wardTable = isLagosUser ? 'wards_lagos' : 'wards';
+            const puTable = isLagosUser ? 'polling_units_lagos' : 'polling_units';
+            const { data: wr } = await supabase.from(wardTable).select('name').eq('id', user!.wardId).single();
             if (wr) setJurisdictionName(wr.name);
-            const { data } = await supabase.from('polling_units').select('id,name,ward_id').eq('ward_id', user!.wardId).order('name');
+            const { data } = await supabase.from(puTable).select('id,name,ward_id').eq('ward_id', user!.wardId).order('name');
             result = (data || []).map((pu: any) => ({ id: `pu_${pu.id}`, type: 'pu', name: pu.name, parentId: `ward_${pu.ward_id}` }));
           }
         } else if (user!.role === 'pu_agent') {
           if (user!.puId) {
-            const { data } = await supabase.from('polling_units').select('id,name,ward_id').eq('id', user!.puId).single();
+            const puTable = isLagosUser ? 'polling_units_lagos' : 'polling_units';
+            const { data } = await supabase.from(puTable).select('id,name,ward_id').eq('id', user!.puId).single();
             if (data) {
               setJurisdictionName(data.name);
               result = [{ id: `pu_${data.id}`, type: 'pu', name: data.name, parentId: `ward_${data.ward_id}` }];
@@ -367,8 +434,8 @@ export default function Jurisdictions() {
       }
     }
     fetchRoot();
-    return () => { cancelled = true; };
   }, [user?.id, user?.stateId, user?.lgaId, user?.wardId, user?.puId, user?.role]);
+
 
   if (!user) return null;
 
@@ -393,7 +460,7 @@ export default function Jurisdictions() {
       setAddAgentLoc(null);
       setEditAgent(null);
     } catch (err: any) {
-      toast.error(err?.message || 'Failed to save agent');
+      toast.error(getFriendlyErrorMessage(err));
     }
   };
 
@@ -462,6 +529,7 @@ export default function Jurisdictions() {
                 onAddAgent={loc => { setAddAgentLoc(loc); setEditAgent(null); }}
                 onEditAgent={agent => { setEditAgent(agent); setAddAgentLoc(null); }}
                 refreshKey={agentRefreshKey}
+                isLagos={user.stateId === 24}
               />
             ))
           )}

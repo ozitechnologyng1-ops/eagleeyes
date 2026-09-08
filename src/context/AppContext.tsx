@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { supabase } from '../lib/supabase';
 import { VISION_AI_PROMPT } from '../lib/prompts';
+import toast from 'react-hot-toast';
+import { getFriendlyErrorMessage } from '../lib/utils';
 
 export type Role = 'national_admin' | 'state_admin' | 'lga_admin' | 'ward_admin' | 'pu_agent';
 
@@ -95,6 +97,9 @@ export interface Voter {
   status: 'ADC Supporter' | 'Undecided' | 'Opposition' | 'Unreachable';
   locationId: string; // PU id
   stateId?: number | null;
+  lgaId?: number | null;
+  wardId?: number | null;
+  puNumberId?: number | null;
   notes?: VoterNote[];
   contact_logs?: {
     type: 'whatsapp' | 'sms' | 'call';
@@ -128,19 +133,16 @@ interface AppState {
       totalVotes: number;
       partyResults: { name: string; votes: number }[];
     }>;
-    deployment: DeploymentStats;
     uploadProgress: number;
+    deployment?: DeploymentStats;
   };
-  electionResults: any[];
-  totalVotersCount: number;
   isMockMode: boolean;
   activeElectionGroup: ElectionGroup;
-  toggleMockMode: () => void;
-  endAllMockElections: () => void;
-  setActiveElectionGroup: (group: ElectionGroup) => void;
-  updateUser: (updates: Partial<User>) => void;
+  totalVotersCount: number;
+  electionResults: Record<string, any>;
   login: (phone: string, password: string) => Promise<void>;
   logout: () => void;
+  updateUser: (updates: Partial<User>) => void;
   updateVoterStatus: (id: string, status: Voter['status']) => void;
   updateVoterDetails: (id: string, updates: Partial<Voter>) => Promise<void>;
   logVoterContact: (id: string, type: 'whatsapp' | 'sms' | 'call') => Promise<void>;
@@ -155,7 +157,11 @@ interface AppState {
   analyzeResultImage: (file: File) => Promise<{ results: any; ai_used?: string }>;
   votersPage: number;
   isLoadingVoters: boolean;
-  fetchVotersPage: (page: number) => Promise<void>;
+  fetchVotersPage: (page: number, filters?: { lgaId?: number | null; wardId?: number | null; puId?: number | null }) => Promise<void>;
+  voterLgaFilter: number | null;
+  setVoterLgaFilter: (lgaId: number | null) => void;
+  voterWardFilter: number | null;
+  setVoterWardFilter: (wardId: number | null) => void;
   voterPuFilter: number | null;
   setVoterPuFilter: (puId: number | null) => void;
 }
@@ -167,18 +173,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const [user, setUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('eagleeye_user');
-    const timestamp = localStorage.getItem('eagleeye_login_time');
-    if (saved && timestamp && Date.now() - parseInt(timestamp) < SESSION_DURATION_MS) {
+    const timestamp = localStorage.getItem('eagleeye_last_active') || localStorage.getItem('eagleeye_login_time');
+    if (saved && timestamp && Date.now() - parseInt(timestamp, 10) < SESSION_DURATION_MS) {
       return JSON.parse(saved);
     }
     localStorage.removeItem('eagleeye_user');
     localStorage.removeItem('eagleeye_login_time');
+    localStorage.removeItem('eagleeye_last_active');
     return null;
   });
   
   const [totalVotersCount, setTotalVotersCount] = useState<number>(0);
   const [votersPage, setVotersPage] = useState<number>(1);
   const [isLoadingVoters, setIsLoadingVoters] = useState<boolean>(false);
+  const [voterLgaFilter, setVoterLgaFilter] = useState<number | null>(null);
+  const [voterWardFilter, setVoterWardFilter] = useState<number | null>(null);
   const [voterPuFilter, setVoterPuFilter] = useState<number | null>(null);
   const [locations, setLocations] = useState<Location[]>([
     { id: 'nat1', type: 'national', name: 'Nigeria', parentId: null }
@@ -453,7 +462,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval);
   }, [user]);
 
-  const fetchVotersPage = React.useCallback(async (page: number) => {
+  const fetchVotersPage = React.useCallback(async (
+    page: number, 
+    customFilters?: { lgaId?: number | null; wardId?: number | null; puId?: number | null }
+  ) => {
     setIsLoadingVoters(true);
     setVotersPage(page);
     try {
@@ -463,13 +475,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       let votersQuery = supabase.from('voters').select('*', { count: 'exact' });
 
-      if (user?.role === 'pu_agent' && user?.lagosPollingUnitId) {
-        votersQuery = votersQuery.eq('pollingunit_lagos_id', user.lagosPollingUnitId);
-      } else if (user?.role === 'ward_admin' && voterPuFilter) {
-        // Ward admin viewing a specific agent's PU
-        votersQuery = votersQuery.eq('pollingunit_lagos_id', voterPuFilter);
-      } else if (user?.role === 'lga_admin' && user?.lgaId) {
-        votersQuery = votersQuery.eq('localgovernment_lagos_id', user.lgaId);
+      const activePu = customFilters?.puId !== undefined ? customFilters.puId : voterPuFilter;
+      const activeWard = customFilters?.wardId !== undefined ? customFilters.wardId : voterWardFilter;
+      const activeLga = customFilters?.lgaId !== undefined ? customFilters.lgaId : voterLgaFilter;
+
+      if (user?.role === 'pu_agent' && (user?.lagosPollingUnitId || user?.puId)) {
+        votersQuery = votersQuery.eq('pollingunit_lagos_id', user.lagosPollingUnitId || user.puId);
+      } else if (activePu) {
+        votersQuery = votersQuery.eq('pollingunit_lagos_id', activePu);
+      } else if (activeWard || (user?.role === 'ward_admin' && user?.wardId)) {
+        votersQuery = votersQuery.eq('ward_lagos_id', activeWard || user?.wardId);
+      } else if (activeLga || (user?.role === 'lga_admin' && user?.lgaId)) {
+        votersQuery = votersQuery.eq('localgovernment_lagos_id', activeLga || user?.lgaId);
       } else if (user?.stateId) {
         votersQuery = votersQuery.eq('state_id', user.stateId);
       }
@@ -489,8 +506,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
            dob: v.dob,
            image: v.image || '',
            status: (v.status || 'Undecided') as Voter['status'],
-           locationId: `pu_${v.pollingunit_lagos_id}` || 'nat1',
+           locationId: `pu_${v.pollingunit_lagos_id || v.pollingunit_id || ''}` || 'nat1',
            stateId: v.state_id,
+           lgaId: v.localgovernment_lagos_id || v.localgovernment_id || null,
+           wardId: v.ward_lagos_id || v.ward_id || null,
+           puNumberId: v.pollingunit_lagos_id || v.pollingunit_id || null,
            notes: v.notes || [],
            contact_logs: v.contact_logs || [],
         })));
@@ -502,7 +522,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoadingVoters(false);
     }
-  }, [user?.stateId, user?.role, user?.lagosPollingUnitId, user?.lgaId, voterPuFilter]);
+  }, [user?.stateId, user?.role, user?.lagosPollingUnitId, user?.puId, user?.lgaId, user?.wardId, voterPuFilter, voterWardFilter, voterLgaFilter]);
 
   useEffect(() => {
     const fetchSupabaseData = async () => {
@@ -708,14 +728,52 @@ export function AppProvider({ children }: { children: ReactNode }) {
     
     setUser(loggedInUser);
     localStorage.setItem('eagleeye_user', JSON.stringify(loggedInUser));
-    localStorage.setItem('eagleeye_login_time', Date.now().toString());
+    const nowStr = Date.now().toString();
+    localStorage.setItem('eagleeye_login_time', nowStr);
+    localStorage.setItem('eagleeye_last_active', nowStr);
   };
 
   const logout = () => {
     setUser(null);
     localStorage.removeItem('eagleeye_user');
     localStorage.removeItem('eagleeye_login_time');
+    localStorage.removeItem('eagleeye_last_active');
   };
+
+  // Rolling session inactivity watcher
+  useEffect(() => {
+    if (!user) return;
+
+    let lastUpdate = Date.now();
+
+    const handleUserActivity = () => {
+      const now = Date.now();
+      if (now - lastUpdate > 15000) {
+        lastUpdate = now;
+        localStorage.setItem('eagleeye_last_active', now.toString());
+      }
+    };
+
+    const activityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart'];
+    activityEvents.forEach(evt => window.addEventListener(evt, handleUserActivity, { passive: true }));
+
+    // Check inactivity periodically
+    const timer = setInterval(() => {
+      const activeTimestamp = localStorage.getItem('eagleeye_last_active') || localStorage.getItem('eagleeye_login_time');
+      if (activeTimestamp) {
+        const idleDuration = Date.now() - parseInt(activeTimestamp, 10);
+        if (idleDuration >= SESSION_DURATION_MS) {
+          logout();
+          toast.error('Session expired due to inactivity. Please log in again.', { id: 'session-timeout' });
+        }
+      }
+    }, 10000);
+
+    return () => {
+      activityEvents.forEach(evt => window.removeEventListener(evt, handleUserActivity));
+      clearInterval(timer);
+    };
+  }, [user]);
 
   const updateUser = async (updates: Partial<User>) => {
     if (user) {
@@ -1124,7 +1182,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     try {
       const { data, error } = await supabase.from('agents').insert([dbRecord]).select().single();
-      if (error) throw error;
+      if (error) throw new Error(getFriendlyErrorMessage(error));
       
       await refreshDeploymentStats();
       
@@ -1168,7 +1226,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       if (Object.keys(payload).length > 0) {
         const { error } = await supabase.from('agents').update(payload).eq('id', id);
-        if (error) throw error;
+        if (error) throw new Error(getFriendlyErrorMessage(error));
       }
     } catch (err) {
       console.error('Failed to update agent in db', err);
@@ -1217,6 +1275,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider value={{ 
       user, locations, agents, voters, stats, isMockMode, activeElectionGroup, totalVotersCount, electionResults,
       votersPage, isLoadingVoters, fetchVotersPage,
+      voterLgaFilter, setVoterLgaFilter, voterWardFilter, setVoterWardFilter, voterPuFilter, setVoterPuFilter,
       login, logout, updateUser, updateVoterStatus, updateVoterDetails, logVoterContact, addVoterNote, submitResult, toggleMockMode, endAllMockElections, setActiveElectionGroup,
       addAgent, updateAgent, updateAgentStatus, addLocation, updateLocation, getDescendantLocations, analyzeResultImage
     }}>

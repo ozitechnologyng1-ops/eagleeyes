@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { Outlet, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { Menu, X, LogOut, LayoutDashboard, Users, Camera, Map, ChevronRight, CreditCard, MessageSquare, Cpu } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -11,7 +11,7 @@ export default function Layout() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   if (!user) {
-    return <Outlet />;
+    return <Navigate to="/login" state={{ from: location.pathname }} replace />;
   }
 
   const handleLogout = () => {

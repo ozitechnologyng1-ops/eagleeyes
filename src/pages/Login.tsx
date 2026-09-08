@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { Shield, Phone, Lock, ChevronRight, ArrowLeft, Eye, EyeOff, CheckCircle2, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { getFriendlyErrorMessage } from '../lib/utils';
 
 interface PasswordRule {
   label: string;
@@ -22,32 +23,28 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [passwordTouched, setPasswordTouched] = useState(false);
-  const { login } = useApp();
+  const { login, user } = useApp();
   const navigate = useNavigate();
+  const location = useLocation();
 
-  // TODO: re-enable password rules when ready
-  // const ruleResults = useMemo(
-  //   () => PASSWORD_RULES.map((r) => r.test(password)),
-  //   [password]
-  // );
-  // const allRulesMet = ruleResults.every(Boolean);
+  useEffect(() => {
+    if (user) {
+      const destination = (location.state as any)?.from || '/dashboard';
+      navigate(destination, { replace: true });
+    }
+  }, [user, navigate, location.state]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    // TODO: uncomment when enforcing password rules
-    // if (!allRulesMet) {
-    //   toast.error('Password does not meet security requirements.');
-    //   return;
-    // }
 
     setIsLoading(true);
     try {
       await login(phone, password);
       toast.success('Login successful!');
-      navigate('/dashboard');
+      const destination = (location.state as any)?.from || '/dashboard';
+      navigate(destination, { replace: true });
     } catch (err: any) {
-      toast.error(err.message || 'Invalid credentials. Please try again.');
+      toast.error(getFriendlyErrorMessage(err));
       setIsLoading(false);
     }
   };

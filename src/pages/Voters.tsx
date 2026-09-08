@@ -1,41 +1,221 @@
 import React, { useState, useEffect } from 'react';
 import { useApp, Voter, VoterNote } from '../context/AppContext';
-import { Search, Filter, X, Check, UserCircle, ChevronLeft, ChevronRight, MessageCircle, MessageSquare, Phone, Save, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { Search, Filter, X, Check, UserCircle, ChevronLeft, ChevronRight, MessageCircle, MessageSquare, Phone, Save, Loader2, ChevronDown, ChevronUp, MapPin } from 'lucide-react';
+import { cn, getFriendlyErrorMessage } from '../lib/utils';
 import { supabase } from '../lib/supabase';
+import toast from 'react-hot-toast';
 
 export default function Voters() {
-  const { user, voters, updateVoterDetails, logVoterContact, locations, votersPage, isLoadingVoters, fetchVotersPage, voterPuFilter, setVoterPuFilter } = useApp();
+  const { 
+    user, voters, updateVoterDetails, logVoterContact, locations, 
+    votersPage, isLoadingVoters, fetchVotersPage,
+    voterLgaFilter, setVoterLgaFilter,
+    voterWardFilter, setVoterWardFilter,
+    voterPuFilter, setVoterPuFilter
+  } = useApp();
+
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedVoter, setSelectedVoter] = useState<Voter | null>(null);
   const [noteText, setNoteText] = useState('');
   const [showNoteSuccess, setShowNoteSuccess] = useState(false);
-  const [wardAgents, setWardAgents] = useState<any[]>([]);
-  const [selectedAgent, setSelectedAgent] = useState<string>('');
 
-  // Fetch agents in ward for ward_admin to filter voters
+  // Jurisdiction filter options
+  const [lgas, setLgas] = useState<{ id: number; name: string }[]>([]);
+  const [wards, setWards] = useState<{ id: number; name: string }[]>([]);
+  const [pollingUnits, setPollingUnits] = useState<{ id: number; name: string; puId?: string }[]>([]);
+
+  // Selected filter values
+  const [selectedLga, setSelectedLga] = useState<number | null>(() => {
+    if (user?.role === 'lga_admin' || user?.role === 'ward_admin') return user.lgaId || null;
+    return voterLgaFilter;
+  });
+  const [selectedWard, setSelectedWard] = useState<number | null>(() => {
+    if (user?.role === 'ward_admin') return user.wardId || null;
+    return voterWardFilter;
+  });
+  const [selectedPu, setSelectedPu] = useState<number | null>(() => {
+    if (user?.role === 'pu_agent') return user.lagosPollingUnitId || user.puId || null;
+    return voterPuFilter;
+  });
+
+  // Name lookup cache for Ward and PU
+  const [wardNames, setWardNames] = useState<Record<number, string>>({});
+  const [puNames, setPuNames] = useState<Record<number, string>>({});
+
+  const isLagos = user?.stateId === 24;
+
+  // 1. Fetch LGAs for State/National Admin
   useEffect(() => {
-    if (user?.role === 'ward_admin' && user?.wardId) {
+    if (!user) return;
+    const lgaTable = isLagos ? 'local_governments_lagos' : 'local_governments';
+    let query = supabase.from(lgaTable).select('id, name');
+    if (user.stateId) {
+      query = query.eq('state_id', user.stateId);
+    }
+    query.order('name').then(({ data }) => {
+      if (data) setLgas(data);
+    });
+  }, [user, isLagos]);
+
+  // 2. Fetch Wards based on selected LGA or user's assigned LGA
+  useEffect(() => {
+    if (!user) return;
+    const wardTable = isLagos ? 'wards_lagos' : 'wards';
+    const lgaCol = isLagos ? 'localgovernment_lagos_id' : 'localgovernment_id';
+    const effectiveLga = selectedLga || (user.role === 'lga_admin' || user.role === 'ward_admin' ? user.lgaId : null);
+
+    if (effectiveLga) {
       supabase
-        .from('agents')
-        .select('id, name, phone, polling_units_id')
-        .eq('wards_id', user.wardId)
-        .eq('role', 'pu_agent')
+        .from(wardTable)
+        .select('id, name')
+        .eq(lgaCol, effectiveLga)
+        .order('name')
         .then(({ data }) => {
-          const list = data || [];
-          setWardAgents(list);
-          if (list.length > 0) {
-            if (!voterPuFilter) {
-              setVoterPuFilter(list[0].polling_units_id);
-              setSelectedAgent(list[0].id);
-            } else {
-              const matching = list.find(a => a.polling_units_id === voterPuFilter);
-              if (matching) setSelectedAgent(matching.id);
-            }
+          if (data) {
+            setWards(data);
+            setWardNames(prev => {
+              const updated = { ...prev };
+              data.forEach((w: any) => { updated[w.id] = w.name; });
+              return updated;
+            });
+          }
+        });
+    } else {
+      setWards([]);
+    }
+  }, [user, isLagos, selectedLga]);
+
+  // 3. Fetch Polling Units based on selected Ward or user's assigned Ward
+  useEffect(() => {
+    if (!user) return;
+    const puTable = isLagos ? 'polling_units_lagos' : 'polling_units';
+    const effectiveWard = selectedWard || (user.role === 'ward_admin' ? user.wardId : null);
+
+    if (effectiveWard) {
+      supabase
+        .from(puTable)
+        .select('id, name, puId')
+        .eq('ward_id', effectiveWard)
+        .order('name')
+        .then(({ data }) => {
+          if (data) {
+            setPollingUnits(data);
+            setPuNames(prev => {
+              const updated = { ...prev };
+              data.forEach((p: any) => { updated[p.id] = p.name; });
+              return updated;
+            });
+          }
+        });
+    } else {
+      setPollingUnits([]);
+    }
+  }, [user, isLagos, selectedWard]);
+
+  // 4. Batch resolve Ward and PU names for any displayed voters not in cache
+  useEffect(() => {
+    if (!voters || voters.length === 0) return;
+    const wardTable = isLagos ? 'wards_lagos' : 'wards';
+    const puTable = isLagos ? 'polling_units_lagos' : 'polling_units';
+
+    const missingWards = Array.from(new Set(
+      voters
+        .map(v => v.wardId)
+        .filter((id): id is number => typeof id === 'number' && !wardNames[id])
+    ));
+    if (missingWards.length > 0) {
+      supabase
+        .from(wardTable)
+        .select('id, name')
+        .in('id', missingWards)
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            setWardNames(prev => {
+              const next = { ...prev };
+              data.forEach((w: any) => { next[w.id] = w.name; });
+              return next;
+            });
           }
         });
     }
-  }, [user, voterPuFilter, setVoterPuFilter]);
+
+    const missingPus = Array.from(new Set(
+      voters
+        .map(v => v.puNumberId)
+        .filter((id): id is number => typeof id === 'number' && !puNames[id])
+    ));
+    if (missingPus.length > 0) {
+      supabase
+        .from(puTable)
+        .select('id, name')
+        .in('id', missingPus)
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            setPuNames(prev => {
+              const next = { ...prev };
+              data.forEach((p: any) => { next[p.id] = p.name; });
+              return next;
+            });
+          }
+        });
+    }
+  }, [voters, isLagos, wardNames, puNames]);
+
+  // Filter change handlers
+  const handleLgaChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value ? parseInt(e.target.value, 10) : null;
+    setSelectedLga(val);
+    setSelectedWard(null);
+    setSelectedPu(null);
+    setVoterLgaFilter(val);
+    setVoterWardFilter(null);
+    setVoterPuFilter(null);
+    fetchVotersPage(1, { lgaId: val, wardId: null, puId: null });
+  };
+
+  const handleWardChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value ? parseInt(e.target.value, 10) : null;
+    setSelectedWard(val);
+    setSelectedPu(null);
+    setVoterWardFilter(val);
+    setVoterPuFilter(null);
+    fetchVotersPage(1, { lgaId: selectedLga, wardId: val, puId: null });
+  };
+
+  const handlePuChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value ? parseInt(e.target.value, 10) : null;
+    setSelectedPu(val);
+    setVoterPuFilter(val);
+    fetchVotersPage(1, { lgaId: selectedLga, wardId: selectedWard, puId: val });
+  };
+
+  // Helper to format shortened PU (first 8 letters) before the phone number
+  const getShortPu8 = (voter: Voter) => {
+    const rawPu = (voter.puNumberId && puNames[voter.puNumberId]) 
+      ? puNames[voter.puNumberId] 
+      : (voter.puId || 'PU');
+
+    const cleanPu = rawPu.replace(/^[^a-zA-Z0-9]+/, '').trim();
+    return cleanPu.slice(0, 8) || 'PU';
+  };
+
+  // Ensure currentVoter has resolved Ward and PU names in the details modal
+  useEffect(() => {
+    if (!selectedVoter) return;
+    const isLagosState = user?.stateId === 24;
+    if (selectedVoter.wardId && !wardNames[selectedVoter.wardId]) {
+      const wardTable = isLagosState ? 'wards_lagos' : 'wards';
+      supabase.from(wardTable).select('id, name').eq('id', selectedVoter.wardId).single().then(({ data }) => {
+        if (data) setWardNames(prev => ({ ...prev, [data.id]: data.name }));
+      });
+    }
+    if (selectedVoter.puNumberId && !puNames[selectedVoter.puNumberId]) {
+      const puTable = isLagosState ? 'polling_units_lagos' : 'polling_units';
+      supabase.from(puTable).select('id, name').eq('id', selectedVoter.puNumberId).single().then(({ data }) => {
+        if (data) setPuNames(prev => ({ ...prev, [data.id]: data.name }));
+      });
+    }
+  }, [selectedVoter, user?.stateId]);
 
   // Edit fields and notes view state
   const [selectedStatus, setSelectedStatus] = useState<Voter['status'] | null>(null);
@@ -85,7 +265,7 @@ export default function Voters() {
         setTimeout(() => setShowNoteSuccess(false), 3000);
       }
     } catch (err) {
-      alert('Failed to save changes');
+      toast.error(getFriendlyErrorMessage(err));
     } finally {
       setIsSaving(false);
     }
@@ -139,33 +319,93 @@ export default function Voters() {
         <p className="text-gray-500">Manage and update voter canvassing status</p>
       </div>
 
-      {user?.role === 'ward_admin' && wardAgents.length > 0 && (
-        <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
-          <div>
-            <h2 className="text-sm font-semibold text-[#004d25] uppercase tracking-wider">Agent Monitoring</h2>
-            <p className="text-xs text-gray-400">Viewing voter register for the selected agent's polling unit</p>
+      {/* Jurisdiction Filters (LGA, Ward, PU) */}
+      {user?.role !== 'pu_agent' && (
+        <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200 shadow-xs mb-4">
+          <div className="flex items-center gap-2 mb-2.5 pb-2 border-b border-gray-100">
+            <MapPin size={15} className="text-[#004d25]" />
+            <span className="text-xs font-bold text-gray-800 uppercase tracking-wider">
+              Jurisdiction Filters
+            </span>
           </div>
-          <select 
-            value={selectedAgent} 
-            onChange={(e) => {
-              const val = e.target.value;
-              setSelectedAgent(val);
-              const agent = wardAgents.find(a => a.id === val);
-              if (agent) {
-                setVoterPuFilter(agent.polling_units_id);
-              }
-            }} 
-            className="w-full sm:w-72 border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-[#004d25] font-medium text-gray-700 bg-white"
-          >
-            {wardAgents.map(a => (
-              <option key={a.id} value={a.id}>
-                {a.name} ({a.phone})
-              </option>
-            ))}
-          </select>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* LGA Filter (State & National Admins) */}
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-600 mb-1">
+                Local Government (LGA)
+              </label>
+              {user?.role === 'national_admin' || user?.role === 'state_admin' ? (
+                <select
+                  value={selectedLga || ''}
+                  onChange={handleLgaChange}
+                  className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white focus:ring-2 focus:ring-[#004d25] focus:outline-none"
+                >
+                  <option value="">All LGAs</option>
+                  {lgas.map(lga => (
+                    <option key={lga.id} value={lga.id}>{lga.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  disabled
+                  value={user?.locationName || 'Assigned LGA'}
+                  className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-500 bg-gray-50 cursor-not-allowed"
+                />
+              )}
+            </div>
+
+            {/* Ward Filter */}
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-600 mb-1">
+                Ward
+              </label>
+              {user?.role === 'ward_admin' ? (
+                <input
+                  type="text"
+                  disabled
+                  value={user?.locationName || 'Assigned Ward'}
+                  className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-500 bg-gray-50 cursor-not-allowed"
+                />
+              ) : (
+                <select
+                  value={selectedWard || ''}
+                  onChange={handleWardChange}
+                  disabled={!selectedLga && user?.role !== 'lga_admin'}
+                  className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white focus:ring-2 focus:ring-[#004d25] focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
+                >
+                  <option value="">All Wards</option>
+                  {wards.map(ward => (
+                    <option key={ward.id} value={ward.id}>{ward.name}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {/* Polling Unit Filter */}
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-600 mb-1">
+                Polling Unit (PU)
+              </label>
+              <select
+                value={selectedPu || ''}
+                onChange={handlePuChange}
+                disabled={!selectedWard && user?.role !== 'ward_admin'}
+                className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white focus:ring-2 focus:ring-[#004d25] focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
+              >
+                <option value="">All Polling Units</option>
+                {pollingUnits.map(pu => (
+                  <option key={pu.id} value={pu.id}>
+                    {pu.name} {pu.puId ? `(${pu.puId})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
         </div>
       )}
 
+      {/* Search Bar */}
       <div className="flex gap-2 mb-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
@@ -177,10 +417,6 @@ export default function Voters() {
             className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#004d25] focus:border-transparent"
           />
         </div>
-        <button className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-gray-700">
-          <Filter size={20} />
-          <span className="hidden sm:inline">Filter</span>
-        </button>
       </div>
 
       <div className="flex-1 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
@@ -197,27 +433,40 @@ export default function Voters() {
             </div>
           ) : (
             <ul className="divide-y divide-gray-100">
-              {filteredVoters.map(voter => (
-                <li 
-                  key={voter.id} 
-                  onClick={() => handleSelectVoter(voter)}
-                  className="p-4 hover:bg-gray-50 cursor-pointer flex items-center justify-between transition-colors"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-400 overflow-hidden">
-                      {voter.image ? (
-                        <img src={voter.image} alt={voter.name} className="w-full h-full object-cover" />
-                      ) : (
-                        <UserCircle size={24} />
-                      )}
+              {filteredVoters.map(voter => {
+                const shortPu8 = getShortPu8(voter);
+                return (
+                  <li 
+                    key={voter.id} 
+                    onClick={() => handleSelectVoter(voter)}
+                    className="p-4 hover:bg-gray-50 cursor-pointer flex items-center justify-between transition-colors"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-400 overflow-hidden">
+                        {voter.image ? (
+                          <img src={voter.image} alt={voter.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <UserCircle size={24} />
+                        )}
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-gray-900">
+                          {voter.name}
+                        </h4>
+                        {/* PU details badge commented out for now:
+                        <div className="flex items-center gap-1.5 text-xs text-gray-500 mt-0.5">
+                          <span 
+                            className="bg-emerald-50 text-emerald-800 font-semibold px-1.5 py-0.5 rounded text-[10px] tracking-wider uppercase shrink-0" 
+                            title={`Polling Unit: ${puNames[voter.puNumberId || 0] || voter.puId || 'PU'}`}
+                          >
+                            PU: {shortPu8}
+                          </span>
+                          <span>{formatPhone(voter.phone)}</span>
+                        </div>
+                        */}
+                        <p className="text-xs text-gray-500 mt-0.5">{formatPhone(voter.phone)}</p>
+                      </div>
                     </div>
-                    <div>
-                      <h4 className="font-semibold text-gray-900">
-                        {voter.name}
-                      </h4>
-                      <p className="text-xs text-gray-500">{formatPhone(voter.phone)}</p>
-                    </div>
-                  </div>
                   <div className="flex items-center gap-3">
                     {voter.phone && (
                       <div className="flex items-center gap-1.5 mr-2" onClick={(e) => e.stopPropagation()}>
@@ -254,7 +503,8 @@ export default function Voters() {
                     </span>
                   </div>
                 </li>
-              ))}
+              );
+            })}
             </ul>
           )}
         </div>
@@ -308,26 +558,49 @@ export default function Voters() {
                 <h2 className="text-2xl font-bold text-gray-900">
                   {currentVoter.name}
                 </h2>
-                <p className="text-gray-500">{currentVoter.puId || currentVoter.vin}</p>
+                <p className="text-xs text-emerald-800 font-medium mt-1">
+                  {wardNames[currentVoter.wardId || 0] ? `${wardNames[currentVoter.wardId || 0]} • ` : ''}
+                  {puNames[currentVoter.puNumberId || 0] || currentVoter.puId || currentVoter.vin}
+                </p>
               </div>
 
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="grid grid-cols-2 gap-3 text-sm">
                   <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    <span className="text-gray-500 block mb-1">Location ID</span>
-                    <span className="font-semibold text-gray-900">{currentVoter.locationId}</span>
+                    <span className="text-gray-500 text-xs block mb-1">Ward</span>
+                    <span className="font-semibold text-gray-900 text-xs block break-words" title={wardNames[currentVoter.wardId || 0] || 'Ward'}>
+                      {wardNames[currentVoter.wardId || 0] || (currentVoter.wardId ? `Ward ${currentVoter.wardId}` : 'N/A')}
+                    </span>
                   </div>
                   <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    <span className="text-gray-500 block mb-1">PU ID</span>
-                    <span className="font-semibold text-gray-900">{currentVoter.puId || currentVoter.vin}</span>
+                    <span className="text-gray-500 text-xs block mb-1">Polling Unit (PU)</span>
+                    <span className="font-semibold text-gray-900 text-xs block break-words" title={puNames[currentVoter.puNumberId || 0] || currentVoter.puId || 'PU'}>
+                      {puNames[currentVoter.puNumberId || 0] || currentVoter.puId || 'N/A'}
+                    </span>
                   </div>
                   <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    <span className="text-gray-500 block mb-1">Phone Number</span>
-                    <span className="font-semibold text-gray-900">{formatPhone(currentVoter.phone)}</span>
+                    <span className="text-gray-500 text-xs block mb-1">PU Code / VIN</span>
+                    <span className="font-semibold text-gray-900 text-xs block">
+                      {currentVoter.puId || currentVoter.vin || 'N/A'}
+                    </span>
                   </div>
                   <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    <span className="text-gray-500 block mb-1">Date of Birth</span>
-                    <span className="font-semibold text-gray-900">{currentVoter.dob || 'N/A'}</span>
+                    <span className="text-gray-500 text-xs block mb-1">Phone Number</span>
+                    <span className="font-semibold text-gray-900 text-xs block">
+                      {formatPhone(currentVoter.phone)}
+                    </span>
+                  </div>
+                  <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                    <span className="text-gray-500 text-xs block mb-1">Date of Birth</span>
+                    <span className="font-semibold text-gray-900 text-xs block">
+                      {currentVoter.dob || 'N/A'}
+                    </span>
+                  </div>
+                  <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                    <span className="text-gray-500 text-xs block mb-1">Location ID</span>
+                    <span className="font-semibold text-gray-900 text-xs block">
+                      {currentVoter.locationId || 'N/A'}
+                    </span>
                   </div>
                 </div>
 

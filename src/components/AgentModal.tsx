@@ -5,6 +5,35 @@ import { cn } from '../lib/utils';
 import toast from 'react-hot-toast';
 import { fetchBanks, verifyAccount, verifyNameMatch, checkAccountExistsInDb, PaystackBank } from '../lib/paystack';
 
+export const getAvailableRoles = (userRole: Role): { role: Role; label: string }[] => {
+  switch (userRole) {
+    case 'national_admin':
+      return [
+        { role: 'state_admin', label: 'State Admin' },
+        { role: 'lga_admin', label: 'LGA Coordinator' },
+        { role: 'ward_admin', label: 'Ward Admin' },
+        { role: 'pu_agent', label: 'Polling Unit Agent' }
+      ];
+    case 'state_admin':
+      return [
+        { role: 'ward_admin', label: 'Ward Admin' },
+        { role: 'lga_admin', label: 'LGA Coordinator' },
+        { role: 'pu_agent', label: 'Polling Unit Agent' }
+      ];
+    case 'lga_admin':
+      return [
+        { role: 'ward_admin', label: 'Ward Admin' },
+        { role: 'pu_agent', label: 'Polling Unit Agent' }
+      ];
+    case 'ward_admin':
+      return [
+        { role: 'pu_agent', label: 'Polling Unit Agent' }
+      ];
+    default:
+      return [{ role: 'pu_agent', label: 'Polling Unit Agent' }];
+  }
+};
+
 interface AgentModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -17,6 +46,7 @@ interface AgentModalProps {
 
 export default function AgentModal({ isOpen, onClose, onSave, initialData, fixedLocation, locations, userRole }: AgentModalProps) {
   const { user } = useApp();
+  const availableRoles = getAvailableRoles(userRole);
   const [tab, setTab] = useState<'personal' | 'bank' | 'jurisdiction'>('personal');
   const [isSaving, setIsSaving] = useState(false);
   const [form, setForm] = useState<Partial<Agent>>({
@@ -131,6 +161,21 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
       const prefilledLast = initialData?.lastName || (nameParts.length > 1 ? nameParts.slice(1).join(' ') : '');
       const prefilledPic = initialData?.picture || (initialData as any)?.profile_picture_url || '';
 
+      let defaultRole: Role = 'pu_agent';
+      if (initialData?.role) {
+        defaultRole = initialData.role;
+      } else if (fixedLocation) {
+        if (fixedLocation.type === 'pu') defaultRole = 'pu_agent';
+        else if (fixedLocation.type === 'ward') defaultRole = userRole === 'state_admin' ? 'ward_admin' : 'pu_agent';
+        else if (fixedLocation.type === 'lga') defaultRole = 'ward_admin';
+        else if (fixedLocation.type === 'state') defaultRole = 'state_admin';
+      } else {
+        if (userRole === 'ward_admin') defaultRole = 'pu_agent';
+        else if (userRole === 'state_admin') defaultRole = 'ward_admin';
+        else if (userRole === 'lga_admin') defaultRole = 'ward_admin';
+        else if (userRole === 'national_admin') defaultRole = 'state_admin';
+      }
+
       setForm({
         firstName: prefilledFirst,
         lastName: prefilledLast,
@@ -140,7 +185,7 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
         accountName: initialData?.accountName || '',
         accountNumber: initialData?.accountNumber || '',
         locationId: defaultLocId,
-        role: initialData?.role || 'pu_agent'
+        role: defaultRole
       });
       setPassword('');
       setConfirmPassword('');
@@ -607,6 +652,32 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
                 <input required type="tel" value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#004d25]" />
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Cadre / Role <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={form.role || 'pu_agent'}
+                  onChange={e => {
+                    const newRole = e.target.value as Role;
+                    setForm(prev => ({ ...prev, role: newRole }));
+                  }}
+                  disabled={availableRoles.length <= 1}
+                  className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#004d25] bg-white text-sm disabled:bg-gray-100 disabled:text-gray-600"
+                >
+                  {availableRoles.map(r => (
+                    <option key={r.role} value={r.role}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+                {availableRoles.length <= 1 && (
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    Your account cadre as {userRole.replace(/_/g, ' ')} assigns {availableRoles[0]?.label}.
+                  </p>
+                )}
+              </div>
+
               {/* Password Section */}
               {!initialData?.id ? (
                 // Registration mode: Password and Confirm Password with view/hide toggles
@@ -1023,9 +1094,10 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
               <JurisdictionSelector 
                 locations={locations} 
                 selectedLocationId={form.locationId || ''} 
-                onChange={(id, details) => setForm({...form, locationId: id, ...details})} 
+                onChange={(id, details) => setForm(prev => ({ ...prev, locationId: id, ...details }))} 
                 fixedLocation={fixedLocation}
                 user={user}
+                targetRole={form.role || 'pu_agent'}
               />
               <div className="pt-4 flex gap-3">
                 <button type="button" onClick={() => setTab('bank')} className="px-4 py-2 border rounded-lg hover:bg-gray-50 cursor-pointer">Back</button>
@@ -1051,7 +1123,21 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
 
 import { supabase } from '../lib/supabase';
 
-function JurisdictionSelector({ locations, selectedLocationId, onChange, fixedLocation, user }: { locations: Location[], selectedLocationId: string, onChange: (id: string, details: any) => void, fixedLocation?: Location, user: any }) {
+function JurisdictionSelector({ 
+  locations, 
+  selectedLocationId, 
+  onChange, 
+  fixedLocation, 
+  user,
+  targetRole = 'pu_agent'
+}: { 
+  locations: Location[]; 
+  selectedLocationId: string; 
+  onChange: (id: string, details: any) => void; 
+  fixedLocation?: Location; 
+  user: any;
+  targetRole?: Role;
+}) {
   const [states, setStates] = useState<any[]>([]);
   const [lgas, setLgas] = useState<any[]>([]);
   const [wards, setWards] = useState<any[]>([]);
@@ -1068,96 +1154,135 @@ function JurisdictionSelector({ locations, selectedLocationId, onChange, fixedLo
     supabase.from('states').select('id,name').order('name').then(({ data }) => setStates(data || []));
   }, []);
 
-  // When selectedLocationId changes externally (or initially), try to reconstruct the path
+  // Synchronize hierarchy based on user scope, fixed location, or selectedLocationId
   useEffect(() => {
-    if (!selectedLocationId) return;
-    
-    // If it's a fixed location from the tree, we still want to resolve its parents
-    // to populate the locked dropdowns.
-    
-    // We would need to resolve the path if not provided by predefined fields,
-    // but in many cases selectedLocationId is set from the top down.
-    // Setting up the initial path perfectly would require reverse lookups:
-    const resolvePath = async () => {
-      let st = '', lg = '', wd = '', pu = '';
-      if (selectedLocationId.startsWith('state_')) st = selectedLocationId.replace('state_', '');
-      else if (selectedLocationId.startsWith('lga_')) {
-        lg = selectedLocationId.replace('lga_', '');
-        const isLagosLGA = user?.stateId === 24 || (parseInt(lg) <= 20);
-        const table = isLagosLGA ? 'local_governments_lagos' : 'local_governments';
-        const { data } = await supabase.from(table).select('state_id').eq('id', lg).single();
-        if (data) st = data.state_id?.toString() || '';
-      }
-      else if (selectedLocationId.startsWith('ward_')) {
-        wd = selectedLocationId.replace('ward_', '');
-        const isLagosWard = user?.stateId === 24 || (parseInt(wd) < 1000);
-        if (isLagosWard) {
-          const { data: wData } = await supabase.from('wards_lagos').select('localgovernment_lagos_id').eq('id', wd).single();
-          if (wData?.localgovernment_lagos_id) {
-            lg = wData.localgovernment_lagos_id.toString();
-            st = '24';
-          }
-        } else {
-          const { data: wData } = await supabase.from('wards').select('localgovernment_id').eq('id', wd).single();
-          if (wData?.localgovernment_id) {
-            lg = wData.localgovernment_id.toString();
-            const { data: lData } = await supabase.from('local_governments').select('state_id').eq('id', lg).single();
-            if (lData) st = lData.state_id?.toString() || '';
-          }
-        }
-      }
-      else if (selectedLocationId.startsWith('pu_')) {
-        pu = selectedLocationId.replace('pu_', '');
-        const { data: lagosPu } = await supabase.from('polling_units_lagos').select('id, ward_id, localgovernment_id').eq('id', pu).single();
-        if (lagosPu) {
-          pu = lagosPu.id.toString();
-          wd = lagosPu.ward_id.toString();
-          lg = lagosPu.localgovernment_id.toString();
-          st = '24';
-        } else {
-          const { data: pData } = await supabase.from('polling_units').select('ward_id').eq('id', pu).single();
-          if (pData?.ward_id) {
-            wd = pData.ward_id.toString();
-            const { data: wData } = await supabase.from('wards').select('localgovernment_id').eq('id', wd).single();
-            if (wData?.localgovernment_id) {
-              lg = wData.localgovernment_id.toString();
-              const { data: lData } = await supabase.from('local_governments').select('state_id').eq('id', lg).single();
-              if (lData) st = lData.state_id?.toString() || '';
+    let isCancelled = false;
+
+    const initHierarchy = async () => {
+      setLoading(true);
+      try {
+        let st = '';
+        let lg = '';
+        let wd = '';
+        let pu = '';
+
+        // 1. Initial defaults from user's assigned jurisdiction
+        if (user?.stateId) st = String(user.stateId);
+        if (user?.lgaId) lg = String(user.lgaId);
+        if (user?.wardId) wd = String(user.wardId);
+        if (user?.puId) pu = String(user.puId);
+
+        // 2. Override from fixedLocation or selectedLocationId if provided
+        const locToResolve = fixedLocation?.id || selectedLocationId;
+        if (locToResolve) {
+          if (locToResolve.startsWith('state_')) {
+            st = locToResolve.replace('state_', '');
+          } else if (locToResolve.startsWith('lga_')) {
+            lg = locToResolve.replace('lga_', '');
+            const isLagosLGA = (st === '24') || user?.stateId === 24 || parseInt(lg, 10) <= 20;
+            const table = isLagosLGA ? 'local_governments_lagos' : 'local_governments';
+            const { data } = await supabase.from(table).select('state_id').eq('id', lg).single();
+            if (data?.state_id) st = String(data.state_id);
+          } else if (locToResolve.startsWith('ward_')) {
+            wd = locToResolve.replace('ward_', '');
+            const isLagosWard = (st === '24') || user?.stateId === 24 || parseInt(wd, 10) < 1000;
+            if (isLagosWard) {
+              const { data: wData } = await supabase.from('wards_lagos').select('localgovernment_lagos_id').eq('id', wd).single();
+              if (wData?.localgovernment_lagos_id) {
+                lg = String(wData.localgovernment_lagos_id);
+                st = '24';
+              }
+            } else {
+              const { data: wData } = await supabase.from('wards').select('localgovernment_id').eq('id', wd).single();
+              if (wData?.localgovernment_id) {
+                lg = String(wData.localgovernment_id);
+                const { data: lData } = await supabase.from('local_governments').select('state_id').eq('id', lg).single();
+                if (lData?.state_id) st = String(lData.state_id);
+              }
+            }
+          } else if (locToResolve.startsWith('pu_')) {
+            pu = locToResolve.replace('pu_', '');
+            const isLagosContext = (st === '24') || user?.stateId === 24;
+            if (isLagosContext) {
+              const { data: lagosPu } = await supabase.from('polling_units_lagos').select('id, ward_id, localgovernment_id').eq('id', pu).single();
+              if (lagosPu) {
+                wd = String(lagosPu.ward_id);
+                if (lagosPu.localgovernment_id) lg = String(lagosPu.localgovernment_id);
+                st = '24';
+              }
+            } else {
+              const { data: pData } = await supabase.from('polling_units').select('ward_id').eq('id', pu).single();
+              if (pData?.ward_id) {
+                wd = String(pData.ward_id);
+                const { data: wData } = await supabase.from('wards').select('localgovernment_id').eq('id', wd).single();
+                if (wData?.localgovernment_id) {
+                  lg = String(wData.localgovernment_id);
+                  const { data: lData } = await supabase.from('local_governments').select('state_id').eq('id', lg).single();
+                  if (lData?.state_id) st = String(lData.state_id);
+                }
+              }
             }
           }
         }
-      }
-      
-      setSelectedState(st);
-      const isLagos = st === '24' || user?.stateId === 24;
-      if (st) {
-        const table = isLagos ? 'local_governments_lagos' : 'local_governments';
-        supabase.from(table).select('id,name').eq('state_id', st).order('name').then(res => setLgas(res.data || []));
-      }
-      setSelectedLga(lg);
-      if (lg) {
-        const table = isLagos ? 'wards_lagos' : 'wards';
-        const filterCol = isLagos ? 'localgovernment_lagos_id' : 'localgovernment_id';
-        supabase.from(table).select('id,name').eq(filterCol, lg).order('name').then(res => setWards(res.data || []));
-      }
-      setSelectedWard(wd);
-      if (wd) {
-        const table = isLagos ? 'polling_units_lagos' : 'polling_units';
-        supabase.from(table).select('id,name').eq('ward_id', wd).order('name').then(res => setPus(res.data || []));
-      }
-      setSelectedPu(pu);
 
-      // CRITICAL: Sync the resolved hierarchy back to the parent form
-      onChange(selectedLocationId, {
-        stateId: st ? parseInt(st) : null,
-        lgaId: lg ? parseInt(lg) : null,
-        wardId: wd ? parseInt(wd) : null,
-        puId: pu ? parseInt(pu) : null
-      });
+        if (isCancelled) return;
+
+        setSelectedState(st);
+        setSelectedLga(lg);
+        setSelectedWard(wd);
+        setSelectedPu(pu);
+
+        const isLagosState = st === '24' || user?.stateId === 24;
+
+        // Fetch LGAs if state is set
+        if (st) {
+          const table = isLagosState ? 'local_governments_lagos' : 'local_governments';
+          const { data: lgaData } = await supabase.from(table).select('id,name').eq('state_id', st).order('name');
+          if (!isCancelled) setLgas(lgaData || []);
+        }
+
+        // Fetch Wards if LGA is set
+        if (lg) {
+          const table = isLagosState ? 'wards_lagos' : 'wards';
+          const filterCol = isLagosState ? 'localgovernment_lagos_id' : 'localgovernment_id';
+          const { data: wardData } = await supabase.from(table).select('id,name').eq(filterCol, lg).order('name');
+          if (!isCancelled) setWards(wardData || []);
+        }
+
+        // Fetch PUs if Ward is set
+        if (wd) {
+          const table = isLagosState ? 'polling_units_lagos' : 'polling_units';
+          const { data: puData } = await supabase.from(table).select('id,name').eq('ward_id', wd).order('name');
+          if (!isCancelled) setPus(puData || []);
+        }
+
+        // Calculate and sync assigned location ID based on targetRole
+        let finalLocId = '';
+        if (targetRole === 'state_admin' && st) finalLocId = `state_${st}`;
+        else if (targetRole === 'lga_admin' && lg) finalLocId = `lga_${lg}`;
+        else if (targetRole === 'ward_admin' && wd) finalLocId = `ward_${wd}`;
+        else if (pu) finalLocId = `pu_${pu}`;
+        else if (wd) finalLocId = `ward_${wd}`;
+        else if (lg) finalLocId = `lga_${lg}`;
+        else if (st) finalLocId = `state_${st}`;
+
+        onChange(finalLocId, {
+          stateId: st ? parseInt(st, 10) : null,
+          lgaId: lg ? parseInt(lg, 10) : null,
+          wardId: wd ? parseInt(wd, 10) : null,
+          puId: pu ? parseInt(pu, 10) : null
+        });
+      } finally {
+        if (!isCancelled) setLoading(false);
+      }
     };
 
-    resolvePath();
-  }, [selectedLocationId, fixedLocation]);
+    initHierarchy();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedLocationId, fixedLocation?.id, user?.stateId, user?.lgaId, user?.wardId, user?.puId, targetRole]);
 
   const isLagos = selectedState === '24' || user?.stateId === 24;
 
@@ -1169,7 +1294,7 @@ function JurisdictionSelector({ locations, selectedLocationId, onChange, fixedLo
     setSelectedPu('');
     setLgas([]); setWards([]); setPus([]);
     onChange(val ? `state_${val}` : '', {
-      stateId: val ? parseInt(val) : null,
+      stateId: val ? parseInt(val, 10) : null,
       lgaId: null,
       wardId: null,
       puId: null
@@ -1190,9 +1315,11 @@ function JurisdictionSelector({ locations, selectedLocationId, onChange, fixedLo
     setSelectedWard('');
     setSelectedPu('');
     setWards([]); setPus([]);
-    onChange(val ? `lga_${val}` : (selectedState ? `state_${selectedState}` : ''), {
-      stateId: selectedState ? parseInt(selectedState) : null,
-      lgaId: val ? parseInt(val) : null,
+
+    const finalId = targetRole === 'lga_admin' && val ? `lga_${val}` : (val ? `lga_${val}` : (selectedState ? `state_${selectedState}` : ''));
+    onChange(finalId, {
+      stateId: selectedState ? parseInt(selectedState, 10) : null,
+      lgaId: val ? parseInt(val, 10) : null,
       wardId: null,
       puId: null
     });
@@ -1212,14 +1339,16 @@ function JurisdictionSelector({ locations, selectedLocationId, onChange, fixedLo
     setSelectedWard(val);
     setSelectedPu('');
     setPus([]);
-    onChange(val ? `ward_${val}` : (selectedLga ? `lga_${selectedLga}` : ''), {
-      stateId: selectedState ? parseInt(selectedState) : null,
-      lgaId: selectedLga ? parseInt(selectedLga) : null,
-      wardId: val ? parseInt(val) : null,
+
+    const finalId = targetRole === 'ward_admin' && val ? `ward_${val}` : (val ? `ward_${val}` : (selectedLga ? `lga_${selectedLga}` : ''));
+    onChange(finalId, {
+      stateId: selectedState ? parseInt(selectedState, 10) : null,
+      lgaId: selectedLga ? parseInt(selectedLga, 10) : null,
+      wardId: val ? parseInt(val, 10) : null,
       puId: null
     });
     
-    if (val) {
+    if (val && targetRole === 'pu_agent') {
       setLoading(true);
       const table = isLagos ? 'polling_units_lagos' : 'polling_units';
       const { data } = await supabase.from(table).select('id,name').eq('ward_id', val).order('name');
@@ -1232,56 +1361,106 @@ function JurisdictionSelector({ locations, selectedLocationId, onChange, fixedLo
     const val = e.target.value;
     setSelectedPu(val);
     onChange(val ? `pu_${val}` : (selectedWard ? `ward_${selectedWard}` : ''), {
-      stateId: selectedState ? parseInt(selectedState) : null,
-      lgaId: selectedLga ? parseInt(selectedLga) : null,
-      wardId: selectedWard ? parseInt(selectedWard) : null,
-      puId: val ? parseInt(val) : null
+      stateId: selectedState ? parseInt(selectedState, 10) : null,
+      lgaId: selectedLga ? parseInt(selectedLga, 10) : null,
+      wardId: selectedWard ? parseInt(selectedWard, 10) : null,
+      puId: val ? parseInt(val, 10) : null
     });
   };
 
-  const levelPriority = { 'national': 4, 'state': 3, 'lga': 2, 'ward': 1, 'pu': 0 };
-  const fixedLevel = fixedLocation ? levelPriority[fixedLocation.type as keyof typeof levelPriority] : -1;
+  const levelPriority: Record<string, number> = { 'national': 4, 'state': 3, 'lga': 2, 'ward': 1, 'pu': 0 };
+  const fixedLevel = fixedLocation ? (levelPriority[fixedLocation.type] ?? -1) : -1;
 
-  const isStateDisabled = (fixedLevel >= 3) || (!!user?.stateId && user?.role !== 'national_admin');
-  const isLgaDisabled = (fixedLevel >= 2) || (isStateDisabled && !!user?.lgaId && ['lga_admin', 'ward_admin', 'pu_agent'].includes(user?.role));
-  const isWardDisabled = (fixedLevel >= 1) || (isLgaDisabled && !!user?.wardId && ['ward_admin', 'pu_agent'].includes(user?.role));
-  const isPuDisabled = (fixedLevel >= 0) || (isWardDisabled && !!user?.puId && user?.role === 'pu_agent');
+  // Strict jurisdictional isolation:
+  // - National admin can manage any state
+  // - State admin has State locked; can only see/assign LGAs/Wards/PUs within that state
+  // - LGA admin has State and LGA locked; can only see/assign Wards/PUs within that LGA
+  // - Ward admin has State, LGA, and Ward locked; can only see/assign PUs within that Ward
+  const isStateDisabled = (user?.role !== 'national_admin' && !!user?.stateId) || (fixedLevel >= 3);
+  const isLgaDisabled = (['lga_admin', 'ward_admin', 'pu_agent'].includes(user?.role) && !!user?.lgaId) || (fixedLevel >= 2);
+  const isWardDisabled = (['ward_admin', 'pu_agent'].includes(user?.role) && !!user?.wardId) || (fixedLevel >= 1);
+  const isPuDisabled = (user?.role === 'pu_agent' && !!user?.puId) || (fixedLevel >= 0);
 
   return (
     <div className="space-y-4">
+      {/* State Selection */}
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">State</label>
-        <select value={selectedState} onChange={handleStateChange} disabled={isStateDisabled} className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#004d25] disabled:bg-gray-100 disabled:text-gray-500">
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          State {isStateDisabled && <span className="text-xs text-gray-400 font-normal">(Locked to your jurisdiction)</span>}
+        </label>
+        <select 
+          value={selectedState} 
+          onChange={handleStateChange} 
+          disabled={isStateDisabled} 
+          className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#004d25] disabled:bg-gray-100 disabled:text-gray-600 text-sm bg-white"
+        >
           <option value="">Select State...</option>
           {states.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
         </select>
       </div>
 
-      {(lgas.length > 0 || isStateDisabled) && (
+      {/* LGA Selection (hidden for State Admin target role) */}
+      {targetRole !== 'state_admin' && (
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">LGA (Optional)</label>
-          <select value={selectedLga} onChange={handleLgaChange} disabled={isLgaDisabled} className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#004d25] disabled:bg-gray-100 disabled:text-gray-500">
-            <option value="">Select LGA...</option>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Local Government Area (LGA) {isLgaDisabled && <span className="text-xs text-gray-400 font-normal">(Locked to your jurisdiction)</span>}
+          </label>
+          <select 
+            value={selectedLga} 
+            onChange={handleLgaChange} 
+            disabled={isLgaDisabled || !selectedState} 
+            className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#004d25] disabled:bg-gray-100 disabled:text-gray-600 text-sm bg-white"
+          >
+            <option value="">
+              {!selectedState ? 'Select State first...' : lgas.length === 0 && loading ? 'Loading LGAs...' : 'Select LGA...'}
+            </option>
             {lgas.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
         </div>
       )}
 
-      {(wards.length > 0 || isLgaDisabled) && (
+      {/* Ward Selection (shown for Ward Admin or PU Agent target roles) */}
+      {['ward_admin', 'pu_agent'].includes(targetRole) && (
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Ward (Optional)</label>
-          <select value={selectedWard} onChange={handleWardChange} disabled={isWardDisabled} className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#004d25] disabled:bg-gray-100 disabled:text-gray-500">
-            <option value="">Select Ward...</option>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Ward {isWardDisabled && <span className="text-xs text-gray-400 font-normal">(Locked to your jurisdiction)</span>}
+          </label>
+          <select 
+            value={selectedWard} 
+            onChange={handleWardChange} 
+            disabled={isWardDisabled || !selectedLga} 
+            className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#004d25] disabled:bg-gray-100 disabled:text-gray-600 text-sm bg-white"
+          >
+            <option value="">
+              {!selectedLga ? 'Select LGA first...' : wards.length === 0 && loading ? 'Loading Wards...' : 'Select Ward...'}
+            </option>
             {wards.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
         </div>
       )}
 
-      {(pus.length > 0 || isWardDisabled) && (
+      {/* Polling Unit Selection (only required for PU Agent target role) */}
+      {targetRole === 'pu_agent' && (
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Polling Unit (Optional)</label>
-          <select value={selectedPu} onChange={handlePuChange} disabled={isPuDisabled} className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#004d25] disabled:bg-gray-100 disabled:text-gray-500">
-            <option value="">Select PU...</option>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Polling Unit (PU) <span className="text-red-500">*</span>
+          </label>
+          <select 
+            value={selectedPu} 
+            onChange={handlePuChange} 
+            disabled={isPuDisabled || !selectedWard} 
+            className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#004d25] disabled:bg-gray-100 disabled:text-gray-600 text-sm bg-white"
+            required={targetRole === 'pu_agent'}
+          >
+            <option value="">
+              {!selectedWard 
+                ? 'Select Ward first...' 
+                : pus.length === 0 && loading 
+                ? 'Loading Polling Units...' 
+                : pus.length === 0 
+                ? 'No polling units found for this ward' 
+                : `Select Polling Unit (${pus.length} available)...`}
+            </option>
             {pus.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
         </div>
