@@ -276,19 +276,33 @@ Deno.serve(async (req: Request) => {
 
         if (apiKey && text.trim().length > 3) {
           try {
-            // Step A: Categorize group message
-            const catPrompt = `Categorize this political WhatsApp group chat message:
+            // Step A: Categorize group message with strict defense criteria
+            const candidateInfo = stateCfg?.group_ai_system_prompt || "ADC Candidate Gbadebo Rhodes-Vivour (GRV)";
+            const catPrompt = `You are an AI political defense detector monitoring a WhatsApp community group.
+Candidate information:
+"${candidateInfo}"
+
+Message under review:
 "${text}"
 
-Categories:
-- "attack": direct attack, misinformation, opponent smear, or hostile accusation against the candidate or party
-- "negative": general criticism or dissatisfaction with governance or policies
-- "question": inquiry asking about the candidate's manifesto, credentials, policy, or promises
-- "positive": expression of support or encouragement for the candidate/party
-- "neutral": general chatter, greeting, or unrelated topic
+CRITICAL RULES:
+- The AI must NEVER be intrusive or interrupt casual group conversations, general chatter, greetings, or meta questions about the chat/bot.
+- The AI is STRICTLY a quiet defender. It should ONLY intervene if BOTH conditions are met:
+  1. The candidate is EXPLICITLY mentioned by name (e.g. candidate name, initials, or alias) or directly and unmistakably talked about in THIS message.
+  2. AND the message contains an attack, smear, accusation, misinformation, or a direct inquiry/question explicitly asking about the candidate or their specific policies.
 
-You must respond with valid JSON only in this schema:
+If the message is general talk, about the bot/app itself (e.g., "can it initiate conversation", "can it share posters"), general greetings, everyday chatter (e.g., "We love lagos"), or does NOT explicitly mention or directly discuss the candidate, "candidateMentioned" MUST be false and "requiresDefense" MUST be false.
+
+Categories:
+- "attack": direct attack, misinformation, opponent smear, or hostile accusation against the candidate
+- "question": direct inquiry explicitly asking about the candidate's manifesto, credentials, or policies
+- "negative": general criticism or dissatisfaction with unrelated governance or everyday issues
+- "positive": expression of support or encouragement
+- "neutral": general chatter, greeting, questions about the bot/group, or unrelated topic
+
+Respond ONLY with valid JSON in this schema:
 {
+  "candidateMentioned": boolean,
   "category": "positive" | "negative" | "attack" | "question" | "neutral",
   "summary": "one line summary",
   "requiresDefense": boolean
@@ -298,7 +312,7 @@ You must respond with valid JSON only in this schema:
               provider: aiProvider,
               model: aiModel,
               apiKey,
-              systemPrompt: "You are an AI political analyst monitoring community group discussions. Always output strictly valid JSON.",
+              systemPrompt: "You are an AI political defense monitor. Only trigger defense when the candidate is directly mentioned and criticized or questioned. Always output strictly valid JSON.",
               userPrompt: catPrompt,
               jsonMode: true
             });
@@ -306,9 +320,11 @@ You must respond with valid JSON only in this schema:
             const parsed = parseJsonSafe(catResult);
             aiCategory = parsed.category || "neutral";
             aiSummary = parsed.summary || "";
-            const requiresDefense = Boolean(parsed.requiresDefense || aiCategory === "attack" || aiCategory === "question");
+            const candidateMentioned = Boolean(parsed.candidateMentioned);
+            // Strict defense check: candidate MUST be directly mentioned/talked about in this last message
+            const requiresDefense = Boolean(candidateMentioned && (parsed.requiresDefense || aiCategory === "attack"));
 
-            console.log(`Classified message: category="${aiCategory}", requiresDefense=${requiresDefense}, ai_enabled=${monitor.ai_enabled}`);
+            console.log(`Classified message: category="${aiCategory}", candidateMentioned=${candidateMentioned}, requiresDefense=${requiresDefense}, ai_enabled=${monitor.ai_enabled}`);
 
             // Step B: If requires defense AND frequency > 0 AND monitor.ai_enabled
             if (responseFreq > 0 && monitor.ai_enabled && requiresDefense) {
@@ -369,7 +385,10 @@ ${contextText || "ADC Core Commitments: Grassroots welfare, infrastructure trans
 A participant in the WhatsApp group stated:
 "${text}"
 
-Write a concise, friendly, factual defense or answer (maximum 2-3 sentences). Sound like an articulate, respectful grassroots community member.`;
+Rules for response:
+- Defend or clarify factually and politely in maximum 1-2 brief sentences.
+- Never write long promotional speeches or marketing pitches.
+- Sound like a natural, calm, respectful grassroots supporter answering only the specific point raised about the candidate.`;
 
                 aiReplyText = await generateAiText({
                   provider: aiProvider,
