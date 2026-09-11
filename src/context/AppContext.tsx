@@ -173,13 +173,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const [user, setUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('eagleeye_user');
-    const timestamp = localStorage.getItem('eagleeye_last_active') || localStorage.getItem('eagleeye_login_time');
-    if (saved && timestamp && Date.now() - parseInt(timestamp, 10) < SESSION_DURATION_MS) {
-      return JSON.parse(saved);
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Failed to parse cached user', e);
+      }
     }
-    localStorage.removeItem('eagleeye_user');
-    localStorage.removeItem('eagleeye_login_time');
-    localStorage.removeItem('eagleeye_last_active');
     return null;
   });
   
@@ -448,22 +448,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshDeploymentStats();
   }, [refreshElectionStats, refreshAgentStats, refreshDeploymentStats]);
 
-  useEffect(() => {
-    let interval: any;
-    if (user) {
-      interval = setInterval(() => {
-        const timestamp = localStorage.getItem('eagleeye_login_time');
-        if (timestamp && Date.now() - parseInt(timestamp) >= SESSION_DURATION_MS) {
-          setUser(null);
-          localStorage.removeItem('eagleeye_user');
-          localStorage.removeItem('eagleeye_login_time');
-          // Force redirect to login — session expired
-          window.location.href = '/login';
-        }
-      }, 30000); // check every 30 seconds
-    }
-    return () => clearInterval(interval);
-  }, [user]);
+  // Automatic logout disabled per user request
+  // useEffect(() => {
+  //   let interval: any;
+  //   if (user) {
+  //     interval = setInterval(() => {
+  //       const timestamp = localStorage.getItem('eagleeye_login_time');
+  //       if (timestamp && Date.now() - parseInt(timestamp) >= SESSION_DURATION_MS) {
+  //         setUser(null);
+  //         localStorage.removeItem('eagleeye_user');
+  //         localStorage.removeItem('eagleeye_login_time');
+  //         window.location.href = '/login';
+  //       }
+  //     }, 30000);
+  //   }
+  //   return () => clearInterval(interval);
+  // }, [user]);
 
   const fetchVotersPage = React.useCallback(async (
     page: number, 
@@ -482,14 +482,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const activeWard = customFilters?.wardId !== undefined ? customFilters.wardId : voterWardFilter;
       const activeLga = customFilters?.lgaId !== undefined ? customFilters.lgaId : voterLgaFilter;
 
-      if (user?.role === 'pu_agent' && (user?.lagosPollingUnitId || user?.puId)) {
-        votersQuery = votersQuery.eq('pollingunit_lagos_id', user.lagosPollingUnitId || user.puId);
+      if (user?.role === 'pu_agent' && (user?.puId || user?.lagosPollingUnitId)) {
+        const puTarget = user.puId || user.lagosPollingUnitId;
+        votersQuery = votersQuery.or(`polling_unit_id.eq.${puTarget},pollingunit_lagos_id.eq.${puTarget}`);
       } else if (activePu) {
-        votersQuery = votersQuery.eq('pollingunit_lagos_id', activePu);
+        votersQuery = votersQuery.or(`polling_unit_id.eq.${activePu},pollingunit_lagos_id.eq.${activePu}`);
       } else if (activeWard || (user?.role === 'ward_admin' && user?.wardId)) {
-        votersQuery = votersQuery.eq('ward_lagos_id', activeWard || user?.wardId);
+        const wTarget = activeWard || user?.wardId;
+        votersQuery = votersQuery.or(`ward_id.eq.${wTarget},ward_lagos_id.eq.${wTarget}`);
       } else if (activeLga || (user?.role === 'lga_admin' && user?.lgaId)) {
-        votersQuery = votersQuery.eq('localgovernment_lagos_id', activeLga || user?.lgaId);
+        const lgTarget = activeLga || user?.lgaId;
+        votersQuery = votersQuery.or(`localgovernment_id.eq.${lgTarget},localgovernment_lagos_id.eq.${lgTarget}`);
       } else if (user?.stateId) {
         votersQuery = votersQuery.eq('state_id', user.stateId);
       }
@@ -509,11 +512,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
            dob: v.dob,
            image: v.image || '',
            status: (v.status || 'Undecided') as Voter['status'],
-           locationId: `pu_${v.pollingunit_lagos_id || v.pollingunit_id || ''}` || 'nat1',
+           locationId: `pu_${v.polling_unit_id || v.pollingunit_lagos_id || ''}` || 'nat1',
            stateId: v.state_id,
-           lgaId: v.localgovernment_lagos_id || v.localgovernment_id || null,
-           wardId: v.ward_lagos_id || v.ward_id || null,
-           puNumberId: v.pollingunit_lagos_id || v.pollingunit_id || null,
+           lgaId: v.localgovernment_id || v.localgovernment_lagos_id || null,
+           wardId: v.ward_id || v.ward_lagos_id || null,
+           puNumberId: v.polling_unit_id || v.pollingunit_lagos_id || null,
            notes: v.notes || [],
            contact_logs: v.contact_logs || [],
         })));
@@ -681,24 +684,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Build locationId from the most specific jurisdiction available
     let locationId = 'nat1';
     let locationName = 'Nigeria';
-    const isLagos = agentData.state_id === 24;
     
     if (agentData.polling_units_id) {
       locationId = `pu_${agentData.polling_units_id}`;
-      const table = isLagos ? 'polling_units_lagos' : 'polling_units';
-      const { data } = await supabase.from(table).select('name').eq('id', agentData.polling_units_id).single();
+      const { data } = await supabase.from('polling_units').select('name').eq('id', agentData.polling_units_id).single();
       if (data) locationName = data.name;
     }
     else if (agentData.wards_id) {
       locationId = `ward_${agentData.wards_id}`;
-      const table = isLagos ? 'wards_lagos' : 'wards';
-      const { data } = await supabase.from(table).select('name').eq('id', agentData.wards_id).single();
+      const { data } = await supabase.from('wards').select('name').eq('id', agentData.wards_id).single();
       if (data) locationName = data.name;
     }
     else if (agentData.local_governments_id) {
       locationId = `lga_${agentData.local_governments_id}`;
-      const table = isLagos ? 'local_governments_lagos' : 'local_governments';
-      const { data } = await supabase.from(table).select('name').eq('id', agentData.local_governments_id).single();
+      const { data } = await supabase.from('local_governments').select('name').eq('id', agentData.local_governments_id).single();
       if (data) locationName = data.name;
     }
     else if (agentData.state_id) {
@@ -745,40 +744,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('eagleeye_last_active');
   };
 
-  // Rolling session inactivity watcher
-  useEffect(() => {
-    if (!user) return;
-
-    let lastUpdate = Date.now();
-
-    const handleUserActivity = () => {
-      const now = Date.now();
-      if (now - lastUpdate > 15000) {
-        lastUpdate = now;
-        localStorage.setItem('eagleeye_last_active', now.toString());
-      }
-    };
-
-    const activityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart'];
-    activityEvents.forEach(evt => window.addEventListener(evt, handleUserActivity, { passive: true }));
-
-    // Check inactivity periodically
-    const timer = setInterval(() => {
-      const activeTimestamp = localStorage.getItem('eagleeye_last_active') || localStorage.getItem('eagleeye_login_time');
-      if (activeTimestamp) {
-        const idleDuration = Date.now() - parseInt(activeTimestamp, 10);
-        if (idleDuration >= SESSION_DURATION_MS) {
-          logout();
-          toast.error('Session expired due to inactivity. Please log in again.', { id: 'session-timeout' });
-        }
-      }
-    }, 10000);
-
-    return () => {
-      activityEvents.forEach(evt => window.removeEventListener(evt, handleUserActivity));
-      clearInterval(timer);
-    };
-  }, [user]);
+  // Rolling session inactivity watcher disabled per user request
+  // useEffect(() => {
+  //   if (!user) return;
+  //   let lastUpdate = Date.now();
+  //   const handleUserActivity = () => {
+  //     const now = Date.now();
+  //     if (now - lastUpdate > 15000) {
+  //       lastUpdate = now;
+  //       localStorage.setItem('eagleeye_last_active', now.toString());
+  //     }
+  //   };
+  //   const activityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart'];
+  //   activityEvents.forEach(evt => window.addEventListener(evt, handleUserActivity, { passive: true }));
+  //   const timer = setInterval(() => {
+  //     const activeTimestamp = localStorage.getItem('eagleeye_last_active') || localStorage.getItem('eagleeye_login_time');
+  //     if (activeTimestamp) {
+  //       const idleDuration = Date.now() - parseInt(activeTimestamp, 10);
+  //       if (idleDuration >= SESSION_DURATION_MS) {
+  //         logout();
+  //         toast.error('Session expired due to inactivity. Please log in again.', { id: 'session-timeout' });
+  //       }
+  //     }
+  //   }, 10000);
+  //   return () => {
+  //     activityEvents.forEach(evt => window.removeEventListener(evt, handleUserActivity));
+  //     clearInterval(timer);
+  //   };
+  // }, [user]);
 
   const updateUser = async (updates: Partial<User>) => {
     if (user) {
@@ -1162,31 +1155,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       dbRecord.password_hash = await sha256Hex(agent.password);
     }
 
-    // Auto-resolve pollingunit_lagos_id for pu_agents by matching puId text
-    let lagosPollingUnitId: number | null = null;
-    if (puId) {
-      if (stateId === 24) {
-        lagosPollingUnitId = puId;
-      } else {
-        try {
-          const { data: puData } = await supabase
-            .from('polling_units')
-            .select('"puId"')
-            .eq('id', puId)
-            .single();
-          if (puData?.puId) {
-            const { data: lagosData } = await supabase
-              .from('polling_units_lagos')
-              .select('id')
-              .eq('puId', puData.puId)
-              .single();
-            if (lagosData?.id) lagosPollingUnitId = lagosData.id;
-          }
-        } catch (_) {}
-      }
-      if (lagosPollingUnitId) dbRecord.pollingunit_lagos_id = lagosPollingUnitId;
-    }
-
     try {
       const { data, error } = await supabase.from('agents').insert([dbRecord]).select().single();
       if (error) throw new Error(getFriendlyErrorMessage(error));
@@ -1203,7 +1171,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         lgaId,
         wardId,
         puId,
-        lagosPollingUnitId,
       }]);
     } catch (err: any) {
       console.error('Failed to add agent:', err);
@@ -1227,6 +1194,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (updates.bankName !== undefined) payload.bank_name = updates.bankName;
       if (updates.accountName !== undefined) payload.account_name = updates.accountName;
       if (updates.accountNumber !== undefined) payload.account_number = updates.accountNumber;
+      if (updates.stateId !== undefined) payload.state_id = updates.stateId;
+      if (updates.lgaId !== undefined) payload.local_governments_id = updates.lgaId;
+      if (updates.wardId !== undefined) payload.wards_id = updates.wardId;
+      if (updates.puId !== undefined) payload.polling_units_id = updates.puId;
+      if (updates.locationId !== undefined) {
+        payload.jurisdiction_id = updates.locationId;
+        payload.jurisdiction_type = updates.locationId.startsWith('pu_') ? 'pu' :
+                                    updates.locationId.startsWith('ward_') ? 'ward' :
+                                    updates.locationId.startsWith('lga_') ? 'lga' :
+                                    updates.locationId.startsWith('state_') ? 'state' : 'national';
+      }
       if (updates.password) {
         payload.password_hash = await sha256Hex(updates.password);
       }

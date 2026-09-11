@@ -35,7 +35,7 @@ export default function Voters() {
     return voterWardFilter;
   });
   const [selectedPu, setSelectedPu] = useState<number | null>(() => {
-    if (user?.role === 'pu_agent') return user.lagosPollingUnitId || user.puId || null;
+    if (user?.role === 'pu_agent') return user.puId || user.lagosPollingUnitId || null;
     return voterPuFilter;
   });
 
@@ -43,33 +43,28 @@ export default function Voters() {
   const [wardNames, setWardNames] = useState<Record<number, string>>({});
   const [puNames, setPuNames] = useState<Record<number, string>>({});
 
-  const isLagos = user?.stateId === 24;
-
   // 1. Fetch LGAs for State/National Admin
   useEffect(() => {
     if (!user) return;
-    const lgaTable = isLagos ? 'local_governments_lagos' : 'local_governments';
-    let query = supabase.from(lgaTable).select('id, name');
+    let query = supabase.from('local_governments').select('id, name');
     if (user.stateId) {
       query = query.eq('state_id', user.stateId);
     }
     query.order('name').then(({ data }) => {
       if (data) setLgas(data);
     });
-  }, [user, isLagos]);
+  }, [user]);
 
   // 2. Fetch Wards based on selected LGA or user's assigned LGA
   useEffect(() => {
     if (!user) return;
-    const wardTable = isLagos ? 'wards_lagos' : 'wards';
-    const lgaCol = isLagos ? 'localgovernment_lagos_id' : 'localgovernment_id';
     const effectiveLga = selectedLga || (user.role === 'lga_admin' || user.role === 'ward_admin' ? user.lgaId : null);
 
     if (effectiveLga) {
       supabase
-        .from(wardTable)
+        .from('wards')
         .select('id, name')
-        .eq(lgaCol, effectiveLga)
+        .eq('localgovernment_id', effectiveLga)
         .order('name')
         .then(({ data }) => {
           if (data) {
@@ -84,17 +79,16 @@ export default function Voters() {
     } else {
       setWards([]);
     }
-  }, [user, isLagos, selectedLga]);
+  }, [user, selectedLga]);
 
   // 3. Fetch Polling Units based on selected Ward or user's assigned Ward
   useEffect(() => {
     if (!user) return;
-    const puTable = isLagos ? 'polling_units_lagos' : 'polling_units';
     const effectiveWard = selectedWard || (user.role === 'ward_admin' ? user.wardId : null);
 
     if (effectiveWard) {
       supabase
-        .from(puTable)
+        .from('polling_units')
         .select('id, name, puId')
         .eq('ward_id', effectiveWard)
         .order('name')
@@ -111,13 +105,11 @@ export default function Voters() {
     } else {
       setPollingUnits([]);
     }
-  }, [user, isLagos, selectedWard]);
+  }, [user, selectedWard]);
 
   // 4. Batch resolve Ward and PU names for any displayed voters not in cache
   useEffect(() => {
     if (!voters || voters.length === 0) return;
-    const wardTable = isLagos ? 'wards_lagos' : 'wards';
-    const puTable = isLagos ? 'polling_units_lagos' : 'polling_units';
 
     const missingWards = Array.from(new Set(
       voters
@@ -126,7 +118,7 @@ export default function Voters() {
     ));
     if (missingWards.length > 0) {
       supabase
-        .from(wardTable)
+        .from('wards')
         .select('id, name')
         .in('id', missingWards)
         .then(({ data }) => {
@@ -147,7 +139,7 @@ export default function Voters() {
     ));
     if (missingPus.length > 0) {
       supabase
-        .from(puTable)
+        .from('polling_units')
         .select('id, name')
         .in('id', missingPus)
         .then(({ data }) => {
@@ -160,7 +152,7 @@ export default function Voters() {
           }
         });
     }
-  }, [voters, isLagos, wardNames, puNames]);
+  }, [voters, wardNames, puNames]);
 
   // Filter change handlers
   const handleLgaChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -203,20 +195,17 @@ export default function Voters() {
   // Ensure currentVoter has resolved Ward and PU names in the details modal
   useEffect(() => {
     if (!selectedVoter) return;
-    const isLagosState = user?.stateId === 24;
     if (selectedVoter.wardId && !wardNames[selectedVoter.wardId]) {
-      const wardTable = isLagosState ? 'wards_lagos' : 'wards';
-      supabase.from(wardTable).select('id, name').eq('id', selectedVoter.wardId).single().then(({ data }) => {
+      supabase.from('wards').select('id, name').eq('id', selectedVoter.wardId).single().then(({ data }) => {
         if (data) setWardNames(prev => ({ ...prev, [data.id]: data.name }));
       });
     }
     if (selectedVoter.puNumberId && !puNames[selectedVoter.puNumberId]) {
-      const puTable = isLagosState ? 'polling_units_lagos' : 'polling_units';
-      supabase.from(puTable).select('id, name').eq('id', selectedVoter.puNumberId).single().then(({ data }) => {
+      supabase.from('polling_units').select('id, name').eq('id', selectedVoter.puNumberId).single().then(({ data }) => {
         if (data) setPuNames(prev => ({ ...prev, [data.id]: data.name }));
       });
     }
-  }, [selectedVoter, user?.stateId]);
+  }, [selectedVoter]);
 
   // Edit fields and notes view state
   const [selectedStatus, setSelectedStatus] = useState<Voter['status'] | null>(null);

@@ -1380,41 +1380,26 @@ function JurisdictionSelector({
             st = locToResolve.replace('state_', '');
           } else if (locToResolve.startsWith('lga_')) {
             lg = locToResolve.replace('lga_', '');
-            const isLagosLGA = (st === '24') || user?.stateId === 24 || parseInt(lg, 10) <= 20;
-            const table = isLagosLGA ? 'local_governments_lagos' : 'local_governments';
-            const { data } = await supabase.from(table).select('state_id').eq('id', lg).single();
+            const { data } = await supabase.from('local_governments').select('state_id').eq('id', lg).single();
             if (data?.state_id) st = String(data.state_id);
           } else if (locToResolve.startsWith('ward_')) {
             wd = locToResolve.replace('ward_', '');
-            const isLagosWard = (st === '24') || user?.stateId === 24 || parseInt(wd, 10) < 1000;
-            if (isLagosWard) {
-              const { data: wData } = await supabase.from('wards_lagos').select('localgovernment_lagos_id').eq('id', wd).single();
-              if (wData?.localgovernment_lagos_id) {
-                lg = String(wData.localgovernment_lagos_id);
-                st = '24';
-              }
-            } else {
-              const { data: wData } = await supabase.from('wards').select('localgovernment_id').eq('id', wd).single();
-              if (wData?.localgovernment_id) {
-                lg = String(wData.localgovernment_id);
-                const { data: lData } = await supabase.from('local_governments').select('state_id').eq('id', lg).single();
-                if (lData?.state_id) st = String(lData.state_id);
-              }
+            const { data: wData } = await supabase.from('wards').select('localgovernment_id').eq('id', wd).single();
+            if (wData?.localgovernment_id) {
+              lg = String(wData.localgovernment_id);
+              const { data: lData } = await supabase.from('local_governments').select('state_id').eq('id', lg).single();
+              if (lData?.state_id) st = String(lData.state_id);
             }
           } else if (locToResolve.startsWith('pu_')) {
             pu = locToResolve.replace('pu_', '');
-            const isLagosContext = (st === '24') || user?.stateId === 24;
-            if (isLagosContext) {
-              const { data: lagosPu } = await supabase.from('polling_units_lagos').select('id, ward_id, localgovernment_id').eq('id', pu).single();
-              if (lagosPu) {
-                wd = String(lagosPu.ward_id);
-                if (lagosPu.localgovernment_id) lg = String(lagosPu.localgovernment_id);
-                st = '24';
-              }
-            } else {
-              const { data: pData } = await supabase.from('polling_units').select('ward_id').eq('id', pu).single();
-              if (pData?.ward_id) {
-                wd = String(pData.ward_id);
+            const { data: pData } = await supabase.from('polling_units').select('ward_id, localgovernment_id').eq('id', pu).single();
+            if (pData?.ward_id) {
+              wd = String(pData.ward_id);
+              if (pData.localgovernment_id) {
+                lg = String(pData.localgovernment_id);
+                const { data: lData } = await supabase.from('local_governments').select('state_id').eq('id', lg).single();
+                if (lData?.state_id) st = String(lData.state_id);
+              } else {
                 const { data: wData } = await supabase.from('wards').select('localgovernment_id').eq('id', wd).single();
                 if (wData?.localgovernment_id) {
                   lg = String(wData.localgovernment_id);
@@ -1433,27 +1418,21 @@ function JurisdictionSelector({
         setSelectedWard(wd);
         setSelectedPu(pu);
 
-        const isLagosState = st === '24' || user?.stateId === 24;
-
         // Fetch LGAs if state is set
         if (st) {
-          const table = isLagosState ? 'local_governments_lagos' : 'local_governments';
-          const { data: lgaData } = await supabase.from(table).select('id,name').eq('state_id', st).order('name');
+          const { data: lgaData } = await supabase.from('local_governments').select('id,name').eq('state_id', st).order('name');
           if (!isCancelled) setLgas(lgaData || []);
         }
 
         // Fetch Wards if LGA is set
         if (lg) {
-          const table = isLagosState ? 'wards_lagos' : 'wards';
-          const filterCol = isLagosState ? 'localgovernment_lagos_id' : 'localgovernment_id';
-          const { data: wardData } = await supabase.from(table).select('id,name').eq(filterCol, lg).order('name');
+          const { data: wardData } = await supabase.from('wards').select('id,name').eq('localgovernment_id', lg).order('name');
           if (!isCancelled) setWards(wardData || []);
         }
 
         // Fetch PUs if Ward is set
         if (wd) {
-          const table = isLagosState ? 'polling_units_lagos' : 'polling_units';
-          const { data: puData } = await supabase.from(table).select('id,name').eq('ward_id', wd).order('name');
+          const { data: puData } = await supabase.from('polling_units').select('id,name').eq('ward_id', wd).order('name');
           if (!isCancelled) setPus(puData || []);
         }
 
@@ -1485,8 +1464,6 @@ function JurisdictionSelector({
     };
   }, [selectedLocationId, fixedLocation?.id, user?.stateId, user?.lgaId, user?.wardId, user?.puId, targetRole]);
 
-  const isLagos = selectedState === '24' || user?.stateId === 24;
-
   const handleStateChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
     setSelectedState(val);
@@ -1503,8 +1480,7 @@ function JurisdictionSelector({
     
     if (val) {
       setLoading(true);
-      const table = val === '24' ? 'local_governments_lagos' : 'local_governments';
-      const { data } = await supabase.from(table).select('id,name').eq('state_id', val).order('name');
+      const { data } = await supabase.from('local_governments').select('id,name').eq('state_id', val).order('name');
       setLgas(data || []);
       setLoading(false);
     }
@@ -1527,9 +1503,7 @@ function JurisdictionSelector({
     
     if (val) {
       setLoading(true);
-      const table = isLagos ? 'wards_lagos' : 'wards';
-      const filterCol = isLagos ? 'localgovernment_lagos_id' : 'localgovernment_id';
-      const { data } = await supabase.from(table).select('id,name').eq(filterCol, val).order('name');
+      const { data } = await supabase.from('wards').select('id,name').eq('localgovernment_id', val).order('name');
       setWards(data || []);
       setLoading(false);
     }
@@ -1551,8 +1525,7 @@ function JurisdictionSelector({
     
     if (val && targetRole === 'pu_agent') {
       setLoading(true);
-      const table = isLagos ? 'polling_units_lagos' : 'polling_units';
-      const { data } = await supabase.from(table).select('id,name').eq('ward_id', val).order('name');
+      const { data } = await supabase.from('polling_units').select('id,name').eq('ward_id', val).order('name');
       setPus(data || []);
       setLoading(false);
     }

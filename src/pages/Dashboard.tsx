@@ -144,7 +144,6 @@ function DashboardHeader({ user, locations, onOpenRegisterAgent }: any) {
 
     async function resolvePath() {
       const parts: string[] = [];
-      const isLagos = user.stateId === 24;
 
       if (user.role === 'national_admin') {
         setPathParts(['Nigeria']);
@@ -163,8 +162,7 @@ function DashboardHeader({ user, locations, onOpenRegisterAgent }: any) {
       if (user.lgaId) {
         let lgaName = locations.find((l: any) => l.id === `lga_${user.lgaId}`)?.name;
         if (!lgaName) {
-          const lgaTable = isLagos ? 'local_governments_lagos' : 'local_governments';
-          const { data } = await supabase.from(lgaTable).select('name').eq('id', user.lgaId).single();
+          const { data } = await supabase.from('local_governments').select('name').eq('id', user.lgaId).single();
           if (data) lgaName = data.name;
         }
         if (lgaName) parts.push(`${lgaName} LGA`);
@@ -174,20 +172,18 @@ function DashboardHeader({ user, locations, onOpenRegisterAgent }: any) {
       if (user.wardId) {
         let wardName = user.role === 'ward_admin' ? user.locationName : null;
         if (!wardName) {
-          const wardTable = isLagos ? 'wards_lagos' : 'wards';
-          const { data } = await supabase.from(wardTable).select('name').eq('id', user.wardId).single();
+          const { data } = await supabase.from('wards').select('name').eq('id', user.wardId).single();
           if (data) wardName = data.name;
         }
         if (wardName) parts.push(wardName.toLowerCase().includes('ward') ? wardName : `${wardName} Ward`);
       }
 
       // 4. Polling Unit
-      if (user.role === 'pu_agent' || user.puId || user.lagosPollingUnitId) {
+      if (user.role === 'pu_agent' || user.puId) {
         let puName = user.role === 'pu_agent' ? user.locationName : null;
-        const puTargetId = user.lagosPollingUnitId || user.puId;
+        const puTargetId = user.puId;
         if (!puName && puTargetId) {
-          const puTable = isLagos ? 'polling_units_lagos' : 'polling_units';
-          const { data } = await supabase.from(puTable).select('name').eq('id', puTargetId).single();
+          const { data } = await supabase.from('polling_units').select('name').eq('id', puTargetId).single();
           if (data) puName = data.name;
         }
         if (puName) parts.push(`${puName} PU`);
@@ -1505,8 +1501,6 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
   onEditAgent: (agent: Partial<Agent>) => void;
   refreshTrigger: number;
 }) {
-  const isLagos = user?.stateId === 24;
-
   const [viewLevel, setViewLevel] = useState<'lga' | 'ward' | 'pu'>(() => {
     if (user.role === 'ward_admin') return 'pu';
     if (user.role === 'lga_admin') return 'ward';
@@ -1540,15 +1534,14 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
   // Fetch LGAs for State/National admin
   useEffect(() => {
     if (!user) return;
-    const lgaTable = isLagos ? 'local_governments_lagos' : 'local_governments';
-    let q = supabase.from(lgaTable).select('id, name');
+    let q = supabase.from('local_governments').select('id, name');
     if (user.stateId) {
       q = q.eq('state_id', user.stateId);
     }
     q.order('name').then(({ data }) => {
       if (data) setLgaList(data.map((l: any) => ({ id: l.id, name: l.name || `LGA #${l.id}` })));
     });
-  }, [user, isLagos]);
+  }, [user]);
 
   // Fetch Wards when selected LGA changes
   useEffect(() => {
@@ -1557,17 +1550,15 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
       setWardList([]);
       return;
     }
-    const wardTable = isLagos ? 'wards_lagos' : 'wards';
-    const lgaCol = isLagos ? 'localgovernment_lagos_id' : 'localgovernment_id';
     supabase
-      .from(wardTable)
+      .from('wards')
       .select('id, name')
-      .eq(lgaCol, effectiveLga)
+      .eq('localgovernment_id', effectiveLga)
       .order('name')
       .then(({ data }) => {
         if (data) setWardList(data.map((w: any) => ({ id: w.id, name: w.name || `Ward #${w.id}` })));
       });
-  }, [selectedLgaFilter, user, isLagos]);
+  }, [selectedLgaFilter, user]);
 
   React.useEffect(() => {
     let isCancelled = false;
@@ -1576,10 +1567,10 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
       setLoading(true);
       try {
         const table = (user.role === 'ward_admin' || viewLevel === 'pu')
-          ? (isLagos ? 'polling_units_lagos' : 'polling_units')
+          ? 'polling_units'
           : (user.role === 'lga_admin' || viewLevel === 'ward')
-          ? (isLagos ? 'wards_lagos' : 'wards')
-          : (isLagos ? 'local_governments_lagos' : 'local_governments');
+          ? 'wards'
+          : 'local_governments';
 
         const effectiveWard = selectedWardFilter || user.wardId;
         const effectiveLga = selectedLgaFilter || user.lgaId;
@@ -1590,9 +1581,8 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
         if (effectiveWard) {
           countQ = countQ.eq('ward_id', effectiveWard);
         } else if (effectiveLga) {
-          const lgaCol = (viewLevel === 'pu') ? 'localgovernment_id' : (isLagos ? 'localgovernment_lagos_id' : 'localgovernment_id');
-          countQ = countQ.eq(lgaCol, effectiveLga);
-        } else if (user.stateId && table !== 'polling_units_lagos' && table !== 'wards_lagos' && table !== 'local_governments_lagos') {
+          countQ = countQ.eq('localgovernment_id', effectiveLga);
+        } else if (user.stateId) {
           countQ = countQ.eq('state_id', user.stateId);
         }
 
@@ -1611,9 +1601,8 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
         if (effectiveWard) {
           unitsQ = unitsQ.eq('ward_id', effectiveWard);
         } else if (effectiveLga) {
-          const lgaCol = (viewLevel === 'pu') ? 'localgovernment_id' : (isLagos ? 'localgovernment_lagos_id' : 'localgovernment_id');
-          unitsQ = unitsQ.eq(lgaCol, effectiveLga);
-        } else if (user.stateId && table !== 'polling_units_lagos' && table !== 'wards_lagos' && table !== 'local_governments_lagos') {
+          unitsQ = unitsQ.eq('localgovernment_id', effectiveLga);
+        } else if (user.stateId) {
           unitsQ = unitsQ.eq('state_id', user.stateId);
         }
 
@@ -1630,7 +1619,7 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
 
           let uniqueAssignedUnitsCount = 0;
           if (viewLevel === 'pu') {
-            const set = new Set(agents.map((a: any) => a.polling_units_id || a.pollingunit_lagos_id).filter(Boolean));
+            const set = new Set(agents.map((a: any) => a.polling_units_id).filter(Boolean));
             uniqueAssignedUnitsCount = set.size;
           } else if (viewLevel === 'ward') {
             const set = new Set(agents.map((a: any) => a.wards_id).filter(Boolean));
@@ -1669,7 +1658,7 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
 
     fetchDeployment();
     return () => { isCancelled = true; };
-  }, [user, isLagos, refreshTrigger, viewLevel, selectedLgaFilter, selectedWardFilter]);
+  }, [user, refreshTrigger, viewLevel, selectedLgaFilter, selectedWardFilter]);
 
   if (user.role === 'pu_agent') {
     return null;
@@ -1693,7 +1682,7 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
   subUnits.forEach(unit => {
     let matchAgent: any = null;
     if (viewLevel === 'pu') {
-      matchAgent = unitAgents.find(a => a.polling_units_id === unit.numId || a.pollingunit_lagos_id === unit.numId || a.jurisdiction_id === unit.id);
+      matchAgent = unitAgents.find(a => a.polling_units_id === unit.numId || a.jurisdiction_id === unit.id);
     } else if (viewLevel === 'ward') {
       matchAgent = unitAgents.find(a => a.wards_id === unit.numId || a.jurisdiction_id === unit.id);
     } else if (viewLevel === 'lga') {

@@ -46,13 +46,12 @@ interface NodeProps {
   onAddAgent: (loc: Location) => void;
   onEditAgent: (agent: Agent) => void;
   depth?: number;
-  isLagos?: boolean;
   refreshKey?: number;
 }
 
 const TreeNode: React.FC<NodeProps> = ({
   location, userRole, userStateId, userLgaId, userWardId,
-  onAddAgent, onEditAgent, depth = 0, isLagos: isLagosProp, refreshKey
+  onAddAgent, onEditAgent, depth = 0, refreshKey
 }) => {
   const [open, setOpen] = useState(false);
   const [children, setChildren] = useState<Location[]>([]);
@@ -62,17 +61,7 @@ const TreeNode: React.FC<NodeProps> = ({
   const [agentsLoaded, setAgentsLoaded] = useState(false);
   const [coverage, setCoverage] = useState<{ covered: number; total: number } | null>(null);
 
-  const isLagosNode = isLagosProp || location.id === 'state_24' || userStateId === 24;
-
-  // Pick Lagos-specific or national child config
-  const lagosChildConfig: typeof childConfig = {
-    state: { table: 'local_governments_lagos', filterCol: 'state_id',                idPrefix: 'lga',  childType: 'lga'  },
-    lga:   { table: 'wards_lagos',             filterCol: 'localgovernment_lagos_id', idPrefix: 'ward', childType: 'ward' },
-    ward:  { table: 'polling_units_lagos',     filterCol: 'ward_id',                  idPrefix: 'pu',   childType: 'pu'   },
-  };
-  const cfg = isLagosNode
-    ? lagosChildConfig[location.type as LocationType]
-    : childConfig[location.type as LocationType];
+  const cfg = childConfig[location.type as LocationType];
   const canExpand = !!cfg;
 
   const loadChildren = useCallback(async () => {
@@ -108,7 +97,7 @@ const TreeNode: React.FC<NodeProps> = ({
       const rawId = numId(location.id);
       let query = supabase.from('agents').select('*');
       if (location.type === 'pu') {
-        query = query.or(`jurisdiction_id.eq.${location.id},polling_units_id.eq.${rawId},pollingunit_lagos_id.eq.${rawId}`);
+        query = query.or(`jurisdiction_id.eq.${location.id},polling_units_id.eq.${rawId}`);
       } else if (location.type === 'ward') {
         query = query.or(`jurisdiction_id.eq.${location.id},wards_id.eq.${rawId}`);
       } else if (location.type === 'lga') {
@@ -353,7 +342,6 @@ const TreeNode: React.FC<NodeProps> = ({
               onAddAgent={onAddAgent}
               onEditAgent={onEditAgent}
               depth={depth + 1}
-              isLagos={isLagosNode}
               refreshKey={refreshKey}
             />
           ))}
@@ -384,7 +372,6 @@ export default function Jurisdictions() {
     async function fetchRoot() {
       try {
         let result: Location[] = [];
-        const isLagosUser = user!.stateId === 24;
 
         if (user!.role === 'national_admin') {
           setJurisdictionName('Nigeria');
@@ -394,33 +381,26 @@ export default function Jurisdictions() {
           if (user!.stateId) {
             const { data: st } = await supabase.from('states').select('name').eq('id', user!.stateId).single();
             if (st) setJurisdictionName(st.name);
-            const lgaTable = isLagosUser ? 'local_governments_lagos' : 'local_governments';
-            const { data } = await supabase.from(lgaTable).select('id,name,state_id').eq('state_id', user!.stateId).order('name');
+            const { data } = await supabase.from('local_governments').select('id,name,state_id').eq('state_id', user!.stateId).order('name');
             result = (data || []).map((lga: any) => ({ id: `lga_${lga.id}`, type: 'lga', name: lga.name, parentId: `state_${lga.state_id}` }));
           }
         } else if (user!.role === 'lga_admin') {
           if (user!.lgaId) {
-            const lgaTable = isLagosUser ? 'local_governments_lagos' : 'local_governments';
-            const wardTable = isLagosUser ? 'wards_lagos' : 'wards';
-            const filterCol = isLagosUser ? 'localgovernment_lagos_id' : 'localgovernment_id';
-            const { data: lg } = await supabase.from(lgaTable).select('name').eq('id', user!.lgaId).single();
+            const { data: lg } = await supabase.from('local_governments').select('name').eq('id', user!.lgaId).single();
             if (lg) setJurisdictionName(lg.name);
-            const { data } = await supabase.from(wardTable).select('id,name').eq(filterCol, user!.lgaId).order('name');
+            const { data } = await supabase.from('wards').select('id,name').eq('localgovernment_id', user!.lgaId).order('name');
             result = (data || []).map((ward: any) => ({ id: `ward_${ward.id}`, type: 'ward', name: ward.name, parentId: `lga_${user!.lgaId}` }));
           }
         } else if (user!.role === 'ward_admin') {
           if (user!.wardId) {
-            const wardTable = isLagosUser ? 'wards_lagos' : 'wards';
-            const puTable = isLagosUser ? 'polling_units_lagos' : 'polling_units';
-            const { data: wr } = await supabase.from(wardTable).select('name').eq('id', user!.wardId).single();
+            const { data: wr } = await supabase.from('wards').select('name').eq('id', user!.wardId).single();
             if (wr) setJurisdictionName(wr.name);
-            const { data } = await supabase.from(puTable).select('id,name,ward_id').eq('ward_id', user!.wardId).order('name');
+            const { data } = await supabase.from('polling_units').select('id,name,ward_id').eq('ward_id', user!.wardId).order('name');
             result = (data || []).map((pu: any) => ({ id: `pu_${pu.id}`, type: 'pu', name: pu.name, parentId: `ward_${pu.ward_id}` }));
           }
         } else if (user!.role === 'pu_agent') {
           if (user!.puId) {
-            const puTable = isLagosUser ? 'polling_units_lagos' : 'polling_units';
-            const { data } = await supabase.from(puTable).select('id,name,ward_id').eq('id', user!.puId).single();
+            const { data } = await supabase.from('polling_units').select('id,name,ward_id').eq('id', user!.puId).single();
             if (data) {
               setJurisdictionName(data.name);
               result = [{ id: `pu_${data.id}`, type: 'pu', name: data.name, parentId: `ward_${data.ward_id}` }];
@@ -529,7 +509,6 @@ export default function Jurisdictions() {
                 onAddAgent={loc => { setAddAgentLoc(loc); setEditAgent(null); }}
                 onEditAgent={agent => { setEditAgent(agent); setAddAgentLoc(null); }}
                 refreshKey={agentRefreshKey}
-                isLagos={user.stateId === 24}
               />
             ))
           )}
