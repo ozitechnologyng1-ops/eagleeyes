@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useApp, Voter, VoterNote } from '../context/AppContext';
-import { Search, Filter, X, Check, UserCircle, ChevronLeft, ChevronRight, MessageCircle, MessageSquare, Phone, Save, Loader2, ChevronDown, ChevronUp, MapPin } from 'lucide-react';
+import { Search, Filter, X, Check, UserCircle, ChevronLeft, ChevronRight, MessageCircle, MessageSquare, Phone, Save, Loader2, ChevronDown, ChevronUp, MapPin, Send, Image as ImageIcon, Edit3, Sparkles, RotateCcw, AlertTriangle } from 'lucide-react';
 import { cn, getFriendlyErrorMessage } from '../lib/utils';
 import { supabase } from '../lib/supabase';
 import toast from 'react-hot-toast';
+import { greenApiService } from '../lib/greenApi';
 
 export default function Voters() {
   const { 
@@ -222,13 +223,326 @@ export default function Voters() {
   const [showNotesList, setShowNotesList] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Sort alphabetically by name
+  // International phone formatter: 234... instead of 080.../070...
+  const formatPhone = (phone?: string) => {
+    if (!phone) return 'N/A';
+    let clean = String(phone).replace(/\D/g, '');
+    if (clean.startsWith('0') && clean.length === 11) {
+      return '234' + clean.substring(1);
+    } else if (!clean.startsWith('234') && clean.length === 10) {
+      return '234' + clean;
+    }
+    return clean || phone;
+  };
+
+  const getFirstName = (fullName?: string) => {
+    if (!fullName) return '';
+    const parts = fullName.trim().split(/\s+/);
+    return parts[0] || '';
+  };
+
+  // Track voters known to NOT be on WhatsApp
+  const [notOnWaSet, setNotOnWaSet] = useState<Set<string>>(new Set());
+
+  // Track voters confirmed to BE on WhatsApp via API check or sent messages
+  const [confirmedOnWaSet, setConfirmedOnWaSet] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('eagleeye_confirmed_on_wa');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  const markVoterConfirmedOnWa = (voterId: string | number, phone?: string) => {
+    setConfirmedOnWaSet(prev => {
+      const next = new Set(prev);
+      next.add(String(voterId));
+      if (phone) next.add(formatPhone(phone));
+      try {
+        localStorage.setItem('eagleeye_confirmed_on_wa', JSON.stringify(Array.from(next)));
+      } catch {}
+      return next;
+    });
+  };
+
+  const isVoterConfirmedOnWa = (voter: Voter) => {
+    const p = formatPhone(voter.phone);
+    return confirmedOnWaSet.has(String(voter.id)) || (voter.phone ? confirmedOnWaSet.has(p) : false);
+  };
+
+  useEffect(() => {
+    // 1. Fetch voters verified NOT on WhatsApp
+    supabase
+      .from('whatsapp_outreach_queue')
+      .select('voter_phone, voter_id')
+      .eq('status', 'not_on_whatsapp')
+      .then(({ data }) => {
+        if (data) {
+          const s = new Set<string>();
+          data.forEach((d: any) => {
+            if (d.voter_id) s.add(String(d.voter_id));
+            if (d.voter_phone) {
+              s.add(String(d.voter_phone));
+              s.add(formatPhone(d.voter_phone));
+            }
+          });
+          setNotOnWaSet(s);
+        }
+      });
+
+    // 2. Fetch voters confirmed ON WhatsApp via delivery/read records
+    supabase
+      .from('whatsapp_outreach_queue')
+      .select('voter_id, voter_phone, status')
+      .in('status', ['sent', 'delivered', 'read', 'completed'])
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setConfirmedOnWaSet(prev => {
+            const next = new Set(prev);
+            data.forEach((d: any) => {
+              if (d.voter_id) next.add(String(d.voter_id));
+              if (d.voter_phone) next.add(formatPhone(d.voter_phone));
+            });
+            try {
+              localStorage.setItem('eagleeye_confirmed_on_wa', JSON.stringify(Array.from(next)));
+            } catch {}
+            return next;
+          });
+        }
+      });
+
+    // 3. Fetch voters who have active WhatsApp conversations
+    supabase
+      .from('whatsapp_conversations')
+      .select('voter_id, voter_phone')
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setConfirmedOnWaSet(prev => {
+            const next = new Set(prev);
+            data.forEach((d: any) => {
+              if (d.voter_id) next.add(String(d.voter_id));
+              if (d.voter_phone) next.add(formatPhone(d.voter_phone));
+            });
+            try {
+              localStorage.setItem('eagleeye_confirmed_on_wa', JSON.stringify(Array.from(next)));
+            } catch {}
+            return next;
+          });
+        }
+      });
+
+    // 4. Fetch voters who have sent or received WhatsApp messages
+    supabase
+      .from('whatsapp_messages')
+      .select('chat_id')
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setConfirmedOnWaSet(prev => {
+            const next = new Set(prev);
+            data.forEach((d: any) => {
+              if (d.chat_id) {
+                const phoneOnly = d.chat_id.split('@')[0];
+                next.add(phoneOnly);
+                next.add(formatPhone(phoneOnly));
+              }
+            });
+            try {
+              localStorage.setItem('eagleeye_confirmed_on_wa', JSON.stringify(Array.from(next)));
+            } catch {}
+            return next;
+          });
+        }
+      });
+  }, []);
+
+  const isVoterNotOnWa = (voter: Voter) => {
+    if (isVoterConfirmedOnWa(voter)) return false;
+    const p = formatPhone(voter.phone);
+    return notOnWaSet.has(String(voter.id)) || (voter.phone ? (notOnWaSet.has(p) || notOnWaSet.has(voter.phone)) : false);
+  };
+
+  // Agent Custom Outreach Message Template
+  const defaultTemplate = 'Hello {{voter_firstname}}! The time for real change and good governance is now. I am {{agent_firstname}}, reaching out directly from our ADC grassroots campaign here in {{ward_name}}. Together, we are building a state that works for every citizen—better jobs, quality healthcare, improved schools, and genuine security in our communities. Check out our candidate\'s official plan attached. Are you ready to make your vote count? Reply to join the movement!';
+  
+  const [customTemplate, setCustomTemplate] = useState<string>(() => {
+    if (!user?.id) return '';
+    const saved = localStorage.getItem(`eagleeye_agent_template_${user.id}`);
+    if (saved && (saved.includes('Test message template') || saved.startsWith('Test message'))) {
+      localStorage.removeItem(`eagleeye_agent_template_${user.id}`);
+      return '';
+    }
+    return saved || '';
+  });
+  const [customFormat, setCustomFormat] = useState<'image_and_text' | 'text_only'>(() => {
+    return (user?.id && (localStorage.getItem(`eagleeye_agent_format_${user.id}`) as any)) || 'image_and_text';
+  });
+  const [stateTemplate, setStateTemplate] = useState<string>('');
+  const [stateConfig, setStateConfig] = useState<any>(null);
+  const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
+  const [tempTemplate, setTempTemplate] = useState('');
+  const [tempFormat, setTempFormat] = useState<'image_and_text' | 'text_only'>('image_and_text');
+
+  // Canvassed tracking & Reach/Stance filters
+  const [voterReachFilter, setVoterReachFilter] = useState<'all' | 'on_whatsapp' | 'not_whatsapp' | 'canvassed'>('all');
+  const [voterStanceFilter, setVoterStanceFilter] = useState<'all' | 'ADC Supporter' | 'Undecided' | 'Opposition'>('all');
+  const [canvassedSet, setCanvassedSet] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('eagleeye_canvassed_voters');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  const markVoterCanvassed = (voterId: string | number, phone?: string) => {
+    setCanvassedSet(prev => {
+      const next = new Set(prev);
+      next.add(String(voterId));
+      if (phone) next.add(formatPhone(phone));
+      try {
+        localStorage.setItem('eagleeye_canvassed_voters', JSON.stringify(Array.from(next)));
+      } catch {}
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    // Pre-load canvassed records from outreach queue where messages have been processed
+    supabase
+      .from('whatsapp_outreach_queue')
+      .select('voter_id, voter_phone, status')
+      .in('status', ['sent', 'delivered', 'read', 'completed'])
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setCanvassedSet(prev => {
+            const next = new Set(prev);
+            data.forEach((d: any) => {
+              if (d.voter_id) next.add(String(d.voter_id));
+              if (d.voter_phone) next.add(formatPhone(d.voter_phone));
+            });
+            try {
+              localStorage.setItem('eagleeye_canvassed_voters', JSON.stringify(Array.from(next)));
+            } catch {}
+            return next;
+          });
+        }
+      });
+  }, []);
+
+  // WhatsApp Send/Preview Confirmation Modal state
+  const [confirmWaVoter, setConfirmWaVoter] = useState<Voter | null>(null);
+  const [waModalMessage, setWaModalMessage] = useState<string>('');
+
+  useEffect(() => {
+    if (user?.stateId) {
+      greenApiService.getConfig(user.stateId).then(cfg => {
+        if (cfg) {
+          setStateConfig(cfg);
+          if (cfg.default_message_template) {
+            setStateTemplate(cfg.default_message_template);
+          }
+        }
+      });
+    }
+  }, [user?.stateId]);
+
+  const getFormattedOutreachMessage = (voterName: string, wardId?: number) => {
+    let rawTpl = customTemplate.trim() || stateTemplate.trim() || defaultTemplate;
+    if (rawTpl.includes('Test message template')) {
+      rawTpl = defaultTemplate;
+    }
+    const wardName = (wardId && wardNames[wardId]) || 'your Ward';
+    const voterFirstName = getFirstName(voterName) || 'Voter';
+    const agentFirstName = (user as any)?.firstName || getFirstName(user?.name) || 'Field Agent';
+
+    return rawTpl
+      // First name tags
+      .replace(/\{\{voter_firstt?name\}\}/gi, voterFirstName)
+      .replace(/\{\{voter_first_name\}\}/gi, voterFirstName)
+      .replace(/\{\{agent_firstt?name\}\}/gi, agentFirstName)
+      .replace(/\{\{agent_first_name\}\}/gi, agentFirstName)
+      // Full name tags
+      .replace(/\{\{voter_name\}\}/gi, voterName || 'Voter')
+      .replace(/\{\{agent_name\}\}/gi, user?.name || 'Field Agent')
+      .replace(/\{\{ward_name\}\}/gi, wardName);
+  };
+
+  const getWhatsAppLink = (phone: string, name: string, wardId?: number, overrideMsg?: string) => {
+    const cleaned = formatPhone(phone);
+    const message = overrideMsg || getFormattedOutreachMessage(name, wardId);
+    return `https://wa.me/${cleaned}?text=${encodeURIComponent(message)}`;
+  };
+
+  // Call Voter & earn bounty
+  const handleCallVoter = async (voter: Voter, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!voter.phone) return;
+    const cleanPhone = formatPhone(voter.phone);
+    const earnAmount = Number(stateConfig?.earning_per_call ?? 20);
+
+    logVoterContact(voter.id, 'call');
+    markVoterCanvassed(voter.id, voter.phone);
+
+    // Trigger phone dialer
+    window.location.href = `tel:${cleanPhone}`;
+
+    if (user?.id) {
+      try {
+        await supabase.functions.invoke('whatsapp-admin', {
+          body: {
+            action: 'creditOutreachEarning',
+            agentId: user.id,
+            type: 'call',
+            voterId: voter.id,
+            voterPhone: cleanPhone,
+            voterName: voter.name
+          }
+        });
+        toast.success(`Call logged! (+₦${earnAmount} earned)`);
+      } catch (err) {
+        console.error('Failed to credit call earning:', err);
+      }
+    }
+  };
+
+  // Sort & filter voters by search term, stance, and reach status
   const filteredVoters = voters
-    .filter(v => 
-      (v.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
-      (v.phone || '').toLowerCase().includes(searchTerm.toLowerCase())
-    )
-    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    .filter(v => {
+      const matchSearch = (v.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
+        (v.phone || '').toLowerCase().includes(searchTerm.toLowerCase());
+      if (!matchSearch) return false;
+
+      // Stance Filter: All / Supporters / Undecided / Opposition
+      if (voterStanceFilter !== 'all') {
+        if (v.status !== voterStanceFilter) return false;
+      }
+
+      // Reach Filter: All / On WhatsApp / Not on WhatsApp / Canvassed
+      // Only returns voters whose WhatsApp presence has been verified via API
+      if (voterReachFilter === 'on_whatsapp') {
+        return isVoterConfirmedOnWa(v);
+      }
+      if (voterReachFilter === 'not_whatsapp') {
+        return isVoterNotOnWa(v);
+      }
+      if (voterReachFilter === 'canvassed') {
+        const isCanvassed = canvassedSet.has(String(v.id)) ||
+          Boolean(v.phone && canvassedSet.has(formatPhone(v.phone))) ||
+          Boolean(v.contactHistory && v.contactHistory.length > 0) ||
+          Boolean(v.notes && v.notes.length > 0);
+        return isCanvassed;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      const aNotOnWa = isVoterNotOnWa(a);
+      const bNotOnWa = isVoterNotOnWa(b);
+      if (aNotOnWa !== bNotOnWa) {
+        return aNotOnWa ? 1 : -1;
+      }
+      return (a.name || '').localeCompare(b.name || '');
+    });
 
   const currentVoter = selectedVoter ? voters.find(v => String(v.id) === String(selectedVoter.id)) || selectedVoter : null;
 
@@ -271,20 +585,90 @@ export default function Voters() {
     }
   };
 
-  const getWhatsAppLink = (phone: string, name: string) => {
-    let cleaned = String(phone).replace(/\D/g, '');
-    if (cleaned.startsWith('0')) {
-      cleaned = '234' + cleaned.substring(1);
-    } else if (!cleaned.startsWith('234') && cleaned.length === 10) {
-      cleaned = '234' + cleaned;
+  const [sendingVoterId, setSendingVoterId] = useState<string | number | null>(null);
+  const [hasWaInstance, setHasWaInstance] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (user?.id) {
+      greenApiService.getAgentInstance(user.id).then(inst => {
+        setHasWaInstance(inst?.wa_state === 'authorized');
+      });
     }
-    const message = `Hello ${name}, this is a friendly message from the ADC canvassing team. We'd love to chat and hear your feedback about your polling unit! Let us know when is a good time.`;
-    return `https://wa.me/${cleaned}?text=${encodeURIComponent(message)}`;
+  }, [user?.id]);
+
+  const handleOpenWaModal = (voter: Voter, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setConfirmWaVoter(voter);
+    setWaModalMessage(getFormattedOutreachMessage(voter.name, voter.wardId));
   };
 
-  const getSMSLink = (phone: string, name: string) => {
-    const message = `Hello ${name}, this is a friendly message from the ADC canvassing team. We'd love to chat and hear your feedback about your polling unit! Let us know when is a good time.`;
-    return `sms:${phone}?body=${encodeURIComponent(message)}`;
+  const handleDirectSendFlyer = async (voter: Voter, customMsgText?: string) => {
+    if (!user) return;
+
+    const formattedMessage = customMsgText || getFormattedOutreachMessage(voter.name, voter.wardId);
+    const cleanPhone = formatPhone(voter.phone);
+    const manualWaBounty = Number(stateConfig?.earning_per_manual_wa || 15);
+
+    // If agent WhatsApp instance is not connected/authorized, open wa.me on phone & award manual WA earning
+    if (!hasWaInstance) {
+      logVoterContact(voter.id, 'whatsapp');
+      markVoterCanvassed(voter.id, voter.phone);
+      markVoterConfirmedOnWa(voter.id, voter.phone);
+
+      const waUrl = getWhatsAppLink(voter.phone, voter.name, voter.wardId, formattedMessage);
+      window.open(waUrl, '_blank');
+
+      try {
+        const numericVoterId = voter.id ? parseInt(String(voter.id).replace(/\D/g, ''), 10) : null;
+        await supabase.functions.invoke('whatsapp-admin', {
+          body: {
+            action: 'creditOutreachEarning',
+            agentId: user.id,
+            type: 'manual_wa',
+            voterId: Number.isFinite(numericVoterId) ? numericVoterId : null,
+            voterPhone: cleanPhone,
+            voterName: voter.name
+          }
+        });
+        toast.success(`WhatsApp link opened! (+₦${manualWaBounty} earned)`);
+      } catch (e) {
+        console.error('Failed to credit manual wa earning:', e);
+      }
+      return;
+    }
+
+    setSendingVoterId(voter.id);
+    const toastId = toast.loading(`Sending campaign outreach to ${voter.name}...`);
+    try {
+      const res = await greenApiService.sendFlyer(user.id, cleanPhone, voter.name, voter.id, formattedMessage);
+      if (res?.notOnWhatsapp) {
+        toast.error(`${voter.name} is not registered on WhatsApp`, { id: toastId });
+        setNotOnWaSet(prev => {
+          const next = new Set(prev);
+          next.add(String(voter.id));
+          next.add(cleanPhone);
+          if (voter.phone) next.add(voter.phone);
+          return next;
+        });
+      } else {
+        const earned = res.earned || stateConfig?.earning_per_chat || 50;
+        toast.success(`Campaign outreach sent to ${voter.name}! (+₦${earned})`, { id: toastId });
+        markVoterConfirmedOnWa(voter.id, voter.phone);
+        setNotOnWaSet(prev => {
+          const next = new Set(prev);
+          next.delete(String(voter.id));
+          next.delete(cleanPhone);
+          if (voter.phone) next.delete(voter.phone);
+          return next;
+        });
+        logVoterContact(voter.id, 'whatsapp');
+        markVoterCanvassed(voter.id, voter.phone);
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to dispatch WhatsApp flyer', { id: toastId });
+    } finally {
+      setSendingVoterId(null);
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -303,20 +687,28 @@ export default function Voters() {
     return stateLoc ? ` • ${stateLoc.name} State` : '';
   };
 
-  const formatPhone = (phone?: string) => {
-    if (!phone) return 'N/A';
-    let p = String(phone).replace(/^\+?234/, '0');
-    if (p.length === 10 && !p.startsWith('0')) {
-      p = '0' + p;
-    }
-    return p;
-  };
-
   return (
     <div className="h-full flex flex-col relative">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Voter Register</h1>
-        <p className="text-gray-500">Manage and update voter canvassing status</p>
+      <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Voter Register</h1>
+          <p className="text-gray-500 dark:text-gray-400">Manage and update voter canvassing status</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setTempTemplate(customTemplate || stateTemplate || defaultTemplate);
+            setIsTemplateModalOpen(true);
+          }}
+          className="px-3.5 py-2 bg-white dark:bg-gray-800 border border-emerald-600/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-xs font-semibold rounded-lg flex items-center gap-2 shadow-xs transition self-start sm:self-auto cursor-pointer"
+          title="Customize your personal outreach message format"
+        >
+          <Edit3 size={15} className="text-emerald-600" />
+          <span>My Outreach Message</span>
+          {customTemplate && (
+            <span className="w-2 h-2 rounded-full bg-emerald-500" title="Personalized template active" />
+          )}
+        </button>
       </div>
 
       {/* Jurisdiction Filters (LGA, Ward, PU) */}
@@ -405,8 +797,8 @@ export default function Voters() {
         </div>
       )}
 
-      {/* Search Bar */}
-      <div className="flex gap-2 mb-4">
+      {/* Search Bar & Reach/Stance Filters */}
+      <div className="flex flex-col lg:flex-row gap-2.5 mb-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
           <input 
@@ -414,8 +806,34 @@ export default function Voters() {
             placeholder="Search by Name or Phone..." 
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#004d25] focus:border-transparent"
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#004d25] focus:border-transparent text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
           />
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Stance Dropdown */}
+          <select
+            value={voterStanceFilter}
+            onChange={(e) => setVoterStanceFilter(e.target.value as any)}
+            className="px-3 py-2 text-xs font-semibold rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer shadow-2xs"
+          >
+            <option value="all">All Stances</option>
+            <option value="ADC Supporter">Supporters</option>
+            <option value="Undecided">Undecided</option>
+            <option value="Opposition">Opposition</option>
+          </select>
+
+          {/* Reach Dropdown */}
+          <select
+            value={voterReachFilter}
+            onChange={(e) => setVoterReachFilter(e.target.value as any)}
+            className="px-3 py-2 text-xs font-semibold rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer shadow-2xs"
+          >
+            <option value="all">All Voters</option>
+            <option value="on_whatsapp">On WhatsApp</option>
+            <option value="not_whatsapp">Not on WhatsApp</option>
+            <option value="canvassed">Canvassed</option>
+          </select>
         </div>
       </div>
 
@@ -453,58 +871,69 @@ export default function Voters() {
                         <h4 className="font-semibold text-gray-900">
                           {voter.name}
                         </h4>
-                        {/* PU details badge commented out for now:
-                        <div className="flex items-center gap-1.5 text-xs text-gray-500 mt-0.5">
-                          <span 
-                            className="bg-emerald-50 text-emerald-800 font-semibold px-1.5 py-0.5 rounded text-[10px] tracking-wider uppercase shrink-0" 
-                            title={`Polling Unit: ${puNames[voter.puNumberId || 0] || voter.puId || 'PU'}`}
-                          >
-                            PU: {shortPu8}
-                          </span>
-                          <span>{formatPhone(voter.phone)}</span>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <p className="text-xs text-gray-500 font-mono">{formatPhone(voter.phone)}</p>
+                          {isVoterNotOnWa(voter) && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 px-1.5 py-0.2 rounded">
+                              Not on WhatsApp
+                            </span>
+                          )}
                         </div>
-                        */}
-                        <p className="text-xs text-gray-500 mt-0.5">{formatPhone(voter.phone)}</p>
                       </div>
                     </div>
-                  <div className="flex items-center gap-3">
-                    {voter.phone && (
-                      <div className="flex items-center gap-1.5 mr-2" onClick={(e) => e.stopPropagation()}>
-                        <a 
-                          href={getWhatsAppLink(voter.phone, voter.name)} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          title="WhatsApp Voter"
-                          onClick={() => logVoterContact(voter.id, 'whatsapp')}
-                          className="p-1.5 rounded-full hover:bg-green-50 text-green-600 transition-colors"
-                        >
-                          <MessageCircle size={18} />
-                        </a>
-                        <a 
-                          href={getSMSLink(voter.phone, voter.name)} 
-                          title="SMS Voter"
-                          onClick={() => logVoterContact(voter.id, 'sms')}
-                          className="p-1.5 rounded-full hover:bg-blue-50 text-blue-600 transition-colors"
-                        >
-                          <MessageSquare size={18} />
-                        </a>
-                        <a 
-                          href={`tel:${voter.phone}`} 
-                          title="Call Voter"
-                          onClick={() => logVoterContact(voter.id, 'call')}
-                          className="p-1.5 rounded-full hover:bg-gray-100 text-gray-600 transition-colors"
-                        >
-                          <Phone size={18} />
-                        </a>
-                      </div>
-                    )}
-                    <span className={cn("px-2.5 py-1 rounded-full text-xs font-medium border", getStatusColor(voter.status))}>
-                      {voter.status}
-                    </span>
-                  </div>
-                </li>
-              );
-            })}
+
+                    <div className="flex items-center gap-2.5 ml-auto">
+                      {/* Do not render Undecided status pill; only render if defined and NOT Undecided */}
+                      {voter.status && voter.status !== 'Undecided' && (
+                        <span className={cn("px-2.5 py-1 rounded-full text-xs font-medium border whitespace-nowrap", getStatusColor(voter.status))}>
+                          {voter.status}
+                        </span>
+                      )}
+
+                      {/* Action Icons: Aligned to Far Right */}
+                      {voter.phone && (
+                        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                          {/* WhatsApp Outreach */}
+                          {!(hasWaInstance && isVoterNotOnWa(voter)) && (
+                            <button 
+                              type="button"
+                              title={
+                                hasWaInstance 
+                                  ? `Dispatch Campaign Flyer & Message (+₦${stateConfig?.earning_per_chat || 50})` 
+                                  : `Open WhatsApp on phone (+₦${stateConfig?.earning_per_manual_wa || 15})`
+                              }
+                              onClick={(e) => handleOpenWaModal(voter, e)}
+                              disabled={sendingVoterId === voter.id}
+                              className={cn(
+                                "p-1.5 rounded-full transition-colors disabled:opacity-50 cursor-pointer",
+                                isVoterNotOnWa(voter)
+                                  ? "hover:bg-amber-50 text-amber-500 hover:text-amber-700"
+                                  : "hover:bg-green-50 text-green-600"
+                              )}
+                            >
+                              {sendingVoterId === voter.id ? (
+                                <Loader2 size={18} className="animate-spin text-green-600" />
+                              ) : (
+                                <MessageCircle size={18} />
+                              )}
+                            </button>
+                          )}
+
+                          {/* Call Voter */}
+                          <button 
+                            type="button"
+                            title={`Call Voter (+₦${stateConfig?.earning_per_call || 20} bounty)`}
+                            onClick={(e) => handleCallVoter(voter, e)}
+                            className="p-1.5 rounded-full hover:bg-emerald-50 text-emerald-700 dark:text-emerald-400 transition-colors cursor-pointer"
+                          >
+                            <Phone size={18} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -586,9 +1015,16 @@ export default function Voters() {
                   </div>
                   <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
                     <span className="text-gray-500 text-xs block mb-1">Phone Number</span>
-                    <span className="font-semibold text-gray-900 text-xs block">
-                      {formatPhone(currentVoter.phone)}
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-semibold text-gray-900 text-xs block font-mono">
+                        {formatPhone(currentVoter.phone)}
+                      </span>
+                      {isVoterNotOnWa(currentVoter) && (
+                        <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1 rounded">
+                          Not on WhatsApp
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
                     <span className="text-gray-500 text-xs block mb-1">Date of Birth</span>
@@ -603,6 +1039,83 @@ export default function Voters() {
                     </span>
                   </div>
                 </div>
+
+                {/* Official Campaign Outreach Box */}
+                {currentVoter.phone && (
+                  <div className={cn(
+                    "p-3.5 border rounded-xl space-y-2.5",
+                    isVoterNotOnWa(currentVoter)
+                      ? "bg-amber-50/70 border-amber-200 text-amber-900"
+                      : "bg-emerald-50 border-emerald-200 text-emerald-900"
+                  )}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
+                        {hasWaInstance && isVoterNotOnWa(currentVoter) ? (
+                          <>
+                            <Phone size={14} className="text-amber-700" />
+                            Direct Phone Outreach
+                          </>
+                        ) : (
+                          <>
+                            <MessageSquare size={14} className={isVoterNotOnWa(currentVoter) ? "text-amber-700" : "text-emerald-700"} />
+                            {hasWaInstance ? "WhatsApp Campaign Flyer" : "Direct WhatsApp (wa.me)"}
+                          </>
+                        )}
+                      </span>
+                      <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
+                        +₦{hasWaInstance && isVoterNotOnWa(currentVoter) 
+                          ? (stateConfig?.earning_per_call || 20) 
+                          : hasWaInstance 
+                          ? (stateConfig?.earning_per_chat || 50) 
+                          : (stateConfig?.earning_per_manual_wa || 15)} Earned
+                      </span>
+                    </div>
+                    <p className="text-xs text-emerald-800">
+                      {hasWaInstance && isVoterNotOnWa(currentVoter)
+                        ? "This voter is verified not on WhatsApp. Call the voter directly from your phone to canvass and earn your outreach reward."
+                        : hasWaInstance
+                        ? "Dispatches your state candidate flyer with personalized voter message directly from your phone."
+                        : "Opens WhatsApp directly on your phone via wa.me link with your custom outreach message prefilled."}
+                    </p>
+                    
+                    {hasWaInstance && isVoterNotOnWa(currentVoter) ? (
+                      <button
+                        type="button"
+                        onClick={() => handleCallVoter(currentVoter)}
+                        className="w-full py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg shadow-sm flex items-center justify-center gap-2 transition cursor-pointer"
+                      >
+                        <Phone size={14} />
+                        <span>Call Voter Directly (+₦{stateConfig?.earning_per_call || 20})</span>
+                      </button>
+                    ) : (
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={sendingVoterId === currentVoter.id}
+                          onClick={() => handleOpenWaModal(currentVoter)}
+                          className={cn(
+                            "flex-1 py-2.5 text-white text-xs font-semibold rounded-lg shadow-sm flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-60",
+                            isVoterNotOnWa(currentVoter)
+                              ? "bg-amber-600 hover:bg-amber-700"
+                              : "bg-[#004d25] hover:bg-[#006331]"
+                          )}
+                        >
+                          {hasWaInstance ? <Send size={14} /> : <MessageCircle size={14} />}
+                          <span>{hasWaInstance ? "WhatsApp Outreach" : "Open in WhatsApp"}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCallVoter(currentVoter)}
+                          className="px-3 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-semibold rounded-lg flex items-center justify-center gap-1 transition cursor-pointer"
+                          title="Call voter directly"
+                        >
+                          <Phone size={14} />
+                          <span>Call</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div>
                   <h4 className="font-semibold text-gray-900 mb-3">Update Status</h4>
@@ -698,6 +1211,292 @@ export default function Voters() {
                 className="flex-1 bg-gray-200 text-gray-700 font-semibold py-3 rounded-lg hover:bg-gray-300 transition-colors cursor-pointer"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Personalized Outreach Message Customizer Modal */}
+      {isTemplateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl max-w-lg w-full border border-gray-200 dark:border-gray-800 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-5 py-4 bg-gradient-to-r from-[#004d25] to-[#006331] text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Edit3 size={18} />
+                <h3 className="font-bold text-base">Personalize Outreach Message</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTemplateModalOpen(false)}
+                className="p-1 hover:bg-white/20 rounded-full transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-gray-600 dark:text-gray-400">
+                Customize the message that will be sent to voters alongside your candidate campaign flyer, or prefilled in WhatsApp (wa.me) links.
+              </p>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                  Outreach Format
+                </label>
+                <select
+                  value={tempFormat}
+                  onChange={(e) => setTempFormat(e.target.value as any)}
+                  className="w-full text-xs sm:text-sm p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="image_and_text">Image & Text (Candidate Campaign Flyer + Message)</option>
+                  <option value="text_only">Text Message Only (Direct Message)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">
+                  Insert Dynamic Placeholder Chips
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { label: 'Voter First Name', tag: '{{voter_firstname}}' },
+                    { label: 'Agent First Name', tag: '{{agent_firstname}}' },
+                    { label: 'Ward Name', tag: '{{ward_name}}' },
+                    { label: 'Voter Full Name', tag: '{{voter_name}}' },
+                    { label: 'Agent Full Name', tag: '{{agent_name}}' },
+                  ].map(chip => (
+                    <button
+                      key={chip.tag}
+                      type="button"
+                      onClick={() => setTempTemplate(prev => `${prev} ${chip.tag}`.trim())}
+                      className="text-[11px] font-medium bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 px-2.5 py-1 rounded-full cursor-pointer transition"
+                    >
+                      + {chip.label} <code className="opacity-70 text-[10px]">{chip.tag}</code>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                  Message Content
+                </label>
+                <textarea
+                  rows={4}
+                  value={tempTemplate}
+                  onChange={(e) => setTempTemplate(e.target.value)}
+                  placeholder="e.g. Hello {{voter_firstname}}, I am {{agent_firstname}}..."
+                  className="w-full text-xs sm:text-sm p-3 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-sans"
+                />
+              </div>
+
+              {/* Real-time Preview */}
+              <div className="p-3 bg-gray-50 dark:bg-gray-800/60 rounded-xl border border-gray-200 dark:border-gray-700/60 space-y-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 block">
+                  Live Preview {tempFormat === 'image_and_text' && '• Attached to Campaign Flyer'}
+                </span>
+
+                {tempFormat === 'image_and_text' && stateConfig?.default_flyer_url && (
+                  <div className="flex items-center gap-3 p-2 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                    <img 
+                      src={stateConfig.default_flyer_url} 
+                      alt="Campaign Flyer" 
+                      className="w-16 h-16 object-cover rounded-md border border-gray-200 shrink-0" 
+                    />
+                    <div className="text-xs text-gray-500 space-y-0.5">
+                      <p className="font-semibold text-gray-800 dark:text-gray-200">Official State Campaign Flyer</p>
+                      <p className="text-[11px] text-gray-500">Will be sent as the header image with your message below as the caption.</p>
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-xs text-gray-800 dark:text-gray-200 italic whitespace-pre-wrap bg-white dark:bg-gray-900 p-2.5 rounded-lg border border-gray-100 dark:border-gray-800">
+                  {tempTemplate
+                    .replace(/\{\{voter_firstt?name\}\}/gi, 'Adewale')
+                    .replace(/\{\{voter_first_name\}\}/gi, 'Adewale')
+                    .replace(/\{\{agent_firstt?name\}\}/gi, (user as any)?.firstName || getFirstName(user?.name) || 'Musa')
+                    .replace(/\{\{agent_first_name\}\}/gi, (user as any)?.firstName || getFirstName(user?.name) || 'Musa')
+                    .replace(/\{\{voter_name\}\}/gi, 'Adewale Johnson')
+                    .replace(/\{\{agent_name\}\}/gi, user?.name || 'Agent Musa')
+                    .replace(/\{\{ward_name\}\}/gi, 'Ward 01 (Central)') || '(Type your message template above to see live preview)'}
+                </p>
+              </div>
+            </div>
+
+            <div className="px-5 py-3.5 bg-gray-50 dark:bg-gray-800/40 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setTempTemplate(stateTemplate || defaultTemplate);
+                  setTempFormat('image_and_text');
+                }}
+                className="text-xs text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 underline cursor-pointer"
+              >
+                Reset to Default
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsTemplateModalOpen(false)}
+                  className="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const finalVal = tempTemplate.trim();
+                    setCustomTemplate(finalVal);
+                    setCustomFormat(tempFormat);
+                    if (user?.id) {
+                      if (finalVal) {
+                        localStorage.setItem(`eagleeye_agent_template_${user.id}`, finalVal);
+                      } else {
+                        localStorage.removeItem(`eagleeye_agent_template_${user.id}`);
+                      }
+                      localStorage.setItem(`eagleeye_agent_format_${user.id}`, tempFormat);
+                    }
+                    setIsTemplateModalOpen(false);
+                    toast.success('Outreach message template updated!');
+                  }}
+                  className="px-4 py-1.5 text-xs font-semibold text-white bg-[#004d25] hover:bg-[#006331] rounded-lg shadow-xs cursor-pointer transition"
+                >
+                  Save Template
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* WhatsApp Message Confirmation & Edit Modal */}
+      {confirmWaVoter && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl max-w-lg w-full border border-gray-200 dark:border-gray-800 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-5 py-4 bg-gradient-to-r from-[#004d25] to-[#006331] text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <MessageCircle size={18} />
+                <h3 className="font-bold text-base">Confirm WhatsApp Outreach</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setConfirmWaVoter(null)}
+                className="p-1 hover:bg-white/20 rounded-full transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700">
+                <div>
+                  <span className="text-[10px] text-gray-400 uppercase font-semibold block">Target Voter</span>
+                  <p className="text-sm font-bold text-gray-900 dark:text-white">{confirmWaVoter.name}</p>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-gray-400 uppercase font-semibold block">Phone Number</span>
+                  <p className="text-xs font-mono font-bold text-gray-900 dark:text-white">{formatPhone(confirmWaVoter.phone)}</p>
+                </div>
+              </div>
+
+              {/* Campaign Flyer Asset Preview */}
+              {stateConfig?.default_flyer_url && (
+                <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+                      <ImageIcon size={14} className="text-[#004d25]" />
+                      Attached Campaign Flyer (Image + Caption)
+                    </span>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-2 py-0.5 rounded-full font-bold">
+                      State Flyer
+                    </span>
+                  </div>
+                  <div className="flex gap-3 items-center">
+                    <img
+                      src={stateConfig.default_flyer_url}
+                      alt="Campaign Flyer"
+                      className="w-16 h-16 object-cover rounded-lg border border-gray-200 shadow-2xs shrink-0"
+                    />
+                    <div className="text-xs text-gray-500 space-y-1">
+                      <p className="font-semibold text-gray-800 dark:text-gray-200">
+                        Official Campaign Flyer
+                      </p>
+                      <p className="text-[11px] text-gray-600 dark:text-gray-400">
+                        {hasWaInstance 
+                          ? 'This flyer image will be delivered directly with the message below as its caption.'
+                          : 'Notice: WhatsApp line not connected. Opening WhatsApp directly on your phone (wa.me) transfers text message only (URL protocol cannot auto-attach media).'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                  Message / Caption to Send
+                </label>
+                <textarea
+                  rows={4}
+                  value={waModalMessage}
+                  onChange={(e) => setWaModalMessage(e.target.value)}
+                  className="w-full text-xs sm:text-sm p-3 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-sans"
+                />
+              </div>
+
+              {/* Status Note & Reward */}
+              <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 rounded-xl flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <p className="text-xs font-semibold text-emerald-900 dark:text-emerald-200">
+                    {hasWaInstance ? 'Official Campaign WhatsApp Instance Active' : 'Direct Phone WhatsApp (wa.me)'}
+                  </p>
+                  <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                    {hasWaInstance
+                      ? 'Dispatches candidate flyer with personalized caption directly from your assigned line.'
+                      : 'Opens WhatsApp on your device with this prefilled message.'}
+                  </p>
+                </div>
+                <span className="text-xs bg-emerald-200/80 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-100 font-bold px-2.5 py-1 rounded-full shrink-0">
+                  +₦{hasWaInstance ? (stateConfig?.earning_per_chat || 50) : (stateConfig?.earning_per_manual_wa || 15)}
+                </span>
+              </div>
+            </div>
+
+            <div className="px-5 py-3.5 bg-gray-50 dark:bg-gray-800/40 border-t border-gray-100 dark:border-gray-800 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmWaVoter(null)}
+                className="px-3.5 py-2 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={sendingVoterId === confirmWaVoter.id}
+                onClick={async () => {
+                  const targetVoter = confirmWaVoter;
+                  const finalMsg = waModalMessage;
+                  setConfirmWaVoter(null);
+                  await handleDirectSendFlyer(targetVoter, finalMsg);
+                }}
+                className="px-4 py-2 text-xs font-semibold text-white bg-[#004d25] hover:bg-[#006331] rounded-lg shadow-xs flex items-center gap-2 cursor-pointer transition disabled:opacity-60"
+              >
+                {sendingVoterId === confirmWaVoter.id ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    <span>Sending...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send size={14} />
+                    <span>
+                      {hasWaInstance 
+                        ? `Send Flyer (+₦${stateConfig?.earning_per_chat || 50})`
+                        : `Open WhatsApp (+₦${stateConfig?.earning_per_manual_wa || 15})`}
+                    </span>
+                  </>
+                )}
               </button>
             </div>
           </div>

@@ -25,7 +25,14 @@ export default function Layout() {
     { name: 'Jurisdictions', path: '/locations', icon: Map, roles: ['national_admin', 'state_admin', 'lga_admin', 'ward_admin'] },
     { name: 'Voters', path: '/voters', icon: Users, roles: ['ward_admin', 'pu_agent'] },
     { name: 'Result Capture', path: '/capture', icon: Camera, roles: ['ward_admin', 'pu_agent'] },
-    { name: 'Payment', path: '/payment', icon: CreditCard, roles: ['national_admin', 'state_admin', 'lga_admin', 'ward_admin', 'pu_agent'] },
+    { 
+      name: ['pu_agent', 'ward_admin', 'lga_admin'].includes(user.role) ? 'Earnings' : 'Payment', 
+      path: '/payment', 
+      icon: CreditCard, 
+      roles: ['national_admin', 'state_admin', 'lga_admin', 'ward_admin', 'pu_agent'] 
+    },
+    { name: 'WhatsApp Hub', path: '/whatsapp-config', icon: MessageSquare, roles: ['national_admin', 'state_admin'] },
+    { name: 'Group AI Monitor', path: '/group-monitor', icon: Users, roles: ['national_admin', 'state_admin'] },
     { name: 'SMS Tracker', path: '/sms', icon: MessageSquare, roles: ['national_admin', 'state_admin'] },
     { name: 'Token Usage', path: '/billing', icon: Cpu, roles: ['national_admin', 'state_admin'] },
   ];

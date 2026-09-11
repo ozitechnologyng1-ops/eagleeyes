@@ -401,9 +401,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const depStats: DeploymentStats = {};
 
       // ─── Query Helpers ──────────────────────────────────────────────
-      const getCoverage = async (sourceTable: string, agentRole: Role, filterKey: string, filterVal: any, distinctCol: string) => {
+      const getCoverage = async (sourceTable: string, agentRole: Role, filterKey: string, filterVal: any, distinctCol: string, agentFilterKeyOverride?: string) => {
         const { count: total } = await supabase.from(sourceTable).select('*', { count: 'exact', head: true }).eq(filterKey, filterVal);
-        const { data: cov } = await supabase.from('agents').select(distinctCol).eq(filterKey, filterVal).not(distinctCol, 'is', null);
+        const agentKey = agentFilterKeyOverride || filterKey;
+        const { data: cov } = await supabase.from('agents').select(distinctCol).eq(agentKey, filterVal).not(distinctCol, 'is', null);
         const unique = new Set(cov?.map(d => d[distinctCol]));
         return { covered: unique.size, total: total || 0 };
       };
@@ -420,14 +421,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
           depStats.lga = await getCoverage('local_governments', 'lga_admin', 'state_id', user.stateId, 'local_governments_id');
         }
         if (roleHierarchy[user.role] >= roleHierarchy['state_admin'] || user.lgaId) {
-          const filterKey = user.lgaId ? 'local_governments_id' : 'state_id';
+          const filterKey = user.lgaId ? 'localgovernment_id' : 'state_id';
+          const agentKey = user.lgaId ? 'local_governments_id' : 'state_id';
           const filterVal = user.lgaId || user.stateId;
-          depStats.ward = await getCoverage('wards', 'ward_admin', filterKey, filterVal, 'wards_id');
+          depStats.ward = await getCoverage('wards', 'ward_admin', filterKey, filterVal, 'wards_id', agentKey);
         }
         if (roleHierarchy[user.role] >= roleHierarchy['state_admin'] || user.wardId || user.lgaId) {
-          const filterKey = user.wardId ? 'ward_id' : user.lgaId ? 'local_governments_id' : 'state_id';
+          const filterKey = user.wardId ? 'ward_id' : user.lgaId ? 'localgovernment_id' : 'state_id';
+          const agentKey = user.wardId ? 'wards_id' : user.lgaId ? 'local_governments_id' : 'state_id';
           const filterVal = user.wardId || user.lgaId || user.stateId;
-          depStats.pu = await getCoverage('polling_units', 'pu_agent', filterKey, filterVal, 'polling_units_id');
+          depStats.pu = await getCoverage('polling_units', 'pu_agent', filterKey, filterVal, 'polling_units_id', agentKey);
         }
       }
 
@@ -562,12 +565,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // ── Exact voter count via Postgres RPC ──────────────────────────
         // Build scoped RPC params based on role hierarchy
         const rpcParams: Record<string, any> = {};
-        if (user?.role === 'pu_agent' && user?.lagosPollingUnitId) {
-          rpcParams.p_polling_unit_lagos_id = user.lagosPollingUnitId;
-        } else if (user?.role === 'ward_admin' && voterPuFilter) {
+        if (user?.role === 'pu_agent' && (user?.lagosPollingUnitId || user?.puId)) {
+          rpcParams.p_polling_unit_lagos_id = user.lagosPollingUnitId || user.puId;
+        } else if (voterPuFilter) {
           rpcParams.p_polling_unit_lagos_id = voterPuFilter;
-        } else if (user?.role === 'lga_admin' && user?.lgaId) {
-          rpcParams.p_lga_id = user.lgaId;
+        } else if (voterWardFilter || (user?.role === 'ward_admin' && user?.wardId)) {
+          rpcParams.p_ward_id = voterWardFilter || user?.wardId;
+        } else if (voterLgaFilter || (user?.role === 'lga_admin' && user?.lgaId)) {
+          rpcParams.p_lga_id = voterLgaFilter || user?.lgaId;
         } else if (user?.stateId) {
           rpcParams.p_state_id = user.stateId;
         }
@@ -797,12 +802,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const buildScopedRpcParams = (): Record<string, any> => {
-    if (user?.role === 'pu_agent' && user?.lagosPollingUnitId) {
-      return { p_polling_unit_lagos_id: user.lagosPollingUnitId };
-    } else if (user?.role === 'ward_admin' && voterPuFilter) {
+    if (user?.role === 'pu_agent' && (user?.lagosPollingUnitId || user?.puId)) {
+      return { p_polling_unit_lagos_id: user.lagosPollingUnitId || user.puId };
+    } else if (voterPuFilter) {
       return { p_polling_unit_lagos_id: voterPuFilter };
-    } else if (user?.role === 'lga_admin' && user?.lgaId) {
-      return { p_lga_id: user.lgaId };
+    } else if (voterWardFilter || (user?.role === 'ward_admin' && user?.wardId)) {
+      return { p_ward_id: voterWardFilter || user?.wardId };
+    } else if (voterLgaFilter || (user?.role === 'lga_admin' && user?.lgaId)) {
+      return { p_lga_id: voterLgaFilter || user?.lgaId };
     } else if (user?.stateId) {
       return { p_state_id: user.stateId };
     }

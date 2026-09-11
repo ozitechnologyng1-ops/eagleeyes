@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp, roleHierarchy, Agent, Location, Role } from '../context/AppContext';
 import { 
   Users, Target, UploadCloud, MapPin, Activity, CheckCircle, Smartphone, Camera, 
   FileText, PieChart as PieChartIcon, ChevronRight, UserPlus, AlertTriangle, 
   CheckCircle2, XCircle, Search, ChevronDown, ChevronUp, UserCheck, UserX, Shield, 
-  Phone, Layers, Loader2
+  Phone, Layers, Loader2, MessageSquare, Bot, QrCode, DollarSign, Send, RefreshCw,
+  Copy, Check, MessageCircle
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList } from 'recharts';
 import { useNavigate } from 'react-router-dom';
@@ -12,6 +13,7 @@ import { cn, getFriendlyErrorMessage } from '../lib/utils';
 import ResultFilters from '../components/ResultFilters';
 import AgentModal from '../components/AgentModal';
 import toast from 'react-hot-toast';
+import { greenApiService, WhatsAppInstance } from '../lib/greenApi';
 
 import { supabase } from '../lib/supabase';
 
@@ -21,8 +23,6 @@ export default function Dashboard() {
     electionResults, voterPuFilter, setVoterPuFilter, addAgent, updateAgent 
   } = useApp();
   const [activeTab, setActiveTab] = useState<'canvassing' | 'elections'>('canvassing');
-  const [wardAgents, setWardAgents] = useState<any[]>([]);
-  const [selectedAgent, setSelectedAgent] = useState<string>('');
 
   // Agent Modal & quick assign state
   const [isAgentModalOpen, setIsAgentModalOpen] = useState(false);
@@ -45,29 +45,6 @@ export default function Dashboard() {
       toast.error(getFriendlyErrorMessage(err));
     }
   };
-
-  React.useEffect(() => {
-    if (user?.role === 'ward_admin' && user?.wardId) {
-      supabase
-        .from('agents')
-        .select('id, name, phone, polling_units_id')
-        .eq('wards_id', user.wardId)
-        .eq('role', 'pu_agent')
-        .then(({ data }) => {
-          const list = data || [];
-          setWardAgents(list);
-          if (list.length > 0) {
-            if (!voterPuFilter) {
-              setVoterPuFilter(list[0].polling_units_id);
-              setSelectedAgent(list[0].id);
-            } else {
-              const matching = list.find(a => a.polling_units_id === voterPuFilter);
-              if (matching) setSelectedAgent(matching.id);
-            }
-          }
-        });
-    }
-  }, [user, voterPuFilter, setVoterPuFilter]);
 
   if (!user) return null;
 
@@ -105,51 +82,26 @@ export default function Dashboard() {
         refreshTrigger={refreshTrigger}
       />
 
-      {user.role === 'ward_admin' && wardAgents.length > 0 && (
-        <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div>
-            <h2 className="text-sm font-semibold text-[#004d25] uppercase tracking-wider">Agent Monitoring</h2>
-            <p className="text-xs text-gray-400">Select a polling unit agent in your ward to monitor their canvassing progress</p>
-          </div>
-          <select 
-            value={selectedAgent} 
-            onChange={(e) => {
-              const val = e.target.value;
-              setSelectedAgent(val);
-              const agent = wardAgents.find(a => a.id === val);
-              if (agent) {
-                setVoterPuFilter(agent.polling_units_id);
-              }
-            }} 
-            className="w-full sm:w-72 border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-[#004d25] font-medium text-gray-700 bg-white cursor-pointer"
-          >
-            {wardAgents.map(a => (
-              <option key={a.id} value={a.id}>
-                {a.name} ({a.phone})
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-      
       {(user.role === 'pu_agent' || user.role === 'ward_admin') && (
         <AgentQuickActions user={user} locations={locations} />
       )}
       
-      <div className="flex border-b border-gray-200">
-        <button 
-          onClick={() => setActiveTab('canvassing')}
-          className={cn("px-6 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer", activeTab === 'canvassing' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
-        >
-          Canvassing Overview
-        </button>
-        <button 
-          onClick={() => setActiveTab('elections')}
-          className={cn("px-6 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer", activeTab === 'elections' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
-        >
-          Election Results
-        </button>
-      </div>
+      {user.role !== 'pu_agent' && user.role !== 'ward_admin' && (
+        <div className="flex border-b border-gray-200">
+          <button 
+            onClick={() => setActiveTab('canvassing')}
+            className={cn("px-6 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer", activeTab === 'canvassing' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
+          >
+            Canvassing Overview
+          </button>
+          <button 
+            onClick={() => setActiveTab('elections')}
+            className={cn("px-6 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer", activeTab === 'elections' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
+          >
+            Election Results
+          </button>
+        </div>
+      )}
 
       {activeTab === 'canvassing' ? (
         <CanvassingDashboard stats={stats} agents={visibleAgents} locations={allowedLocations} user={user} voters={voters} totalVotersCount={totalVotersCount} />
@@ -183,7 +135,73 @@ export default function Dashboard() {
 function DashboardHeader({ user, locations, onOpenRegisterAgent }: any) {
   const { isMockMode, toggleMockMode } = useApp();
   const locationName = user.locationName || locations.find((l: any) => l.id === user.locationId)?.name || 'National';
-  
+  const [pathParts, setPathParts] = useState<string[]>([]);
+  const [isPathExpanded, setIsPathExpanded] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    let isCancelled = false;
+
+    async function resolvePath() {
+      const parts: string[] = [];
+      const isLagos = user.stateId === 24;
+
+      if (user.role === 'national_admin') {
+        setPathParts(['Nigeria']);
+        return;
+      }
+
+      // 1. State
+      let stateName = locations.find((l: any) => l.id === `state_${user.stateId}`)?.name;
+      if (!stateName && user.stateId) {
+        const { data } = await supabase.from('states').select('name').eq('id', user.stateId).single();
+        if (data) stateName = data.name;
+      }
+      if (stateName) parts.push(`${stateName} State`);
+
+      // 2. LGA
+      if (user.lgaId) {
+        let lgaName = locations.find((l: any) => l.id === `lga_${user.lgaId}`)?.name;
+        if (!lgaName) {
+          const lgaTable = isLagos ? 'local_governments_lagos' : 'local_governments';
+          const { data } = await supabase.from(lgaTable).select('name').eq('id', user.lgaId).single();
+          if (data) lgaName = data.name;
+        }
+        if (lgaName) parts.push(`${lgaName} LGA`);
+      }
+
+      // 3. Ward
+      if (user.wardId) {
+        let wardName = user.role === 'ward_admin' ? user.locationName : null;
+        if (!wardName) {
+          const wardTable = isLagos ? 'wards_lagos' : 'wards';
+          const { data } = await supabase.from(wardTable).select('name').eq('id', user.wardId).single();
+          if (data) wardName = data.name;
+        }
+        if (wardName) parts.push(wardName.toLowerCase().includes('ward') ? wardName : `${wardName} Ward`);
+      }
+
+      // 4. Polling Unit
+      if (user.role === 'pu_agent' || user.puId || user.lagosPollingUnitId) {
+        let puName = user.role === 'pu_agent' ? user.locationName : null;
+        const puTargetId = user.lagosPollingUnitId || user.puId;
+        if (!puName && puTargetId) {
+          const puTable = isLagos ? 'polling_units_lagos' : 'polling_units';
+          const { data } = await supabase.from(puTable).select('name').eq('id', puTargetId).single();
+          if (data) puName = data.name;
+        }
+        if (puName) parts.push(`${puName} PU`);
+      }
+
+      if (!isCancelled) {
+        setPathParts(parts);
+      }
+    }
+
+    resolvePath();
+    return () => { isCancelled = true; };
+  }, [user, locations]);
+
   return (
     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-5 rounded-2xl border border-gray-100 shadow-xs">
       <div>
@@ -193,6 +211,50 @@ function DashboardHeader({ user, locations, onOpenRegisterAgent }: any) {
         <p className="text-sm text-gray-500 mt-0.5">
           {user.role === 'national_admin' ? 'Nigeria Overview' : `${user.role.replace('_', ' ').toUpperCase()} • Jurisdiction Overview`}
         </p>
+        {user.role === 'pu_agent' && (
+          <p className="text-xs text-gray-500 mt-1">
+            You are registered as the primary polling unit agent for this location.
+          </p>
+        )}
+        {pathParts.length > 0 && (
+          <div className="flex items-center gap-1.5 text-[11px] text-gray-500 flex-wrap mt-2 pt-1 border-t border-gray-100">
+            <MapPin size={12} className="text-[#004d25] shrink-0" />
+            <span className="font-semibold text-gray-700">Jurisdiction:</span>
+            {pathParts.length <= 2 || isPathExpanded ? (
+              <>
+                {pathParts.map((part, i) => (
+                  <React.Fragment key={i}>
+                    {i > 0 && <span className="text-gray-300">/</span>}
+                    <span className="text-gray-600 font-medium">{part}</span>
+                  </React.Fragment>
+                ))}
+                {pathParts.length > 2 && (
+                  <button
+                    type="button"
+                    onClick={() => setIsPathExpanded(false)}
+                    className="text-[10px] text-[#004d25] hover:underline ml-1 font-semibold cursor-pointer"
+                  >
+                    (less)
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                <span className="text-gray-400">... /</span>
+                <span className="text-gray-600 font-medium">{pathParts[pathParts.length - 2]}</span>
+                <span className="text-gray-300">/</span>
+                <span className="text-gray-600 font-medium">{pathParts[pathParts.length - 1]}</span>
+                <button
+                  type="button"
+                  onClick={() => setIsPathExpanded(true)}
+                  className="text-[10px] text-[#004d25] hover:underline ml-1 font-semibold cursor-pointer"
+                >
+                  (full path)
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {user.role !== 'pu_agent' && (
@@ -305,13 +367,130 @@ function NationalDashboard({ stats }: any) {
 }
 
 function CanvassingDashboard({ stats, agents, locations, user, voters, totalVotersCount }: any) {
+  const navigate = useNavigate();
   const COLORS = ['#004d25', '#d4af37', '#e11d48', '#6b7280'];
   const { canvassing } = stats;
+  const isAgent = user?.role === 'pu_agent' || user?.role === 'ward_admin';
+  const votersHeading = user?.role === 'ward_admin' 
+    ? "Voters in your Ward" 
+    : user?.role === 'pu_agent' 
+    ? "Voters in your Polling Unit" 
+    : "Total Registered Voters";
+
+  const listHeading = user?.role === 'ward_admin' 
+    ? "Voters in your Ward" 
+    : user?.role === 'pu_agent' 
+    ? "Voters in your Polling Unit" 
+    : "Voters in your PU / Ward";
+
+  const getVoterStatusBadge = (status: string) => {
+    switch (status) {
+      case 'ADC Supporter': return 'bg-green-100 text-green-800 border-green-200';
+      case 'Opposition': return 'bg-red-100 text-red-800 border-red-200';
+      case 'Undecided': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+      case 'Unreachable': return 'bg-gray-100 text-gray-800 border-gray-200';
+      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
+  if (isAgent) {
+    return (
+      <div className="space-y-4">
+        {/* Mini List of 5 Target Voters for Quick Canvassing */}
+        <div className="bg-white rounded-xl shadow-xs border border-gray-200 overflow-hidden">
+          <div className="p-3 sm:p-4 border-b border-gray-100 flex items-center justify-between">
+            <h3 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
+              <Users className="text-[#004d25]" size={18} />
+              <span>{listHeading}</span>
+            </h3>
+            <button
+              onClick={() => navigate('/voters')}
+              className="text-xs font-semibold text-[#004d25] hover:text-[#006331] flex items-center gap-1 cursor-pointer"
+            >
+              <span>View More</span>
+              <ChevronRight size={14} />
+            </button>
+          </div>
+
+          <div className="divide-y divide-gray-100">
+            {(!voters || voters.length === 0) ? (
+              <div className="p-6 text-center text-gray-500 text-xs">
+                No voters loaded yet. Click 'View More' to explore the register.
+              </div>
+            ) : (
+              voters.slice(0, 5).map((voter: any) => {
+                let cleanPhone = String(voter.phone || '').replace(/\D/g, '');
+                if (cleanPhone.startsWith('0') && cleanPhone.length === 11) {
+                  cleanPhone = '234' + cleanPhone.substring(1);
+                } else if (!cleanPhone.startsWith('234') && cleanPhone.length === 10) {
+                  cleanPhone = '234' + cleanPhone;
+                }
+
+                const voterFirstName = (voter.name || '').trim().split(/\s+/)[0] || 'Voter';
+                const agentFirstName = (user as any)?.firstName || (user?.name || '').trim().split(/\s+/)[0] || 'Field Agent';
+                const defaultOutreachText = `Hello ${voterFirstName}! The time for real change and good governance is now. I am ${agentFirstName}, reaching out directly from our ADC grassroots campaign. Are you ready to make your vote count? Reply to join the movement!`;
+
+                return (
+                  <div key={voter.id} className="p-3 sm:p-4 flex items-center justify-between hover:bg-gray-50 transition">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full bg-emerald-50 text-[#004d25] flex items-center justify-center font-bold text-xs">
+                        {(voter.name || 'V')[0].toUpperCase()}
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-xs sm:text-sm text-gray-900">{voter.name}</h4>
+                        <p className="text-[11px] text-gray-500 font-mono mt-0.5">{cleanPhone || 'No Phone'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                        {cleanPhone ? (
+                          <>
+                            <a
+                              href={`https://wa.me/${cleanPhone}?text=${encodeURIComponent(defaultOutreachText)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="WhatsApp Voter"
+                              className="p-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition flex items-center justify-center"
+                            >
+                              <MessageCircle size={15} />
+                            </a>
+                            <a
+                              href={`tel:+${cleanPhone}`}
+                              title="Call Voter"
+                              className="p-2 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 transition flex items-center justify-center"
+                            >
+                              <Phone size={15} />
+                            </a>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => navigate('/voters')}
+                            title="View in voter register"
+                            className="p-2 rounded-lg bg-gray-100 text-gray-400 hover:text-gray-600 transition"
+                          >
+                            <ChevronRight size={15} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* 2 Stat Cards directly under the list */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <StatCard title={votersHeading} value={totalVotersCount > 0 ? totalVotersCount.toLocaleString() : '0'} icon={Users} colorClass="bg-blue-50 text-blue-600" />
+          <StatCard title="Voters Canvassed" value={canvassing.canvassed.toLocaleString()} subtitle={`${Math.round((canvassing.canvassed / (canvassing.target || 1)) * 100)}% of target`} icon={Target} colorClass="bg-green-50 text-green-600" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <StatCard title="Voters" value={totalVotersCount > 0 ? totalVotersCount.toLocaleString() : '0'} icon={Users} colorClass="bg-blue-50 text-blue-600" />
+        <StatCard title={votersHeading} value={totalVotersCount > 0 ? totalVotersCount.toLocaleString() : '0'} icon={Users} colorClass="bg-blue-50 text-blue-600" />
         <StatCard title="Voters Canvassed" value={canvassing.canvassed.toLocaleString()} subtitle={`${Math.round((canvassing.canvassed / (canvassing.target || 1)) * 100)}% of target`} icon={Target} colorClass="bg-green-50 text-green-600" />
       </div>
 
@@ -1048,34 +1227,273 @@ function DetailedResultsTable({ dataSet, filters, locations }: any) {
 function AgentQuickActions({ user, locations }: any) {
   const navigate = useNavigate();
   const puName = user?.locationName || locations.find((l: any) => l.id === user?.locationId)?.name || 'Jurisdiction';
-  
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <button 
-        onClick={() => navigate('/voters')}
-        className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4 hover:bg-green-50 transition-colors group cursor-pointer"
-      >
-        <div className="p-3 bg-green-100 rounded-lg text-[#004d25] group-hover:bg-[#004d25] group-hover:text-white transition-colors">
-          <Users size={24} />
-        </div>
-        <div className="text-left">
-          <h3 className="font-bold text-gray-900">Voter Canvassing</h3>
-          <p className="text-xs text-gray-500">Update status for {puName}</p>
-        </div>
-      </button>
+  const stateId = user?.stateId || 24;
 
-      <button 
-        onClick={() => navigate('/capture')}
-        className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4 hover:bg-green-50 transition-colors group cursor-pointer"
-      >
-        <div className="p-3 bg-[#d4af37]/20 rounded-lg text-[#004d25] group-hover:bg-[#004d25] group-hover:text-white transition-colors">
-          <Camera size={24} />
+  const [waInstance, setWaInstance] = useState<WhatsAppInstance | null>(null);
+  const [groupMonitorPhone, setGroupMonitorPhone] = useState<string | null>(null);
+  const [groupBounty, setGroupBounty] = useState(100);
+  const [chatEarning, setChatEarning] = useState(50);
+  const [isConnectOpen, setIsConnectOpen] = useState(false);
+  const [connectMethod, setConnectMethod] = useState<'qr' | 'phone'>('qr');
+  const [qrData, setQrData] = useState<string | null>(null);
+  const [authCode, setAuthCode] = useState<string | null>(null);
+  const [phoneInput, setPhoneInput] = useState('');
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
+  const [isRequestingCode, setIsRequestingCode] = useState(false);
+  const [standbyInst, setStandbyInst] = useState<WhatsAppInstance | null>(null);
+
+  const handleCopyCode = (code: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedCode(true);
+    toast.success('Pairing code copied to clipboard!');
+    setTimeout(() => setCopiedCode(false), 2000);
+  };
+
+  useEffect(() => {
+    // Check if agent already has an assigned instance
+    greenApiService.getAgentInstance(user.id).then(inst => {
+      setWaInstance(inst);
+    });
+
+    // Fetch state config for group monitor and earnings
+    greenApiService.getConfig(stateId).then(cfg => {
+      if (cfg) {
+        setGroupBounty(cfg.earning_per_group_add || 100);
+        setChatEarning(cfg.earning_per_chat || 50);
+      }
+    });
+
+    // Check state's group monitor number
+    greenApiService.getInstances(stateId).then(insts => {
+      const gm = insts.find(i => i.instance_type === 'group_monitor' && i.wa_state === 'authorized');
+      if (gm?.phone_number) {
+        setGroupMonitorPhone(gm.phone_number);
+      }
+    });
+  }, [user.id, stateId]);
+
+  const handleOpenConnect = async () => {
+    setIsConnectOpen(true);
+    setQrData(null);
+    setAuthCode(null);
+    setConnectMethod('qr');
+    setPhoneInput(user?.phone || '');
+    try {
+      const inst = waInstance || await greenApiService.getStandbyInstance(stateId);
+      if (inst) {
+        setStandbyInst(inst);
+        const qr = await greenApiService.getQRCode(inst.id);
+        if (qr?.message) setQrData(qr.message);
+      }
+    } catch (e) {
+      console.error('Failed to init WA connect:', e);
+    }
+  };
+
+  const handleGetAuthCode = async () => {
+    const target = waInstance || standbyInst;
+    if (!target || !phoneInput) {
+      toast.error('Please enter a WhatsApp phone number');
+      return;
+    }
+    setIsRequestingCode(true);
+    const toastId = toast.loading('Requesting pairing code from WhatsApp...');
+    try {
+      const res = await greenApiService.getAuthCode(target.id, phoneInput);
+      if (res?.code) {
+        setAuthCode(res.code);
+        toast.success('Code generated! Enter this code in WhatsApp.', { id: toastId });
+      } else {
+        toast.error('Could not generate pairing code', { id: toastId });
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Pairing code error', { id: toastId });
+    } finally {
+      setIsRequestingCode(false);
+    }
+  };
+
+  const handleVerifyDevice = async () => {
+    const target = waInstance || standbyInst;
+    if (!target) return;
+    setIsChecking(true);
+    const t = toast.loading('Verifying WhatsApp connection...');
+    try {
+      const res = await greenApiService.checkInstanceState(target.id);
+      if (res.waState === 'authorized') {
+        await greenApiService.assignInstance(target.id, user.id);
+        setWaInstance({ ...target, wa_state: 'authorized', assigned_agent_id: user.id });
+        setIsConnectOpen(false);
+        toast.success('WhatsApp connected successfully!', { id: t });
+      } else {
+        toast('Status is: ' + res.waState, { icon: 'ℹ️', id: t });
+      }
+    } catch (e: any) {
+      toast.error(e.message, { id: t });
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* WhatsApp Status Card - Hidden when connected */}
+      {waInstance?.wa_state !== 'authorized' && (
+        <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-amber-100 text-amber-800">
+              <MessageSquare size={22} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="font-bold text-sm text-gray-900">Agent WhatsApp Outreach</h4>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                  ○ Not Linked
+                </span>
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Connect your WhatsApp to earn ₦{chatEarning} per voter chat and send official flyers
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <button
+              onClick={handleOpenConnect}
+              className="w-full sm:w-auto px-4 py-2 bg-[#004d25] hover:bg-[#006331] text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
+            >
+              <QrCode size={14} />
+              <span>Connect WhatsApp</span>
+            </button>
+          </div>
         </div>
-        <div className="text-left">
-          <h3 className="font-bold text-gray-900">Upload Result</h3>
-          <p className="text-xs text-gray-500">AI-powered EC8A capture</p>
+      )}
+
+      {/* Group Monitor Notice for Field Operatives */}
+      {groupMonitorPhone && (
+        <div className="p-4 bg-gradient-to-r from-teal-50 to-emerald-50 border border-emerald-200 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+          <p className="text-xs text-emerald-800">
+            Add our State Group Monitor AI number <strong className="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-300">+{groupMonitorPhone}</strong> into your community, ward, and political WhatsApp group chats. You will be credited ₦{groupBounty} per group!
+          </p>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(`+${groupMonitorPhone}`);
+              toast.success('Group monitor number copied to clipboard!');
+            }}
+            className="shrink-0 px-3 py-1.5 bg-[#004d25] hover:bg-[#00381b] text-white text-xs font-semibold rounded-lg transition cursor-pointer"
+          >
+            Copy Number
+          </button>
         </div>
-      </button>
+      )}
+
+      {/* Connect Modal for Dashboard */}
+      {isConnectOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="bg-white w-full max-w-sm rounded-2xl p-6 border border-gray-200 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+              <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2">
+                <QrCode size={18} className="text-[#004d25]" />
+                Connect WhatsApp Device
+              </h3>
+              <button onClick={() => setIsConnectOpen(false)} className="text-gray-400 hover:text-gray-600 cursor-pointer">✕</button>
+            </div>
+
+            {/* Method Tabs */}
+            <div className="flex border-b border-gray-200">
+              <button
+                type="button"
+                onClick={() => setConnectMethod('qr')}
+                className={`flex-1 py-2 text-xs font-semibold border-b-2 transition cursor-pointer ${
+                  connectMethod === 'qr'
+                    ? 'border-[#004d25] text-[#004d25]'
+                    : 'border-transparent text-gray-400 hover:text-gray-600'
+                }`}
+              >
+                Scan QR Code
+              </button>
+              <button
+                type="button"
+                onClick={() => setConnectMethod('phone')}
+                className={`flex-1 py-2 text-xs font-semibold border-b-2 transition cursor-pointer ${
+                  connectMethod === 'phone'
+                    ? 'border-[#004d25] text-[#004d25]'
+                    : 'border-transparent text-gray-400 hover:text-gray-600'
+                }`}
+              >
+                Phone Number
+              </button>
+            </div>
+
+            {connectMethod === 'qr' ? (
+              <div className="text-center space-y-3">
+                <p className="text-xs text-gray-500">Open WhatsApp &gt; Linked Devices &gt; Link a Device and scan:</p>
+                {qrData ? (
+                  <div className="p-2 bg-white border border-gray-200 rounded-xl inline-block shadow-xs">
+                    <img src={`data:image/png;base64,${qrData}`} alt="QR" className="w-48 h-48 mx-auto" />
+                  </div>
+                ) : (
+                  <div className="w-48 h-48 border-2 border-dashed border-gray-300 rounded-xl mx-auto flex items-center justify-center text-xs text-gray-400">
+                    <RefreshCw size={18} className="animate-spin text-[#004d25] mr-2" /> Loading QR...
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs text-gray-500">
+                  Enter your WhatsApp phone number to receive an 8-character pairing code:
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="tel"
+                    value={phoneInput}
+                    onChange={e => setPhoneInput(e.target.value)}
+                    placeholder="e.g. 08123456789"
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-xs bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleGetAuthCode}
+                    disabled={isRequestingCode || !phoneInput}
+                    className="px-3 py-2 bg-[#004d25] text-white rounded-lg text-xs font-semibold hover:bg-[#00381b] disabled:opacity-50 transition cursor-pointer"
+                  >
+                    {isRequestingCode ? <RefreshCw size={12} className="animate-spin" /> : 'Get Code'}
+                  </button>
+                </div>
+
+                {authCode && (
+                  <div 
+                    onClick={() => handleCopyCode(authCode)}
+                    className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-center space-y-1.5 cursor-pointer hover:bg-emerald-100/70 transition group"
+                    title="Click to copy pairing code"
+                  >
+                    <div className="flex items-center justify-between text-[11px] text-gray-500">
+                      <span>Enter this code into WhatsApp:</span>
+                      <span className="flex items-center gap-1 text-[#004d25] font-medium">
+                        {copiedCode ? <Check size={12} /> : <Copy size={12} className="group-hover:scale-110 transition" />}
+                        {copiedCode ? 'Copied' : 'Copy'}
+                      </span>
+                    </div>
+                    <p className="text-xl font-bold font-mono tracking-widest text-[#004d25] select-all">{authCode}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="pt-2 border-t border-gray-100">
+              <button
+                onClick={handleVerifyDevice}
+                disabled={isChecking}
+                className="w-full py-2.5 bg-[#004d25] hover:bg-[#00381b] text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-2 shadow-xs transition disabled:opacity-50 cursor-pointer"
+              >
+                {isChecking ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                <span>Verify Connection</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1087,13 +1505,69 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
   onEditAgent: (agent: Partial<Agent>) => void;
   refreshTrigger: number;
 }) {
+  const isLagos = user?.stateId === 24;
+
+  const [viewLevel, setViewLevel] = useState<'lga' | 'ward' | 'pu'>(() => {
+    if (user.role === 'ward_admin') return 'pu';
+    if (user.role === 'lga_admin') return 'ward';
+    return 'lga';
+  });
+
+  const [lgaList, setLgaList] = useState<{ id: number; name: string }[]>([]);
+  const [wardList, setWardList] = useState<{ id: number; name: string }[]>([]);
+  const [selectedLgaFilter, setSelectedLgaFilter] = useState<number | null>(() => {
+    if (user.role === 'lga_admin' || user.role === 'ward_admin') return user.lgaId || null;
+    return null;
+  });
+  const [selectedWardFilter, setSelectedWardFilter] = useState<number | null>(() => {
+    if (user.role === 'ward_admin') return user.wardId || null;
+    return null;
+  });
+
+  const [exactMetrics, setExactMetrics] = useState<{
+    total: number;
+    assigned: number;
+    vacant: number;
+    coveragePercent: number;
+  }>({ total: 0, assigned: 0, vacant: 0, coveragePercent: 0 });
+
   const [loading, setLoading] = useState(true);
   const [subUnits, setSubUnits] = useState<{ id: string; name: string; numId: number }[]>([]);
   const [unitAgents, setUnitAgents] = useState<any[]>([]);
   const [activeListTab, setActiveListTab] = useState<'vacant' | 'assigned'>('vacant');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const isLagos = user?.stateId === 24;
+  // Fetch LGAs for State/National admin
+  useEffect(() => {
+    if (!user) return;
+    const lgaTable = isLagos ? 'local_governments_lagos' : 'local_governments';
+    let q = supabase.from(lgaTable).select('id, name');
+    if (user.stateId) {
+      q = q.eq('state_id', user.stateId);
+    }
+    q.order('name').then(({ data }) => {
+      if (data) setLgaList(data.map((l: any) => ({ id: l.id, name: l.name || `LGA #${l.id}` })));
+    });
+  }, [user, isLagos]);
+
+  // Fetch Wards when selected LGA changes
+  useEffect(() => {
+    const effectiveLga = selectedLgaFilter || (user.role === 'lga_admin' || user.role === 'ward_admin' ? user.lgaId : null);
+    if (!effectiveLga) {
+      setWardList([]);
+      return;
+    }
+    const wardTable = isLagos ? 'wards_lagos' : 'wards';
+    const lgaCol = isLagos ? 'localgovernment_lagos_id' : 'localgovernment_id';
+    supabase
+      .from(wardTable)
+      .select('id, name')
+      .eq(lgaCol, effectiveLga)
+      .order('name')
+      .then(({ data }) => {
+        if (data) setWardList(data.map((w: any) => ({ id: w.id, name: w.name || `Ward #${w.id}` })));
+      });
+  }, [selectedLgaFilter, user, isLagos]);
 
   React.useEffect(() => {
     let isCancelled = false;
@@ -1101,58 +1575,90 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
     async function fetchDeployment() {
       setLoading(true);
       try {
-        if (user.role === 'ward_admin' && user.wardId) {
-          // Ward Admin -> Polling Units
-          const table = isLagos ? 'polling_units_lagos' : 'polling_units';
-          const [unitsRes, agentsRes] = await Promise.all([
-            supabase.from(table).select('id, name').eq('ward_id', user.wardId).order('name'),
-            supabase.from('agents').select('*').eq('wards_id', user.wardId).eq('role', 'pu_agent')
-          ]);
+        const table = (user.role === 'ward_admin' || viewLevel === 'pu')
+          ? (isLagos ? 'polling_units_lagos' : 'polling_units')
+          : (user.role === 'lga_admin' || viewLevel === 'ward')
+          ? (isLagos ? 'wards_lagos' : 'wards')
+          : (isLagos ? 'local_governments_lagos' : 'local_governments');
 
-          if (!isCancelled) {
-            const units = (unitsRes.data || []).map((u: any) => ({ id: `pu_${u.id}`, name: u.name, numId: u.id }));
-            setSubUnits(units);
-            setUnitAgents(agentsRes.data || []);
-          }
-        } else if (user.role === 'lga_admin' && user.lgaId) {
-          // LGA Admin -> Wards
-          const table = isLagos ? 'wards_lagos' : 'wards';
-          const filterCol = isLagos ? 'localgovernment_lagos_id' : 'local_government_id';
-          const [unitsRes, agentsRes] = await Promise.all([
-            supabase.from(table).select('id, name').eq(filterCol, user.lgaId).order('name'),
-            supabase.from('agents').select('*').eq('local_governments_id', user.lgaId).eq('role', 'ward_admin')
-          ]);
+        const effectiveWard = selectedWardFilter || user.wardId;
+        const effectiveLga = selectedLgaFilter || user.lgaId;
+        const targetRole: Role = viewLevel === 'pu' ? 'pu_agent' : viewLevel === 'ward' ? 'ward_admin' : 'lga_admin';
 
-          if (!isCancelled) {
-            const units = (unitsRes.data || []).map((u: any) => ({ id: `ward_${u.id}`, name: u.name, numId: u.id }));
-            setSubUnits(units);
-            setUnitAgents(agentsRes.data || []);
-          }
-        } else if (user.role === 'state_admin' && user.stateId) {
-          // State Admin -> LGAs
-          const table = isLagos ? 'local_governments_lagos' : 'local_governments';
-          const [unitsRes, agentsRes] = await Promise.all([
-            supabase.from(table).select('id, name').eq('state_id', user.stateId).order('name'),
-            supabase.from('agents').select('*').eq('state_id', user.stateId).eq('role', 'lga_admin')
-          ]);
+        // 1. Exact count of total units from Postgres
+        let countQ = supabase.from(table).select('*', { count: 'exact', head: true });
+        if (effectiveWard) {
+          countQ = countQ.eq('ward_id', effectiveWard);
+        } else if (effectiveLga) {
+          const lgaCol = (viewLevel === 'pu') ? 'localgovernment_id' : (isLagos ? 'localgovernment_lagos_id' : 'localgovernment_id');
+          countQ = countQ.eq(lgaCol, effectiveLga);
+        } else if (user.stateId && table !== 'polling_units_lagos' && table !== 'wards_lagos' && table !== 'local_governments_lagos') {
+          countQ = countQ.eq('state_id', user.stateId);
+        }
 
-          if (!isCancelled) {
-            const units = (unitsRes.data || []).map((u: any) => ({ id: `lga_${u.id}`, name: u.name, numId: u.id }));
-            setSubUnits(units);
-            setUnitAgents(agentsRes.data || []);
-          }
-        } else if (user.role === 'national_admin') {
-          // National -> States
-          const [unitsRes, agentsRes] = await Promise.all([
-            supabase.from('states').select('id, name').order('name'),
-            supabase.from('agents').select('*').eq('role', 'state_admin')
-          ]);
+        // 2. Exact assigned agents from Postgres
+        let agentsQ = supabase.from('agents').select('*').eq('role', targetRole);
+        if (effectiveWard) {
+          agentsQ = agentsQ.eq('wards_id', effectiveWard);
+        } else if (effectiveLga) {
+          agentsQ = agentsQ.eq('local_governments_id', effectiveLga);
+        } else if (user.stateId) {
+          agentsQ = agentsQ.eq('state_id', user.stateId);
+        }
 
-          if (!isCancelled) {
-            const units = (unitsRes.data || []).map((u: any) => ({ id: `state_${u.id}`, name: u.name, numId: u.id }));
-            setSubUnits(units);
-            setUnitAgents(agentsRes.data || []);
+        // 3. Units for display list (capped at 500 for high performance)
+        let unitsQ = supabase.from(table).select('id, name');
+        if (effectiveWard) {
+          unitsQ = unitsQ.eq('ward_id', effectiveWard);
+        } else if (effectiveLga) {
+          const lgaCol = (viewLevel === 'pu') ? 'localgovernment_id' : (isLagos ? 'localgovernment_lagos_id' : 'localgovernment_id');
+          unitsQ = unitsQ.eq(lgaCol, effectiveLga);
+        } else if (user.stateId && table !== 'polling_units_lagos' && table !== 'wards_lagos' && table !== 'local_governments_lagos') {
+          unitsQ = unitsQ.eq('state_id', user.stateId);
+        }
+
+        const [countRes, agentsRes, unitsRes] = await Promise.all([
+          countQ,
+          agentsQ,
+          unitsQ.order('name').limit(500)
+        ]);
+
+        if (!isCancelled) {
+          const totalUnitsCount = countRes.count || 0;
+          const agents = agentsRes.data || [];
+          setUnitAgents(agents);
+
+          let uniqueAssignedUnitsCount = 0;
+          if (viewLevel === 'pu') {
+            const set = new Set(agents.map((a: any) => a.polling_units_id || a.pollingunit_lagos_id).filter(Boolean));
+            uniqueAssignedUnitsCount = set.size;
+          } else if (viewLevel === 'ward') {
+            const set = new Set(agents.map((a: any) => a.wards_id).filter(Boolean));
+            uniqueAssignedUnitsCount = set.size;
+          } else {
+            const set = new Set(agents.map((a: any) => a.local_governments_id).filter(Boolean));
+            uniqueAssignedUnitsCount = set.size;
           }
+
+          const assignedUnitsCount = uniqueAssignedUnitsCount;
+          const vacantUnitsCount = Math.max(0, totalUnitsCount - assignedUnitsCount);
+          const rate = totalUnitsCount > 0 ? Math.round((assignedUnitsCount / totalUnitsCount) * 100) : 0;
+
+          setExactMetrics({
+            total: totalUnitsCount,
+            assigned: assignedUnitsCount,
+            vacant: vacantUnitsCount,
+            coveragePercent: rate
+          });
+
+          const prefix = viewLevel === 'pu' ? 'pu' : viewLevel === 'ward' ? 'ward' : 'lga';
+          const defaultLabel = viewLevel === 'pu' ? 'Polling Unit' : viewLevel === 'ward' ? 'Ward' : 'LGA';
+          const units = (unitsRes.data || []).map((u: any) => ({
+            id: `${prefix}_${u.id}`,
+            name: u.name || `${defaultLabel} #${u.id}`,
+            numId: u.id
+          }));
+          setSubUnits(units);
         }
       } catch (err) {
         console.error('Failed to load deployment summary:', err);
@@ -1163,50 +1669,22 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
 
     fetchDeployment();
     return () => { isCancelled = true; };
-  }, [user, isLagos, refreshTrigger]);
+  }, [user, isLagos, refreshTrigger, viewLevel, selectedLgaFilter, selectedWardFilter]);
 
   if (user.role === 'pu_agent') {
-    // PU Agent deployment card
-    return (
-      <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-xs">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-xl bg-emerald-50 text-[#004d25] flex items-center justify-center font-bold">
-              <MapPin size={24} />
-            </div>
-            <div>
-              <span className="text-[11px] uppercase tracking-wider font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full">
-                Your Assigned Polling Unit
-              </span>
-              <h3 className="text-lg font-bold text-gray-900 mt-1">
-                {user.locationName || 'Polling Unit'}
-              </h3>
-              <p className="text-xs text-gray-500">
-                You are registered as the primary polling unit agent for this location.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-green-100 text-green-800">
-              <CheckCircle2 size={14} className="text-green-600" />
-              Active on Duty
-            </span>
-          </div>
-        </div>
-      </div>
-    );
+    return null;
   }
 
   // Figure out child target type and role
   const childTypeLabel = 
-    user.role === 'ward_admin' ? 'Polling Unit' :
-    user.role === 'lga_admin' ? 'Ward' :
-    user.role === 'state_admin' ? 'LGA' : 'State';
+    viewLevel === 'pu' ? 'Polling Unit' :
+    viewLevel === 'ward' ? 'Ward' :
+    viewLevel === 'lga' ? 'LGA' : 'State';
 
   const targetChildRole: Role = 
-    user.role === 'ward_admin' ? 'pu_agent' :
-    user.role === 'lga_admin' ? 'ward_admin' :
-    user.role === 'state_admin' ? 'lga_admin' : 'state_admin';
+    viewLevel === 'pu' ? 'pu_agent' :
+    viewLevel === 'ward' ? 'ward_admin' :
+    viewLevel === 'lga' ? 'lga_admin' : 'state_admin';
 
   // Match subUnits with agents
   const assignedList: { unit: { id: string; name: string; numId: number }; agent: any }[] = [];
@@ -1214,11 +1692,11 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
 
   subUnits.forEach(unit => {
     let matchAgent: any = null;
-    if (user.role === 'ward_admin') {
+    if (viewLevel === 'pu') {
       matchAgent = unitAgents.find(a => a.polling_units_id === unit.numId || a.pollingunit_lagos_id === unit.numId || a.jurisdiction_id === unit.id);
-    } else if (user.role === 'lga_admin') {
+    } else if (viewLevel === 'ward') {
       matchAgent = unitAgents.find(a => a.wards_id === unit.numId || a.jurisdiction_id === unit.id);
-    } else if (user.role === 'state_admin') {
+    } else if (viewLevel === 'lga') {
       matchAgent = unitAgents.find(a => a.local_governments_id === unit.numId || a.jurisdiction_id === unit.id);
     } else {
       matchAgent = unitAgents.find(a => a.state_id === unit.numId || a.jurisdiction_id === unit.id);
@@ -1231,17 +1709,13 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
     }
   });
 
-  const totalCount = subUnits.length;
-  const assignedCount = assignedList.length;
-  const vacantCount = vacantList.length;
-  const coveragePercent = totalCount > 0 ? Math.round((assignedCount / totalCount) * 100) : 0;
-
   // Filtered lists for search
-  const filteredVacant = vacantList.filter(u => u.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const q = (searchQuery || '').toLowerCase();
+  const filteredVacant = vacantList.filter(u => (u.name || '').toLowerCase().includes(q));
   const filteredAssigned = assignedList.filter(item => 
-    item.unit.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    item.agent.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    item.agent.phone?.includes(searchQuery)
+    (item.unit?.name || '').toLowerCase().includes(q) || 
+    (item.agent?.name || '').toLowerCase().includes(q) ||
+    Boolean(item.agent?.phone && item.agent.phone.includes(searchQuery))
   );
 
   return (
@@ -1261,47 +1735,109 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
           </div>
         </div>
 
-        {vacantCount > 0 && (
+        {exactMetrics.vacant > 0 && (
           <span className="text-xs font-semibold px-3 py-1 bg-amber-50 border border-amber-200 text-amber-800 rounded-full flex items-center gap-1.5 animate-pulse">
             <AlertTriangle size={13} className="text-amber-600" />
-            {vacantCount} {childTypeLabel}{vacantCount > 1 ? 's' : ''} Need Agent Assignment
+            {exactMetrics.vacant.toLocaleString()} {childTypeLabel}{exactMetrics.vacant > 1 ? 's' : ''} Need Agent Assignment
           </span>
         )}
       </div>
+
+      {/* Jurisdiction Filters: Level, LGA, Ward */}
+      {(user.role === 'state_admin' || user.role === 'national_admin' || user.role === 'lga_admin') && (
+        <div className="flex flex-wrap items-center gap-3 p-3 bg-gray-50/80 rounded-xl border border-gray-100">
+          {/* Level Filter */}
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold text-gray-600">Level:</label>
+            <select
+              value={viewLevel}
+              onChange={(e) => {
+                const nextLevel = e.target.value as any;
+                setViewLevel(nextLevel);
+              }}
+              className="text-xs border border-gray-300 rounded-lg px-2.5 py-1.5 font-bold text-gray-800 bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
+            >
+              {(user.role === 'state_admin' || user.role === 'national_admin') && (
+                <option value="lga">LGAs (LGA Admins)</option>
+              )}
+              <option value="ward">Wards (Ward Admins)</option>
+              <option value="pu">Polling Units (PU Agents)</option>
+            </select>
+          </div>
+
+          {/* LGA Filter */}
+          {(user.role === 'state_admin' || user.role === 'national_admin') && (
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-semibold text-gray-600">LGA:</label>
+              <select
+                value={selectedLgaFilter || ''}
+                onChange={(e) => {
+                  const val = e.target.value ? Number(e.target.value) : null;
+                  setSelectedLgaFilter(val);
+                  setSelectedWardFilter(null);
+                }}
+                className="text-xs border border-gray-300 rounded-lg px-2.5 py-1.5 font-medium text-gray-800 bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
+              >
+                <option value="">All LGAs in State</option>
+                {lgaList.map(lga => (
+                  <option key={lga.id} value={lga.id}>{lga.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Ward Filter */}
+          {(viewLevel === 'ward' || viewLevel === 'pu') && (selectedLgaFilter || user.role === 'lga_admin') && (
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-semibold text-gray-600">Ward:</label>
+              <select
+                value={selectedWardFilter || ''}
+                onChange={(e) => setSelectedWardFilter(e.target.value ? Number(e.target.value) : null)}
+                className="text-xs border border-gray-300 rounded-lg px-2.5 py-1.5 font-medium text-gray-800 bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
+              >
+                <option value="">All Wards in LGA</option>
+                {wardList.map(w => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Metrics Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="bg-gray-50/80 p-4 rounded-xl border border-gray-100">
           <span className="text-xs text-gray-500 font-medium">Total {childTypeLabel}s</span>
-          <p className="text-2xl font-bold text-gray-900 mt-1">{totalCount}</p>
+          <p className="text-2xl font-bold text-gray-900 mt-1">{exactMetrics.total.toLocaleString()}</p>
         </div>
 
         <div className="bg-emerald-50/70 p-4 rounded-xl border border-emerald-100/80">
           <span className="text-xs text-emerald-800 font-medium flex items-center gap-1">
             <UserCheck size={14} className="text-emerald-600" /> Assigned
           </span>
-          <p className="text-2xl font-bold text-emerald-900 mt-1">{assignedCount}</p>
+          <p className="text-2xl font-bold text-emerald-900 mt-1">{exactMetrics.assigned.toLocaleString()}</p>
         </div>
 
         <div className={cn(
           "p-4 rounded-xl border transition-colors",
-          vacantCount > 0 ? "bg-amber-50/80 border-amber-200/70" : "bg-gray-50 border-gray-100"
+          exactMetrics.vacant > 0 ? "bg-amber-50/80 border-amber-200/70" : "bg-gray-50 border-gray-100"
         )}>
           <span className={cn(
             "text-xs font-medium flex items-center gap-1",
-            vacantCount > 0 ? "text-amber-800" : "text-gray-500"
+            exactMetrics.vacant > 0 ? "text-amber-800" : "text-gray-500"
           )}>
-            <UserX size={14} className={vacantCount > 0 ? "text-amber-600" : "text-gray-400"} /> Vacant
+            <UserX size={14} className={exactMetrics.vacant > 0 ? "text-amber-600" : "text-gray-400"} /> Vacant
           </span>
           <p className={cn(
             "text-2xl font-bold mt-1",
-            vacantCount > 0 ? "text-amber-900" : "text-gray-700"
-          )}>{vacantCount}</p>
+            exactMetrics.vacant > 0 ? "text-amber-900" : "text-gray-700"
+          )}>{exactMetrics.vacant.toLocaleString()}</p>
         </div>
 
         <div className="bg-blue-50/70 p-4 rounded-xl border border-blue-100/80">
           <span className="text-xs text-blue-800 font-medium">Deployment Rate</span>
-          <p className="text-2xl font-bold text-blue-900 mt-1">{coveragePercent}%</p>
+          <p className="text-2xl font-bold text-blue-900 mt-1">{exactMetrics.coveragePercent}%</p>
         </div>
       </div>
 
@@ -1319,7 +1855,7 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
             )}
           >
             <AlertTriangle size={14} className={activeListTab === 'vacant' ? "text-amber-600" : "text-gray-400"} />
-            <span>Vacant {childTypeLabel}s ({vacantCount})</span>
+            <span>Vacant {childTypeLabel}s ({exactMetrics.vacant.toLocaleString()})</span>
           </button>
 
           <button
@@ -1333,7 +1869,7 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
             )}
           >
             <CheckCircle2 size={14} className={activeListTab === 'assigned' ? "text-[#004d25]" : "text-gray-400"} />
-            <span>Assigned Agents ({assignedCount})</span>
+            <span>Assigned Agents ({exactMetrics.assigned.toLocaleString()})</span>
           </button>
         </div>
 
@@ -1380,7 +1916,7 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
                   onClick={() => onAddAgent({
                     id: unit.id,
                     name: unit.name,
-                    type: (user.role === 'ward_admin' ? 'polling_unit' : user.role === 'lga_admin' ? 'ward' : 'lga') as any,
+                    type: (viewLevel === 'pu' ? 'polling_unit' : viewLevel === 'ward' ? 'ward' : 'lga') as any,
                     parentId: user.locationId
                   }, targetChildRole)}
                   className="px-3.5 py-1.5 bg-[#004d25] hover:bg-[#006331] text-white text-xs font-bold rounded-lg transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"

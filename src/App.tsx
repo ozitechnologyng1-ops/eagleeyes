@@ -16,6 +16,8 @@ const Profile      = lazy(() => import('./pages/Profile'));
 const Payment      = lazy(() => import('./pages/Payment'));
 const Sms          = lazy(() => import('./pages/Sms'));
 const Billing      = lazy(() => import('./pages/Billing'));
+const WhatsAppConfig = lazy(() => import('./pages/WhatsAppConfig').then(m => ({ default: m.WhatsAppConfig })));
+const GroupMonitor = lazy(() => import('./pages/GroupMonitor').then(m => ({ default: m.GroupMonitor })));
 
 export default function App() {
   return (
@@ -40,6 +42,8 @@ export default function App() {
                 <Route path="/payment" element={<Payment />} />
                 <Route path="/sms" element={<Sms />} />
                 <Route path="/billing" element={<Billing />} />
+                <Route path="/whatsapp-config" element={<WhatsAppConfig />} />
+                <Route path="/group-monitor" element={<GroupMonitor />} />
                 <Route path="/profile" element={<Profile />} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />

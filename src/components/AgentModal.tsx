@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useApp, Agent, Location, Role } from '../context/AppContext';
-import { X, Upload, Loader2, Eye, EyeOff, Lock, Unlock, Camera, Trash2, RefreshCw, Check, AlertCircle, ChevronRight, ShieldCheck, Landmark, CheckCircle } from 'lucide-react';
+import { X, Upload, Loader2, Eye, EyeOff, Lock, Unlock, Camera, Trash2, RefreshCw, Check, AlertCircle, ChevronRight, ShieldCheck, Landmark, CheckCircle, QrCode, Phone as PhoneIcon, MessageSquare, Copy } from 'lucide-react';
 import { cn } from '../lib/utils';
 import toast from 'react-hot-toast';
 import { fetchBanks, verifyAccount, verifyNameMatch, checkAccountExistsInDb, PaystackBank } from '../lib/paystack';
+import { greenApiService, WhatsAppInstance } from '../lib/greenApi';
 
 export const getAvailableRoles = (userRole: Role): { role: Role; label: string }[] => {
   switch (userRole) {
@@ -47,8 +48,23 @@ interface AgentModalProps {
 export default function AgentModal({ isOpen, onClose, onSave, initialData, fixedLocation, locations, userRole }: AgentModalProps) {
   const { user } = useApp();
   const availableRoles = getAvailableRoles(userRole);
-  const [tab, setTab] = useState<'personal' | 'bank' | 'jurisdiction'>('personal');
+  const [tab, setTab] = useState<'personal' | 'bank' | 'jurisdiction' | 'whatsapp'>('personal');
   const [isSaving, setIsSaving] = useState(false);
+  const [waInstance, setWaInstance] = useState<WhatsAppInstance | null>(null);
+  const [waQrData, setWaQrData] = useState<string | null>(null);
+  const [waAuthCode, setWaAuthCode] = useState<string | null>(null);
+  const [waPairingPhone, setWaPairingPhone] = useState('');
+  const [waConnectMethod, setWaConnectMethod] = useState<'qr' | 'phone'>('qr');
+  const [isWaConnected, setIsWaConnected] = useState(false);
+  const [isCheckingWa, setIsCheckingWa] = useState(false);
+  const [copiedWaCode, setCopiedWaCode] = useState(false);
+
+  const handleCopyWaCode = (code: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedWaCode(true);
+    toast.success('Pairing code copied to clipboard!');
+    setTimeout(() => setCopiedWaCode(false), 2000);
+  };
   const [form, setForm] = useState<Partial<Agent>>({
     firstName: '',
     lastName: '',
@@ -505,7 +521,7 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
           <button 
             type="button"
             onClick={() => setTab('personal')}
-            className={cn("flex-1 py-3 text-sm font-medium text-center border-b-2 transition-colors cursor-pointer", tab === 'personal' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
+            className={cn("flex-1 py-3 text-xs md:text-sm font-medium text-center border-b-2 transition-colors cursor-pointer", tab === 'personal' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
           >
             Personal
           </button>
@@ -518,7 +534,7 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
                 setTab('bank');
               }
             }}
-            className={cn("flex-1 py-3 text-sm font-medium text-center border-b-2 transition-colors cursor-pointer", tab === 'bank' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
+            className={cn("flex-1 py-3 text-xs md:text-sm font-medium text-center border-b-2 transition-colors cursor-pointer", tab === 'bank' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
           >
             Bank Details
           </button>
@@ -533,9 +549,29 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
                 setTab('jurisdiction');
               }
             }}
-            className={cn("flex-1 py-3 text-sm font-medium text-center border-b-2 transition-colors cursor-pointer", tab === 'jurisdiction' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
+            className={cn("flex-1 py-3 text-xs md:text-sm font-medium text-center border-b-2 transition-colors cursor-pointer", tab === 'jurisdiction' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
           >
             Jurisdiction
+          </button>
+          <button 
+            type="button"
+            onClick={async () => {
+              setTab('whatsapp');
+              if (!waInstance) {
+                const stateId = user?.stateId || 24;
+                const inst = await greenApiService.getStandbyInstance(stateId);
+                if (inst) {
+                  setWaInstance(inst);
+                  const qrRes = await greenApiService.getQRCode(inst.id);
+                  if (qrRes?.message) setWaQrData(qrRes.message);
+                }
+              }
+            }}
+            className={cn("flex-1 py-3 text-xs md:text-sm font-medium text-center border-b-2 transition-colors cursor-pointer flex items-center justify-center gap-1", tab === 'whatsapp' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
+          >
+            <MessageSquare size={14} className="text-emerald-600" />
+            <span>WhatsApp</span>
+            {isWaConnected && <CheckCircle size={12} className="text-emerald-600 ml-0.5" />}
           </button>
         </div>
 
@@ -1089,7 +1125,7 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
                 </div>
               </div>
             </div>
-          ) : (
+          ) : tab === 'jurisdiction' ? (
             <div className="space-y-4">
               <JurisdictionSelector 
                 locations={locations} 
@@ -1102,6 +1138,25 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
               <div className="pt-4 flex gap-3">
                 <button type="button" onClick={() => setTab('bank')} className="px-4 py-2 border rounded-lg hover:bg-gray-50 cursor-pointer">Back</button>
                 <button
+                  type="button"
+                  onClick={async () => {
+                    setTab('whatsapp');
+                    if (!waInstance) {
+                      const stateId = user?.stateId || 24;
+                      const inst = await greenApiService.getStandbyInstance(stateId);
+                      if (inst) {
+                        setWaInstance(inst);
+                        const qrRes = await greenApiService.getQRCode(inst.id);
+                        if (qrRes?.message) setWaQrData(qrRes.message);
+                      }
+                    }
+                  }}
+                  className="px-4 py-2 border border-emerald-600 text-emerald-700 hover:bg-emerald-50 rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1.5"
+                >
+                  <MessageSquare size={14} />
+                  <span>Next: Connect WhatsApp</span>
+                </button>
+                <button
                   type="submit"
                   disabled={isSaving}
                   className="flex-1 px-4 py-2 bg-[#004d25] text-white rounded-lg hover:bg-[#006331] disabled:opacity-70 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2 transition-colors"
@@ -1112,6 +1167,152 @@ export default function AgentModal({ isOpen, onClose, onSave, initialData, fixed
                     initialData?.id ? 'Save Changes' : 'Register Agent'
                   )}
                 </button>
+              </div>
+            </div>
+          ) : (
+            /* WhatsApp Tab UI */
+            <div className="space-y-4">
+              <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl space-y-1">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold uppercase text-emerald-800 tracking-wider flex items-center gap-1.5">
+                    <MessageSquare size={15} />
+                    Agent WhatsApp Connection (Optional)
+                  </h4>
+                  {isWaConnected && (
+                    <span className="text-[10px] font-bold bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <CheckCircle size={12} /> Connected
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-emerald-700">
+                  Senior agents can help pair the agent's WhatsApp now, or the agent can connect it anytime from their dashboard.
+                </p>
+              </div>
+
+              {/* Toggle QR vs Phone */}
+              <div className="flex border-b border-gray-200">
+                <button
+                  type="button"
+                  onClick={() => setWaConnectMethod('qr')}
+                  className={cn("flex-1 py-2 text-xs font-semibold border-b-2 text-center", waConnectMethod === 'qr' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500")}
+                >
+                  Scan QR Code
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWaConnectMethod('phone')}
+                  className={cn("flex-1 py-2 text-xs font-semibold border-b-2 text-center", waConnectMethod === 'phone' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500")}
+                >
+                  Pairing Code
+                </button>
+              </div>
+
+              {waConnectMethod === 'qr' ? (
+                <div className="text-center space-y-2 py-2">
+                  <p className="text-xs text-gray-500">Scan with WhatsApp &gt; Linked Devices &gt; Link a Device</p>
+                  {waQrData ? (
+                    <div className="p-2.5 bg-white border border-gray-200 rounded-xl inline-block shadow">
+                      <img src={`data:image/png;base64,${waQrData}`} alt="QR" className="w-48 h-48 mx-auto" />
+                    </div>
+                  ) : (
+                    <div className="w-48 h-48 border-2 border-dashed border-gray-300 rounded-xl mx-auto flex items-center justify-center text-xs text-gray-400">
+                      {waInstance ? 'Loading QR...' : 'No standby instance available in state pool.'}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3 py-2">
+                  <p className="text-xs text-gray-500">Enter agent's phone number to generate a WhatsApp pairing code:</p>
+                  <div className="flex gap-2">
+                    <input
+                      type="tel"
+                      value={waPairingPhone || form.phone || ''}
+                      onChange={e => setWaPairingPhone(e.target.value)}
+                      placeholder="e.g. 08012345678"
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50"
+                    />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const ph = waPairingPhone || form.phone || '';
+                        if (!waInstance || !ph) {
+                          toast.error('Standby instance or phone missing');
+                          return;
+                        }
+                        const t = toast.loading('Getting code...');
+                        try {
+                          const res = await greenApiService.getAuthCode(waInstance.id, ph);
+                          if (res?.code) {
+                            setWaAuthCode(res.code);
+                            toast.success('Pairing code generated!', { id: t });
+                          }
+                        } catch (err: any) {
+                          toast.error(err.message, { id: t });
+                        }
+                      }}
+                      className="px-3 py-2 bg-[#004d25] text-white rounded-lg text-xs font-semibold"
+                    >
+                      Get Code
+                    </button>
+                  </div>
+
+                  {waAuthCode && (
+                    <div 
+                      onClick={() => handleCopyWaCode(waAuthCode)}
+                      className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-center space-y-1.5 cursor-pointer hover:bg-emerald-100/70 transition group"
+                      title="Click to copy pairing code"
+                    >
+                      <div className="flex items-center justify-between text-xs text-gray-500">
+                        <span>Enter this code into WhatsApp:</span>
+                        <span className="flex items-center gap-1 text-emerald-700 font-medium">
+                          {copiedWaCode ? <Check size={12} /> : <Copy size={12} className="group-hover:scale-110 transition" />}
+                          {copiedWaCode ? 'Copied' : 'Copy'}
+                        </span>
+                      </div>
+                      <p className="text-2xl font-bold font-mono tracking-widest text-emerald-800 select-all">{waAuthCode}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!waInstance) return;
+                    setIsCheckingWa(true);
+                    const t = toast.loading('Checking authorization...');
+                    try {
+                      const res = await greenApiService.checkInstanceState(waInstance.id);
+                      if (res.waState === 'authorized') {
+                        setIsWaConnected(true);
+                        toast.success('WhatsApp device verified and linked!', { id: t });
+                      } else {
+                        toast('Device status: ' + res.waState, { icon: 'ℹ️', id: t });
+                      }
+                    } catch (err: any) {
+                      toast.error(err.message, { id: t });
+                    } finally {
+                      setIsCheckingWa(false);
+                    }
+                  }}
+                  disabled={isCheckingWa || !waInstance}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 flex items-center gap-1.5"
+                >
+                  <RefreshCw size={13} className={isCheckingWa ? 'animate-spin' : ''} />
+                  Verify Connection
+                </button>
+
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="px-5 py-2.5 bg-[#004d25] hover:bg-[#006331] text-white text-xs font-semibold rounded-lg shadow-sm flex items-center gap-1.5"
+                  >
+                    {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                    <span>{isWaConnected ? 'Finish & Save with WhatsApp' : 'Complete Registration'}</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}

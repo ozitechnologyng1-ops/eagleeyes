@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { supabase } from '../lib/supabase';
-import { Wallet, Landmark, CreditCard, CheckCircle, Clock, ChevronRight, Loader2, AlertCircle, Building2, Send, Filter, Settings, X, FileText, Upload, Check } from 'lucide-react';
+import { Wallet, Landmark, CreditCard, CheckCircle, Clock, ChevronRight, Loader2, AlertCircle, Building2, Send, Filter, Settings, X, FileText, Upload, Check, MessageSquare, Receipt } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '../lib/utils';
 import FileUpload, { UploadedFile } from '../components/FileUpload';
@@ -58,6 +58,15 @@ export default function Payment() {
 
   const [isEditingBank, setIsEditingBank] = useState(!isCentralBank && (!user?.bankName || !user?.accountNumber));
   const [myEligibility, setMyEligibility] = useState({ eligible: false, text: "Calculating..." });
+  const [myWhatsAppEarnings, setMyWhatsAppEarnings] = useState(0);
+
+  useEffect(() => {
+    if (user?.id) {
+      supabase.from('agents').select('whatsapp_earnings_balance').eq('id', user.id).single().then(({ data }) => {
+        if (data) setMyWhatsAppEarnings(Number(data.whatsapp_earnings_balance || 0));
+      });
+    }
+  }, [user?.id]);
 
   useEffect(() => {
     const fetchStateData = async () => {
@@ -189,7 +198,7 @@ export default function Payment() {
         setMyEligibility({
           eligible: myEligible,
           text: user.role === 'pu_agent' 
-                ? (myEligible ? "Unit Results Uploaded" : "Pending Unit Uploads") 
+                ? (myEligible ? "Election result uploaded" : "Pending election result upload") 
                 : (myEligible ? "All subordinate conditions met" : "Subordinate agents have pending uploads")
         });
         
@@ -363,25 +372,65 @@ export default function Payment() {
     <div className="max-w-7xl mx-auto space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-gray-900">Payments & Remuneration</h1>
-          <p className="text-gray-500 mt-1">Manage disbursements, track eligibility, and request withdrawals.</p>
+          <h1 className="text-3xl font-bold tracking-tight text-gray-900">
+            {isCentralBank ? 'Payments & Remuneration' : 'Earnings & Payouts'}
+          </h1>
+          <p className="text-gray-500 mt-1">
+            {isCentralBank 
+              ? 'Manage disbursements, track eligibility, and manage allocations.'
+              : 'Track your earnings, review tasks, and request payouts.'}
+          </p>
         </div>
         
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Top-Right Upload Button - Always visible regardless of banking setup */}
-          <button
-            type="button"
-            onClick={() => setShowUploadModal(true)}
-            className="bg-[#004d25] hover:bg-[#003d1e] text-white px-4 py-2.5 rounded-xl shadow-md flex items-center gap-2 text-sm font-bold transition-all cursor-pointer border border-green-800"
-          >
-            <Upload size={18} className="text-[#d4af37]" />
-            <span>Upload Documents</span>
-            {uploadedModalDocs.length > 0 && (
-              <span className="bg-[#d4af37] text-[#004d25] text-xs px-2 py-0.5 rounded-full font-extrabold ml-1">
-                {uploadedModalDocs.length}
-              </span>
-            )}
-          </button>
+        <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap sm:flex-nowrap shrink-0">
+          {!isCentralBank && (
+            <>
+              {/* Total Amount Earned Badge */}
+              <div className="bg-emerald-50 border border-emerald-200/80 px-3.5 py-1.5 rounded-xl flex flex-col justify-center shrink-0">
+                <span className="text-[10px] text-emerald-700 font-bold uppercase tracking-wider leading-tight">Total Earned</span>
+                <span className="font-mono text-lg font-black text-emerald-950 leading-tight">
+                  ₦{((myEligibility.eligible ? (user?.role === 'lga_admin' ? allocations.lga : user?.role === 'ward_admin' ? allocations.ward : allocations.pu) : 0) + (myWhatsAppEarnings || 0)).toLocaleString('en-NG')}
+                </span>
+              </div>
+
+              {/* Secondary Button: My Account */}
+              <button
+                type="button"
+                onClick={() => setIsEditingBank(true)}
+                className="bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 px-3.5 py-2.5 rounded-xl shadow-2xs flex items-center gap-2 text-sm font-semibold transition-all cursor-pointer shrink-0 whitespace-nowrap"
+              >
+                <Landmark size={16} className="text-[#004d25]" />
+                <span>My Account</span>
+              </button>
+
+              {/* Primary Button: Request Payout */}
+              <button
+                type="button"
+                onClick={handleRequestWithdrawal}
+                disabled={!myEligibility.eligible || myWithdrawalRequested}
+                className={cn(
+                  "px-4 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 shadow-xs shrink-0 whitespace-nowrap cursor-pointer",
+                  myWithdrawalRequested
+                    ? "bg-emerald-100 text-emerald-800 cursor-not-allowed border border-emerald-300"
+                    : !myEligibility.eligible
+                    ? "bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed"
+                    : "bg-[#004d25] hover:bg-[#00381b] text-white shadow-md hover:shadow-lg"
+                )}
+              >
+                {myWithdrawalRequested ? (
+                  <>
+                    <Check size={16} className="text-emerald-700" />
+                    <span>Payout Requested</span>
+                  </>
+                ) : (
+                  <>
+                    <Send size={15} className="text-[#d4af37]" />
+                    <span>Request Payout</span>
+                  </>
+                )}
+              </button>
+            </>
+          )}
 
           {isStateAdmin && (
             <div className="flex flex-col sm:flex-row items-end sm:items-center gap-3">
@@ -540,122 +589,221 @@ export default function Payment() {
           </form>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Column: Bank Details & My Status */}
+        <div className="space-y-6">
+          {/* Non-Central Bank: Top 3 Cards for Agent Earnings & Account */}
           {!isCentralBank && (
-          <div className="lg:col-span-1 space-y-6">
-            {/* My Bank Details Card */}
-            <div className="bg-gradient-to-br from-[#004d25] to-[#002a14] rounded-2xl p-6 text-white shadow-xl relative overflow-hidden group">
-              <div className="absolute -right-10 -top-10 w-40 h-40 bg-white/5 rounded-full blur-2xl group-hover:bg-white/10 transition-all duration-500" />
-              <div className="absolute -left-10 -bottom-10 w-32 h-32 bg-[#d4af37]/20 rounded-full blur-xl group-hover:bg-[#d4af37]/30 transition-all duration-500" />
-              
-              <div className="relative z-10">
-                <div className="flex justify-between items-center mb-8">
-                  <span className="text-green-100 font-medium tracking-wide flex items-center gap-2">
-                    <Wallet size={18} className="text-[#d4af37]" />
-                    My Account
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* Card 1: Role Stipend Allowance */}
+              <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-2xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Election Day Stipend</span>
+                  <span className={cn(
+                    "text-[10px] font-bold px-2 py-0.5 rounded-full uppercase",
+                    myEligibility.eligible ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
+                  )}>
+                    {myEligibility.eligible ? "Eligible" : "Pending"}
                   </span>
-                  <button 
+                </div>
+                <p className="font-mono text-2xl font-bold text-gray-900">
+                  ₦{(user?.role === 'lga_admin' ? allocations.lga : user?.role === 'ward_admin' ? allocations.ward : allocations.pu).toLocaleString('en-NG')}
+                </p>
+                <p className="text-xs text-gray-500 truncate">{myEligibility.text}</p>
+              </div>
+
+              {/* Card 2: WhatsApp Canvassing Rewards */}
+              <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-2xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">WhatsApp Canvassing</span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase bg-emerald-100 text-emerald-800">
+                    Active
+                  </span>
+                </div>
+                <p className="font-mono text-2xl font-bold text-emerald-900">
+                  ₦{myWhatsAppEarnings.toLocaleString('en-NG')}
+                </p>
+                <p className="text-xs text-gray-500">Voter flyer outreach & group canvassing rewards</p>
+              </div>
+
+              {/* Card 3: Payout Account & Status */}
+              <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-2xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Payout Account</span>
+                  <button
+                    type="button"
                     onClick={() => setIsEditingBank(true)}
-                    className="text-xs bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-full transition-colors backdrop-blur-sm font-medium"
+                    className="text-xs text-[#004d25] font-semibold hover:underline cursor-pointer"
                   >
                     Edit
                   </button>
                 </div>
-                
-                <div className="space-y-4">
-                  <div>
-                    <p className="text-green-200/60 text-[10px] font-bold uppercase tracking-widest mb-1">Account Number</p>
-                    <p className="font-mono text-2xl tracking-widest text-white drop-shadow-sm">{user.accountNumber}</p>
-                  </div>
-                  <div className="flex justify-between items-end border-t border-white/10 pt-4 mt-2">
-                    <div>
-                      <p className="text-green-200/60 text-[10px] font-bold uppercase tracking-widest mb-1">Account Name</p>
-                      <p className="font-semibold text-sm truncate max-w-[150px]">{user.accountName}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-green-200/60 text-[10px] font-bold uppercase tracking-widest mb-1">Bank</p>
-                      <p className="font-bold text-[#d4af37] text-sm truncate max-w-[100px]">{user.bankName}</p>
-                    </div>
-                  </div>
-                </div>
+                <p className="font-mono text-base font-bold text-gray-900 truncate">
+                  {user?.bankName ? `${user.bankName} ••••${user?.accountNumber?.slice(-4)}` : 'No Account Set'}
+                </p>
+                <p className="text-xs text-gray-500 truncate">
+                  {user?.accountName || 'Click edit to configure bank account'}
+                </p>
               </div>
             </div>
-
-            {/* My Withdrawal Status */}
-            <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-1 h-full bg-[#d4af37]" />
-              <h3 className="font-bold text-gray-900 mb-2 flex items-center gap-2">
-                <CreditCard size={18} className="text-[#004d25]" />
-                My Payout Status
-              </h3>
-              
-              <div className="bg-gray-50 rounded-xl p-4 mb-4 border border-gray-100">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-sm font-medium text-gray-600">Condition:</span>
-                  {myEligibility.eligible ? (
-                    <span className="text-xs font-bold text-green-600 bg-green-100 px-2 py-1 rounded flex items-center gap-1">
-                      <CheckCircle size={12} /> Satisfied
-                    </span>
-                  ) : (
-                    <span className="text-xs font-bold text-amber-600 bg-amber-100 px-2 py-1 rounded flex items-center gap-1">
-                      <Clock size={12} /> Pending
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-gray-500 italic mb-3">{myEligibility.text}</p>
-                
-                {user?.role === 'pu_agent' && myResults.length > 0 && (
-                  <div className="mt-3 pt-3 border-t border-gray-200">
-                    <p className="text-xs font-semibold text-gray-700 mb-2 flex items-center gap-1"><CheckCircle size={12} className="text-green-600"/> My Uploaded Result Summary</p>
-                    <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs text-gray-600 mb-2">
-                      <div>PDP: <span className="font-bold text-gray-900">{myResults[0].results_json?.political_party_results?.find((p: any) => p.party === 'PDP')?.votes_in_figures || 0}</span></div>
-                      <div>APC: <span className="font-bold text-gray-900">{myResults[0].results_json?.political_party_results?.find((p: any) => p.party === 'APC')?.votes_in_figures || 0}</span></div>
-                      <div>LP: <span className="font-bold text-gray-900">{myResults[0].results_json?.political_party_results?.find((p: any) => p.party === 'LP')?.votes_in_figures || 0}</span></div>
-                      <div>NNPP: <span className="font-bold text-gray-900">{myResults[0].results_json?.political_party_results?.find((p: any) => p.party === 'NNPP')?.votes_in_figures || 0}</span></div>
-                    </div>
-                    {myResults[0].image_url && (
-                      <a href={myResults[0].image_url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-[#004d25] hover:text-[#006331] hover:underline inline-flex items-center gap-1 font-bold bg-green-50 px-2 py-1 rounded border border-green-100">
-                        View Uploaded Image ↗
-                      </a>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Supporting Document Upload Feature */}
-              <div className="mb-4 pt-3 border-t border-gray-100">
-                <FileUpload
-                  label="Supporting Documents"
-                  description="Upload ID proof, payment voucher (PDF, DOCX) or bank statement (PDF, Excel)"
-                  value={myDocuments}
-                  onChange={setMyDocuments}
-                  allowedExtensions={['pdf', 'xlsx', 'xls', 'docx', 'doc', 'csv']}
-                  maxFiles={3}
-                />
-              </div>
-
-              <button
-                onClick={handleRequestWithdrawal}
-                disabled={!myEligibility.eligible || myWithdrawalRequested}
-                className={cn(
-                  "w-full py-3 rounded-xl font-bold text-sm transition-all flex justify-center items-center gap-2 cursor-pointer",
-                  myWithdrawalRequested 
-                    ? "bg-gray-100 text-gray-400 cursor-not-allowed" 
-                    : myEligibility.eligible
-                    ? "bg-[#004d25] hover:bg-[#006331] text-white shadow-md hover:shadow-lg"
-                    : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                )}
-              >
-                {myWithdrawalRequested ? "Withdrawal Requested" : "Request Withdrawal"}
-              </button>
-            </div>
-          </div>
           )}
 
-          {/* Right Column: Sub-Agent Payouts / Dashboard */}
+          {/* For PU Agents: Incoming Earnings Activity & Breakdown */}
+          {user.role === 'pu_agent' && (
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-2xs overflow-hidden">
+              <div className="p-5 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <div>
+                  <h3 className="font-bold text-gray-900 text-base flex items-center gap-2">
+                    <Receipt size={18} className="text-[#004d25]" />
+                    <span>Earnings & Allowance Stream</span>
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Live ledger of campaign stipends, canvassing tasks, and task credits as they come in.
+                  </p>
+                </div>
+                <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  Live Earnings Stream
+                </span>
+              </div>
+
+              {((myEligibility.eligible || user.paymentStatus === 'paid') || (myWhatsAppEarnings > 0) || myWithdrawalRequested) ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-gray-50/80 border-b border-gray-100 text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+                        <th className="py-3 px-5">Earning Description / Task</th>
+                        <th className="py-3 px-4">Category</th>
+                        <th className="py-3 px-4">Requirement / Trigger</th>
+                        <th className="py-3 px-4">Payout Status</th>
+                        <th className="py-3 px-5 text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 text-sm">
+                      {/* Item 1: Election Day Stipend (Shown when eligible or paid) */}
+                      {(myEligibility.eligible || user.paymentStatus === 'paid') && (
+                        <tr className="hover:bg-gray-50/60 transition-colors">
+                          <td className="py-4 px-5">
+                            <div className="font-bold text-gray-900">Election Day Duty Stipend</div>
+                            <div className="text-xs text-gray-500 mt-0.5">Official Polling Unit agent accreditation & election day duty</div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100">
+                              Polling Unit Duty
+                            </span>
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="text-xs font-medium">
+                              <span className="text-emerald-700 flex items-center gap-1">
+                                <CheckCircle size={14} className="text-emerald-600" />
+                                EC8A Result Uploaded & Approved
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <span className={cn(
+                              "inline-flex items-center text-[11px] font-bold px-2.5 py-0.5 rounded-full uppercase",
+                              user.paymentStatus === 'paid'
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                            )}>
+                              {user.paymentStatus === 'paid' ? 'Disbursed' : 'Ready for Payout'}
+                            </span>
+                          </td>
+                          <td className="py-4 px-5 text-right font-mono font-bold text-gray-900">
+                            ₦{allocations.pu.toLocaleString('en-NG')}
+                          </td>
+                        </tr>
+                      )}
+
+                      {/* Item 2: WhatsApp Canvassing (Shown when agent has earned from canvassing) */}
+                      {myWhatsAppEarnings > 0 && (
+                        <tr className="hover:bg-gray-50/60 transition-colors">
+                          <td className="py-4 px-5">
+                            <div className="font-bold text-gray-900">WhatsApp Canvassing & Flyer Outreach</div>
+                            <div className="text-xs text-gray-500 mt-0.5">Automated voter mobilization, campaign message delivery & flyer shares</div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">
+                              Digital Canvassing
+                            </span>
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="text-xs font-medium text-gray-600">
+                              Completed voter flyer outreach deliveries
+                            </div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <span className="inline-flex items-center text-[11px] font-bold px-2.5 py-0.5 rounded-full uppercase bg-emerald-100 text-emerald-800">
+                              Credited
+                            </span>
+                          </td>
+                          <td className="py-4 px-5 text-right font-mono font-bold text-emerald-900">
+                            ₦{myWhatsAppEarnings.toLocaleString('en-NG')}
+                          </td>
+                        </tr>
+                      )}
+
+                      {/* Item 3: Withdrawal record if requested */}
+                      {myWithdrawalRequested && (
+                        <tr className="bg-amber-50/30 hover:bg-amber-50/50 transition-colors">
+                          <td className="py-4 px-5">
+                            <div className="font-bold text-gray-900">Payout Request to Bank</div>
+                            <div className="text-xs text-gray-500 mt-0.5">
+                              Transfer to {user.bankName ? `${user.bankName} (••••${user.accountNumber?.slice(-4)})` : 'Bank Account'}
+                            </div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-purple-50 text-purple-700 border border-purple-100">
+                              Withdrawal
+                            </span>
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="text-xs font-medium text-gray-600">
+                              State Treasury clearance & Paystack transfer
+                            </div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <span className="inline-flex items-center text-[11px] font-bold px-2.5 py-0.5 rounded-full uppercase bg-amber-100 text-amber-800">
+                              Processing
+                            </span>
+                          </td>
+                          <td className="py-4 px-5 text-right font-mono font-bold text-amber-800">
+                            -₦{((myEligibility.eligible ? allocations.pu : 0) + (myWhatsAppEarnings || 0)).toLocaleString('en-NG')}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="py-14 text-center px-4 space-y-2">
+                  <div className="w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center mx-auto text-gray-400 border border-gray-100">
+                    <Receipt size={22} />
+                  </div>
+                  <p className="text-sm font-bold text-gray-800">No Earnings Recorded Yet</p>
+                  <p className="text-xs text-gray-500 max-w-sm mx-auto">
+                    Your income streams will appear here as they are credited. Complete voter outreach tasks or upload election day unit results to start earning.
+                  </p>
+                </div>
+              )}
+
+              {/* Bottom footer summary */}
+              <div className="p-4 bg-gray-50/70 border-t border-gray-100 flex flex-col sm:flex-row justify-between items-center gap-3 text-xs text-gray-600">
+                <span>
+                  Showing <strong>{((myEligibility.eligible || user.paymentStatus === 'paid') ? 1 : 0) + (myWhatsAppEarnings > 0 ? 1 : 0) + (myWithdrawalRequested ? 1 : 0)}</strong> incoming earnings streams
+                </span>
+                <div className="flex items-center gap-2 font-medium">
+                  <span>Available Balance:</span>
+                  <span className="font-mono text-gray-900 font-bold text-sm">
+                    ₦{((myEligibility.eligible ? allocations.pu : 0) + (myWhatsAppEarnings || 0)).toLocaleString('en-NG')}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Sub-Agent Payouts / Dashboard */}
           {user.role !== 'pu_agent' && (
-            <div className={cn("flex flex-col h-[700px]", isCentralBank ? "lg:col-span-3" : "lg:col-span-2")}>
+            <div className="flex flex-col h-[700px] w-full">
               <div className="bg-white rounded-t-2xl border-x border-t border-gray-200 p-5 pb-0 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
                   <h2 className="text-lg font-bold text-gray-900">
@@ -968,71 +1116,6 @@ export default function Payment() {
         </div>
       )}
 
-      {/* Upload Popout Modal */}
-      {showUploadModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200 border border-gray-100">
-            <div className="p-5 bg-gradient-to-r from-[#004d25] to-[#00381b] text-white flex justify-between items-center relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl -mr-10 -mt-10" />
-              <h3 className="font-bold text-lg flex items-center gap-2 relative z-10">
-                <Upload size={20} className="text-[#d4af37]" />
-                Upload Payment Documents
-              </h3>
-              <button 
-                type="button"
-                onClick={() => setShowUploadModal(false)} 
-                className="text-white/70 hover:text-white transition-colors relative z-10 cursor-pointer p-1.5 rounded-lg hover:bg-white/10"
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <p className="text-sm text-gray-600">
-                Upload any supporting payment verification documents, receipts, bank statements (PDF, Excel), or vouchers (DOCX).
-              </p>
-
-              <FileUpload
-                label="Payment & Supporting Documents"
-                description="Supports PDF (.pdf), Excel (.xlsx, .csv), and Word (.docx) up to 10MB"
-                value={uploadedModalDocs}
-                onChange={(newFiles) => {
-                  setUploadedModalDocs(newFiles);
-                  setMyDocuments(newFiles);
-                }}
-                allowedExtensions={['pdf', 'xlsx', 'xls', 'docx', 'doc', 'csv', 'png', 'jpg']}
-                maxFiles={10}
-              />
-
-              <div className="pt-4 border-t border-gray-100 flex justify-end items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setShowUploadModal(false)}
-                  className="px-5 py-2.5 rounded-xl font-bold text-sm bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors cursor-pointer border border-gray-200"
-                >
-                  Cancel
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (uploadedModalDocs.length === 0) {
-                      toast.error('Please attach at least one file before uploading');
-                      return;
-                    }
-                    setShowUploadModal(false);
-                    toast.success(`Successfully uploaded ${uploadedModalDocs.length} document(s)`);
-                  }}
-                  className="px-5 py-2.5 rounded-xl font-bold text-sm bg-[#004d25] hover:bg-[#00381b] text-white shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer"
-                >
-                  <Upload size={16} className="text-[#d4af37]" />
-                  <span>Upload ({uploadedModalDocs.length})</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
