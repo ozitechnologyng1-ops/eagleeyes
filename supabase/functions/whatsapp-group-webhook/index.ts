@@ -22,6 +22,17 @@ function parseJsonSafe(rawText: string): any {
   }
 }
 
+// Anti-slop text cleaner for WhatsApp messages
+function cleanAiReply(raw: string): string {
+  if (!raw) return "";
+  let clean = raw.trim();
+  if ((clean.startsWith('"') && clean.endsWith('"')) || (clean.startsWith("'") && clean.endsWith("'"))) {
+    clean = clean.slice(1, -1).trim();
+  }
+  clean = clean.replace(/[\u2014\u2013]/g, ", ");
+  return clean;
+}
+
 // Multi-provider AI text generator supporting Groq, OpenAI, and Gemini
 async function generateAiText({
   provider,
@@ -378,19 +389,22 @@ Respond ONLY with valid JSON in this schema:
                 }
 
                 // Generate defense response using candidate knowledge
-                const systemPrompt = stateCfg?.group_ai_system_prompt || "You are an articulate, respectful community representative defending the ADC candidate factually and peacefully.";
-                const respPrompt = `Verified Candidate Manifesto & Knowledge:
+                const systemPrompt = stateCfg?.group_ai_system_prompt || "You are a calm, respectful community supporter defending the candidate factually and peacefully.";
+                const respPrompt = `Candidate Knowledge & Facts:
 ${contextText || "ADC Core Commitments: Grassroots welfare, infrastructure transparency, healthcare revitalization, and youth enterprise support."}
 
 A participant in the WhatsApp group stated:
 "${text}"
 
-Rules for response:
-- Defend or clarify factually and politely in maximum 1-2 brief sentences.
-- Never write long promotional speeches or marketing pitches.
-- Sound like a natural, calm, respectful grassroots supporter answering only the specific point raised about the candidate.`;
+STRICT ANTI-SLOP & WHATSAPP VOICE RULES:
+- Write strictly like a real person typing a fast message on WhatsApp. Keep it plain, natural, and grounded.
+- Maximum 1 to 2 short sentences (strictly under 35 words total).
+- BANNED: Never use em dashes (—), bullet points, markdown bolding, or corporate PR buzzwords.
+- BANNED WORDS: "delve", "testament", "beacon", "foster", "paramount", "pivotal", "revolutionize", "tapestry", "comprehensive", "rest assured", "furthermore", "in conclusion", "it is worth noting".
+- Do NOT dump campaign slogans or manifesto bullet lists.
+- Address ONLY the specific claim or question raised factually and politely.`;
 
-                aiReplyText = await generateAiText({
+                const rawAiReply = await generateAiText({
                   provider: aiProvider,
                   model: aiModel,
                   apiKey,
@@ -398,6 +412,8 @@ Rules for response:
                   userPrompt: respPrompt,
                   jsonMode: false
                 });
+
+                aiReplyText = cleanAiReply(rawAiReply);
 
                 if (aiReplyText) {
                   shouldRespond = true;
@@ -485,9 +501,13 @@ ${contextText || "ADC Core Commitments: Grassroots welfare, infrastructure trans
 A voter sent this direct WhatsApp message:
 "${text}"
 
-Write a direct, helpful, polite, and encouraging answer (maximum 2-3 sentences). Answer their inquiry accurately using the verified knowledge above.`;
+STRICT ANTI-SLOP RULES:
+- Write in natural, polite everyday WhatsApp conversational style (maximum 2-3 short sentences).
+- Never use em dashes (—), bullet points, markdown bolding, or corporate buzzwords.
+- Banned words: "delve", "testament", "beacon", "foster", "paramount", "pivotal", "revolutionize", "tapestry", "comprehensive", "rest assured".
+- Answer their inquiry directly and genuinely using verified knowledge above.`;
 
-            const replyText = await generateAiText({
+            const rawReplyText = await generateAiText({
               provider: aiProvider,
               model: aiModel,
               apiKey,
@@ -495,6 +515,8 @@ Write a direct, helpful, polite, and encouraging answer (maximum 2-3 sentences).
               userPrompt,
               jsonMode: false
             });
+
+            const replyText = cleanAiReply(rawReplyText);
 
             if (replyText) {
               const directSendRes = await fetch(`${inst.api_url}waInstance${inst.id_instance}/sendMessage/${inst.api_token_instance}`, {
