@@ -12,20 +12,20 @@ export default function Landing() {
       <div className="absolute top-0 left-0 w-full h-[65vh] bg-gradient-to-b from-[#004d25] to-[#002b15] rounded-b-[40%] scale-x-150 transform -translate-y-10 z-0 shadow-2xl"></div>
       
       {/* Navbar/Header */}
-      <header className="relative z-10 py-6 px-6 sm:px-12 flex justify-between items-center w-full max-w-7xl mx-auto">
+      <header className="relative z-10 py-6 px-4 sm:px-12 flex justify-between items-center w-full max-w-7xl mx-auto">
         <div className="flex items-center space-x-3">
-          <div className="w-12 h-12 bg-[#d4af37] rounded-xl flex items-center justify-center shadow-lg transform rotate-6 hover:rotate-12 transition-transform duration-300">
-            <Shield className="text-[#004d25] w-7 h-7 -rotate-6" />
+          <div className="w-11 h-11 sm:w-12 sm:h-12 bg-[#d4af37] rounded-xl flex items-center justify-center shadow-lg transform rotate-6 hover:rotate-12 transition-transform duration-300 shrink-0">
+            <Shield className="text-[#004d25] w-6 h-6 sm:w-7 sm:h-7 -rotate-6" />
           </div>
-          <span className="text-2xl font-extrabold text-white tracking-tight">EagleEye</span>
+          <span className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">EagleEye</span>
         </div>
         <div>
           <button 
             onClick={() => navigate('/login')}
-            className="flex items-center space-x-2 bg-white/10 hover:bg-white/20 backdrop-blur-md text-white px-5 py-2.5 rounded-full font-medium transition-all duration-300 border border-white/20 shadow-sm cursor-pointer"
+            className="flex items-center gap-2 bg-white/10 hover:bg-white/20 active:scale-95 backdrop-blur-md text-white px-4 sm:px-5 py-2 rounded-full font-semibold text-xs sm:text-sm tracking-wide transition-all duration-200 border border-white/25 shadow-xs whitespace-nowrap cursor-pointer hover:border-[#d4af37]/60"
           >
-            <span>Portal Login</span>
-            <Lock className="w-4 h-4" />
+            <span>Login</span>
+            <Lock className="w-3.5 h-3.5 opacity-80 shrink-0" />
           </button>
         </div>
       </header>

@@ -373,6 +373,29 @@ export const greenApiService = {
       .from('whatsapp_group_monitors')
       .update({ ai_enabled: enabled })
       .eq('id', monitorId);
-    if (error) throw error;
+    if (error) {
+      const { data, error: fnErr } = await supabase.functions.invoke('whatsapp-admin', {
+        body: { action: 'toggleGroupAi', monitorId, enabled }
+      });
+      if (fnErr) throw fnErr;
+      if (data?.error) throw new Error(data.error);
+    }
+  },
+
+  async bulkToggleGroupAi(stateId: number, enabled: boolean, monitorIds?: string[]) {
+    let query = supabase.from('whatsapp_group_monitors').update({ ai_enabled: enabled });
+    if (monitorIds && monitorIds.length > 0) {
+      query = query.in('id', monitorIds);
+    } else if (stateId) {
+      query = query.eq('state_id', stateId);
+    }
+    const { error } = await query;
+    if (error) {
+      const { data, error: fnErr } = await supabase.functions.invoke('whatsapp-admin', {
+        body: { action: 'bulkToggleGroupAi', stateId, enabled, monitorIds }
+      });
+      if (fnErr) throw fnErr;
+      if (data?.error) throw new Error(data.error);
+    }
   }
 };

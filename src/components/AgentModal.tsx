@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp, Agent, Location, Role } from '../context/AppContext';
 import { X, Upload, Loader2, Eye, EyeOff, Lock, Unlock, Camera, Trash2, RefreshCw, Check, AlertCircle, ChevronRight, ShieldCheck, Landmark, CheckCircle, QrCode, Phone as PhoneIcon, MessageSquare, Copy } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -1349,6 +1349,7 @@ function JurisdictionSelector({
   const [selectedWard, setSelectedWard] = useState('');
   const [selectedPu, setSelectedPu] = useState('');
   const [loading, setLoading] = useState(false);
+  const lastInternalLocationIdRef = useRef<string | null>(null);
 
   // Initialize data
   useEffect(() => {
@@ -1358,6 +1359,11 @@ function JurisdictionSelector({
   // Synchronize hierarchy based on user scope, fixed location, or selectedLocationId
   useEffect(() => {
     let isCancelled = false;
+
+    // Skip re-initializing if this change was triggered internally by user dropdown selection
+    if (selectedLocationId && selectedLocationId === lastInternalLocationIdRef.current) {
+      return;
+    }
 
     const initHierarchy = async () => {
       setLoading(true);
@@ -1392,20 +1398,15 @@ function JurisdictionSelector({
             }
           } else if (locToResolve.startsWith('pu_')) {
             pu = locToResolve.replace('pu_', '');
-            const { data: pData } = await supabase.from('polling_units').select('ward_id, localgovernment_id').eq('id', pu).single();
+            const { data: pData } = await supabase.from('polling_units').select('ward_id').eq('id', pu).single();
             if (pData?.ward_id) {
               wd = String(pData.ward_id);
-              if (pData.localgovernment_id) {
-                lg = String(pData.localgovernment_id);
+              // Authoritative hierarchy: Ward determines LGA
+              const { data: wData } = await supabase.from('wards').select('localgovernment_id').eq('id', wd).single();
+              if (wData?.localgovernment_id) {
+                lg = String(wData.localgovernment_id);
                 const { data: lData } = await supabase.from('local_governments').select('state_id').eq('id', lg).single();
                 if (lData?.state_id) st = String(lData.state_id);
-              } else {
-                const { data: wData } = await supabase.from('wards').select('localgovernment_id').eq('id', wd).single();
-                if (wData?.localgovernment_id) {
-                  lg = String(wData.localgovernment_id);
-                  const { data: lData } = await supabase.from('local_governments').select('state_id').eq('id', lg).single();
-                  if (lData?.state_id) st = String(lData.state_id);
-                }
               }
             }
           }
@@ -1446,6 +1447,7 @@ function JurisdictionSelector({
         else if (lg) finalLocId = `lga_${lg}`;
         else if (st) finalLocId = `state_${st}`;
 
+        lastInternalLocationIdRef.current = finalLocId;
         onChange(finalLocId, {
           stateId: st ? parseInt(st, 10) : null,
           lgaId: lg ? parseInt(lg, 10) : null,
@@ -1471,7 +1473,9 @@ function JurisdictionSelector({
     setSelectedWard('');
     setSelectedPu('');
     setLgas([]); setWards([]); setPus([]);
-    onChange(val ? `state_${val}` : '', {
+    const finalId = val ? `state_${val}` : '';
+    lastInternalLocationIdRef.current = finalId;
+    onChange(finalId, {
       stateId: val ? parseInt(val, 10) : null,
       lgaId: null,
       wardId: null,
@@ -1494,6 +1498,7 @@ function JurisdictionSelector({
     setWards([]); setPus([]);
 
     const finalId = targetRole === 'lga_admin' && val ? `lga_${val}` : (val ? `lga_${val}` : (selectedState ? `state_${selectedState}` : ''));
+    lastInternalLocationIdRef.current = finalId;
     onChange(finalId, {
       stateId: selectedState ? parseInt(selectedState, 10) : null,
       lgaId: val ? parseInt(val, 10) : null,
@@ -1516,6 +1521,7 @@ function JurisdictionSelector({
     setPus([]);
 
     const finalId = targetRole === 'ward_admin' && val ? `ward_${val}` : (val ? `ward_${val}` : (selectedLga ? `lga_${selectedLga}` : ''));
+    lastInternalLocationIdRef.current = finalId;
     onChange(finalId, {
       stateId: selectedState ? parseInt(selectedState, 10) : null,
       lgaId: selectedLga ? parseInt(selectedLga, 10) : null,
@@ -1534,7 +1540,9 @@ function JurisdictionSelector({
   const handlePuChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
     setSelectedPu(val);
-    onChange(val ? `pu_${val}` : (selectedWard ? `ward_${selectedWard}` : ''), {
+    const finalId = val ? `pu_${val}` : (selectedWard ? `ward_${selectedWard}` : '');
+    lastInternalLocationIdRef.current = finalId;
+    onChange(finalId, {
       stateId: selectedState ? parseInt(selectedState, 10) : null,
       lgaId: selectedLga ? parseInt(selectedLga, 10) : null,
       wardId: selectedWard ? parseInt(selectedWard, 10) : null,

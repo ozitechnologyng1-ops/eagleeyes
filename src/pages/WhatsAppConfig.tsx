@@ -3,7 +3,7 @@ import {
   MessageSquare, Settings, Database, DollarSign, Server, Users, 
   Upload, QrCode, Phone, CheckCircle2, AlertCircle, RefreshCw, 
   Trash2, Plus, ExternalLink, Shield, Send, Image, Video, Eye,
-  Copy, Check, FileText
+  Copy, Check, FileText, Pencil, X
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApp } from '../context/AppContext';
@@ -40,10 +40,38 @@ export const WhatsAppConfig: React.FC = () => {
     earning_per_group_add: 100,
     group_ai_response_frequency: 3,
     ai_provider: 'gemini',
-    ai_model: 'gemini-2.0-flash',
+    ai_model: 'gemini-3.8-flash',
     ai_api_key: '',
     group_ai_system_prompt: 'You are a respectful, knowledgeable, and articulate community representative for the ADC candidate. Defend candidate policies factually using verified manifesto data, correct misconceptions, maintain a peaceful tone, and avoid hostile or aggressive debates.'
   });
+
+  const PROVIDER_MODELS: Record<string, { id: string; name: string; category?: string }[]> = {
+    gemini: [
+      { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Latest Workhorse Flagship - Recommended)', category: 'General-Use Frontier' },
+      { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview (Advanced Reasoning & Multi-step)', category: 'General-Use Frontier' },
+      { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite (Cost-Efficient & High-Volume)', category: 'General-Use Frontier' },
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', category: 'Standard Models' },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', category: 'Standard Models' },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', category: 'Standard Models' },
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', category: 'Standard Models' },
+      { id: 'gemini-3.1-flash-image', name: 'Gemini 3.1 Flash Image / Nano Banana 2', category: 'Vision & Multimodal' },
+      { id: 'gemini-3-pro-image', name: 'Gemini 3 Pro Image / Nano Banana Pro', category: 'Vision & Multimodal' },
+      { id: 'gemini-omni-flash', name: 'Gemini Omni Flash', category: 'Vision & Multimodal' },
+    ],
+    openai: [
+      { id: 'gpt-4o', name: 'GPT-4o (Omni Flagship)', category: 'OpenAI GPT' },
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini (Fast & Lightweight)', category: 'OpenAI GPT' },
+      { id: 'o1', name: 'o1 (Deep Reasoning)', category: 'OpenAI Reasoning' },
+      { id: 'o3-mini', name: 'o3-mini (Reasoning & Speed)', category: 'OpenAI Reasoning' },
+      { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', category: 'OpenAI GPT' },
+    ],
+    groq: [
+      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile (Ultra-fast)', category: 'Meta Llama' },
+      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant (Instant Response)', category: 'Meta Llama' },
+      { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B (32k Context)', category: 'Mistral' },
+      { id: 'deepseek-r1-distill-llama-70b', name: 'DeepSeek R1 Distill Llama 70B', category: 'Reasoning' },
+    ]
+  };
 
   // Instances & Pool
   const [instances, setInstances] = useState<WhatsAppInstance[]>([]);
@@ -62,9 +90,28 @@ export const WhatsAppConfig: React.FC = () => {
   const [uploadingKb, setUploadingKb] = useState(false);
   const [uploadingKbImage, setUploadingKbImage] = useState(false);
   const [uploadingKbDoc, setUploadingKbDoc] = useState(false);
+  const [reindexingKb, setReindexingKb] = useState(false);
+
+  // Knowledge base edit mode
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const kbFormRef = React.useRef<HTMLDivElement>(null);
 
   // Group monitors
   const [monitors, setMonitors] = useState<GroupMonitor[]>([]);
+  const [togglingGroupId, setTogglingGroupId] = useState<string | null>(null);
+
+  const handleToggleGroupAi = async (groupId: string, current: boolean) => {
+    setTogglingGroupId(groupId);
+    try {
+      await greenApiService.toggleGroupAi(groupId, !current);
+      toast.success(!current ? 'AI Defense activated for group' : 'AI Defense turned OFF for group');
+      setMonitors(prev => prev.map(m => m.id === groupId ? { ...m, ai_enabled: !current } : m));
+    } catch (err: any) {
+      toast.error('Failed to toggle AI state');
+    } finally {
+      setTogglingGroupId(null);
+    }
+  };
 
   // Modals / Connect flow
   const [connectingInstance, setConnectingInstance] = useState<WhatsAppInstance | null>(null);
@@ -313,7 +360,7 @@ export const WhatsAppConfig: React.FC = () => {
     }
   };
 
-  // Knowledge Base Add
+  // Knowledge Base Add / Update
   const handleAddKnowledge = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!kbTitle || !kbContent) {
@@ -322,10 +369,16 @@ export const WhatsAppConfig: React.FC = () => {
     }
 
     setUploadingKb(true);
-    const toastId = toast.loading('Vectorizing and storing knowledge chunk...');
+    const toastId = toast.loading(editingEntryId ? 'Updating knowledge entry...' : 'Vectorizing and storing knowledge chunk...');
     try {
-      await greenApiService.uploadKnowledge(stateId, kbTitle, kbContent, kbType, kbImage, kbCaption, kbDocUrl, kbDocName);
-      toast.success('Candidate knowledge chunk added to AI knowledge base!', { id: toastId });
+      if (editingEntryId) {
+        await greenApiService.updateKnowledgeEntry(editingEntryId, kbTitle, kbContent, kbType, kbImage, kbCaption, kbDocUrl, kbDocName, stateId);
+        toast.success('Knowledge entry updated and re-vectorized!', { id: toastId });
+        setEditingEntryId(null);
+      } else {
+        await greenApiService.uploadKnowledge(stateId, kbTitle, kbContent, kbType, kbImage, kbCaption, kbDocUrl, kbDocName);
+        toast.success('Candidate knowledge chunked, vectorized & stored in background!', { id: toastId });
+      }
       setKbTitle('');
       setKbContent('');
       setKbType('policy');
@@ -336,9 +389,28 @@ export const WhatsAppConfig: React.FC = () => {
       const updated = await greenApiService.getKnowledgeEntries(stateId);
       setKnowledgeList(updated);
     } catch (err: any) {
-      toast.error(err.message || 'Failed to upload knowledge chunk', { id: toastId });
+      toast.error(err.message || 'Failed to save knowledge chunk', { id: toastId });
     } finally {
       setUploadingKb(false);
+    }
+  };
+
+  const handleReindexKnowledge = async () => {
+    if (!config.ai_api_key) {
+      toast.error('Please configure and save an AI API key in the AI Engine tab first.');
+      return;
+    }
+    setReindexingKb(true);
+    const toastId = toast.loading('Re-chunking and vectorizing entire knowledge base in background...');
+    try {
+      const res = await greenApiService.reindexKnowledge(stateId);
+      toast.success(`Complete! Processed ${res.totalProcessed} items (${res.createdChunksCount} chunks created & vectorized).`, { id: toastId });
+      const updated = await greenApiService.getKnowledgeEntries(stateId);
+      setKnowledgeList(updated);
+    } catch (err: any) {
+      toast.error(err.message || 'Re-indexing failed', { id: toastId });
+    } finally {
+      setReindexingKb(false);
     }
   };
 
@@ -348,9 +420,32 @@ export const WhatsAppConfig: React.FC = () => {
       await greenApiService.deleteKnowledgeEntry(id);
       toast.success('Deleted');
       setKnowledgeList(prev => prev.filter(k => k.id !== id));
+      if (editingEntryId === id) {
+        setEditingEntryId(null);
+        setKbTitle(''); setKbContent(''); setKbType('policy');
+        setKbImage(''); setKbDocUrl(''); setKbDocName(''); setKbCaption('');
+      }
     } catch (err: any) {
       toast.error('Failed to delete');
     }
+  };
+
+  const handleEditKnowledge = (item: KnowledgeEntry) => {
+    setEditingEntryId(item.id);
+    setKbTitle(item.title);
+    setKbType(item.content_type);
+    setKbContent(item.content);
+    setKbImage(item.image_url || '');
+    setKbCaption(item.image_caption || '');
+    setKbDocUrl(item.doc_url || '');
+    setKbDocName(item.doc_name || '');
+    kbFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const handleCancelEdit = () => {
+    setEditingEntryId(null);
+    setKbTitle(''); setKbContent(''); setKbType('policy');
+    setKbImage(''); setKbDocUrl(''); setKbDocName(''); setKbCaption('');
   };
 
   if (loading) {
@@ -656,7 +751,15 @@ export const WhatsAppConfig: React.FC = () => {
                 </label>
                 <select
                   value={config.ai_provider || 'gemini'}
-                  onChange={e => setConfig({ ...config, ai_provider: e.target.value as any })}
+                  onChange={e => {
+                    const nextProvider = e.target.value as any;
+                    const defaultForProvider = PROVIDER_MODELS[nextProvider]?.[0]?.id || '';
+                    setConfig({
+                      ...config,
+                      ai_provider: nextProvider,
+                      ai_model: defaultForProvider
+                    });
+                  }}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
                 >
                   <option value="gemini">Google Gemini</option>
@@ -667,15 +770,25 @@ export const WhatsAppConfig: React.FC = () => {
 
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 mb-1">
-                  Model Name
+                  AI Model
                 </label>
-                <input
-                  type="text"
-                  value={config.ai_model || 'gemini-2.0-flash'}
+                <select
+                  value={config.ai_model || ''}
                   onChange={e => setConfig({ ...config, ai_model: e.target.value })}
-                  placeholder="e.g. gemini-2.0-flash or gpt-4o-mini"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
-                />
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
+                >
+                  {/* Predefined models for the current provider */}
+                  {(PROVIDER_MODELS[config.ai_provider || 'gemini'] || []).map(m => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({m.id})
+                    </option>
+                  ))}
+                  {/* Fallback if user had an existing custom model value not in the list */}
+                  {config.ai_model &&
+                    !(PROVIDER_MODELS[config.ai_provider || 'gemini'] || []).some(m => m.id === config.ai_model) && (
+                      <option value={config.ai_model}>{config.ai_model} (Custom)</option>
+                    )}
+                </select>
               </div>
 
               <div>
@@ -728,14 +841,25 @@ export const WhatsAppConfig: React.FC = () => {
           </div>
 
           {/* Candidate Knowledge Base Ingestion Card */}
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-4">
-            <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-              <Plus className="h-5 w-5 text-[#004d25]" />
-              Add Knowledge Section (Policies, Talking Points, FAQs)
-            </h2>
-            <p className="text-xs text-gray-500">
-              Add verified candidate policies, talking points, and campaign facts. Each entry is vector-indexed for instant semantic retrieval during chat responses and group debates.
-            </p>
+          <div ref={kbFormRef} className={`bg-white p-6 rounded-xl border shadow-xs space-y-4 ${editingEntryId ? 'border-[#004d25] ring-2 ring-[#004d25]/20' : 'border-gray-200'}`}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  {editingEntryId ? <Pencil className="h-5 w-5 text-[#004d25]" /> : <Plus className="h-5 w-5 text-[#004d25]" />}
+                  {editingEntryId ? 'Edit Knowledge Entry' : 'Add Knowledge Section (Policies, Talking Points, FAQs)'}
+                </h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {editingEntryId
+                    ? 'Update the fields below and save to update this entry in the AI knowledge base.'
+                    : 'Add verified candidate policies, talking points, and campaign facts. Each entry is vector-indexed for instant semantic retrieval during chat responses and group debates.'}
+                </p>
+              </div>
+              {editingEntryId && (
+                <button type="button" onClick={handleCancelEdit} className="shrink-0 text-xs text-gray-500 hover:text-red-600 flex items-center gap-1 border border-gray-300 rounded-lg px-3 py-1.5 cursor-pointer">
+                  <X className="h-3.5 w-3.5" /> Cancel Edit
+                </button>
+              )}
+            </div>
 
             <form onSubmit={handleAddKnowledge} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -868,14 +992,23 @@ export const WhatsAppConfig: React.FC = () => {
                 />
               </div>
 
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-3">
+                {editingEntryId && (
+                  <button
+                    type="button"
+                    onClick={handleCancelEdit}
+                    className="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm font-medium flex items-center gap-2 transition cursor-pointer hover:bg-gray-50"
+                  >
+                    <X className="h-4 w-4" /> Cancel
+                  </button>
+                )}
                 <button
                   type="submit"
                   disabled={uploadingKb}
                   className="px-4 py-2 bg-[#004d25] hover:bg-[#00381b] text-white rounded-lg text-sm font-medium flex items-center gap-2 transition cursor-pointer disabled:opacity-50"
                 >
-                  {uploadingKb ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                  Vectorize & Save Knowledge
+                  {uploadingKb ? <RefreshCw className="h-4 w-4 animate-spin" /> : editingEntryId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                  {editingEntryId ? 'Update Knowledge Entry' : 'Vectorize & Save Knowledge'}
                 </button>
               </div>
             </form>
@@ -883,17 +1016,34 @@ export const WhatsAppConfig: React.FC = () => {
 
           {/* Stored Knowledge Items List */}
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-4">
-            <h3 className="text-md font-semibold text-gray-900 flex items-center justify-between">
-              <span>Verified Knowledge Base Chunks ({knowledgeList.length})</span>
-            </h3>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <h3 className="text-md font-semibold text-gray-900">
+                  Verified Candidate Knowledge Base ({knowledgeList.length} documents)
+                </h3>
+                <p className="text-xs text-gray-500">
+                  Documents are automatically split into optimized semantic chunks in the background for fast, accurate AI retrieval.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleReindexKnowledge}
+                disabled={reindexingKb || knowledgeList.length === 0}
+                className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-[#004d25] border border-emerald-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                title="Re-chunk and generate vector embeddings for all knowledge base documents"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${reindexingKb ? 'animate-spin' : ''}`} />
+                {reindexingKb ? 'Vectorizing in Background...' : 'Re-index & Vectorize All'}
+              </button>
+            </div>
 
             {knowledgeList.length === 0 ? (
               <p className="text-sm text-gray-500 italic">No knowledge base items added yet. Add candidate policies and talking points above.</p>
             ) : (
               <div className="divide-y divide-gray-100">
                 {knowledgeList.map(item => (
-                  <div key={item.id} className="py-3 flex items-start justify-between gap-4">
-                    <div className="space-y-1">
+                  <div key={item.id} className={`py-3 flex items-start justify-between gap-4 rounded-lg px-2 -mx-2 transition ${editingEntryId === item.id ? 'bg-emerald-50 ring-1 ring-[#004d25]/30' : ''}`}>
+                    <div className="space-y-1 flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-medium">
                           {item.content_type}
@@ -923,13 +1073,22 @@ export const WhatsAppConfig: React.FC = () => {
                       <p className="text-xs text-gray-600 line-clamp-2">{item.content}</p>
                     </div>
 
-                    <button
-                      onClick={() => handleDeleteKnowledge(item.id)}
-                      className="p-1.5 text-gray-400 hover:text-red-600 transition cursor-pointer"
-                      title="Delete Entry"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => handleEditKnowledge(item)}
+                        className="p-1.5 text-gray-400 hover:text-[#004d25] transition cursor-pointer"
+                        title="Edit Entry"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteKnowledge(item.id)}
+                        className="p-1.5 text-gray-400 hover:text-red-600 transition cursor-pointer"
+                        title="Delete Entry"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -937,6 +1096,7 @@ export const WhatsAppConfig: React.FC = () => {
           </div>
         </div>
       )}
+
 
       {/* TAB 3: Earnings & Incentives */}
       {activeTab === 'earnings' && (
@@ -1175,7 +1335,7 @@ export const WhatsAppConfig: React.FC = () => {
               State Political WhatsApp Groups Monitor
             </h2>
             <p className="text-xs text-gray-500">
-              When agents add your state's Group Monitor WhatsApp number to local community and political WhatsApp groups, they automatically appear here. The AI reads incoming messages, categorizes discussions, and defends candidate policies.
+              When agents add your state's Group Monitor WhatsApp number to local community and political WhatsApp groups, they automatically appear here. The AI reads incoming messages, categorizes discussions, and defends candidate policies with a natural 10-30s pacing delay. You can toggle AI defense on or off for any group.
             </p>
           </div>
 
@@ -1186,22 +1346,41 @@ export const WhatsAppConfig: React.FC = () => {
               </div>
             ) : (
               monitors.map(m => (
-                <div key={m.id} className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs space-y-3">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h4 className="font-semibold text-gray-900 text-sm">{m.group_name || 'Political Group'}</h4>
-                      <p className="text-xs text-gray-400">{m.participant_count || 0} participants</p>
+                <div key={m.id} className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs space-y-3 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <h4 className="font-semibold text-gray-900 text-sm truncate" title={m.group_name}>{m.group_name || 'Political Group'}</h4>
+                        <p className="text-xs text-gray-400">{m.participant_count || 0} participants</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleGroupAi(m.id, m.ai_enabled)}
+                        disabled={togglingGroupId === m.id}
+                        title={m.ai_enabled ? "Click to turn OFF AI for this group" : "Click to turn ON AI for this group"}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-2xs shrink-0 ${
+                          m.ai_enabled
+                            ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200 border border-emerald-300'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-300'
+                        }`}
+                      >
+                        <span className={`w-2 h-2 rounded-full ${m.ai_enabled ? 'bg-emerald-600 animate-pulse' : 'bg-gray-400'}`} />
+                        {togglingGroupId === m.id ? '...' : m.ai_enabled ? 'AI ON' : 'AI OFF'}
+                      </button>
                     </div>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                      m.ai_enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'
-                    }`}>
-                      {m.ai_enabled ? 'AI Active' : 'AI Paused'}
-                    </span>
+
+                    <div className="text-xs text-gray-500 space-y-1 pt-2 mt-2 border-t border-gray-100">
+                      <p className="truncate">Added by: <span className="font-semibold text-gray-700">{m.added_by_agent?.name || 'Field Agent'}</span></p>
+                      <p>AI Replies Today: <span className="font-semibold text-[#004d25]">{m.ai_responses_today || 0}</span></p>
+                    </div>
                   </div>
 
-                  <div className="text-xs text-gray-500 space-y-1 pt-2 border-t border-gray-100">
-                    <p>Added by: <span className="font-semibold text-gray-700">{m.added_by_agent?.name || 'Field Agent'}</span></p>
-                    <p>AI Replies Today: <span className="font-semibold text-[#004d25]">{m.ai_responses_today || 0}</span></p>
+                  <div className="pt-2 border-t border-gray-50">
+                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded block text-center ${
+                      m.ai_enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'
+                    }`}>
+                      {m.ai_enabled ? 'Auto-Replies Active (10-30s delay)' : 'Replies Off (Passive Monitoring)'}
+                    </span>
                   </div>
                 </div>
               ))

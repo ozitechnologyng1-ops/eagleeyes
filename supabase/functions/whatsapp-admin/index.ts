@@ -10,6 +10,173 @@ const corsHeaders = {
 const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
+// Helper: Intelligent semantic text chunker (breaks into ~600-800 char chunks with overlap)
+function chunkText(text: string, maxChunkSize = 750, overlap = 150): string[] {
+  const clean = text.trim();
+  if (clean.length <= maxChunkSize) return [clean];
+
+  // Try splitting by double newline (paragraphs) first
+  const paragraphs = clean.split(/\n\s*\n/);
+  const chunks: string[] = [];
+  let currentChunk = "";
+
+  for (const para of paragraphs) {
+    const trimmedPara = para.trim();
+    if (!trimmedPara) continue;
+
+    if (currentChunk.length + trimmedPara.length + 2 <= maxChunkSize) {
+      currentChunk = currentChunk ? `${currentChunk}\n\n${trimmedPara}` : trimmedPara;
+    } else {
+      if (currentChunk) {
+        chunks.push(currentChunk);
+      }
+      // If a single paragraph is larger than maxChunkSize, split by sentence or length
+      if (trimmedPara.length > maxChunkSize) {
+        let remaining = trimmedPara;
+        while (remaining.length > 0) {
+          if (remaining.length <= maxChunkSize) {
+            chunks.push(remaining);
+            currentChunk = "";
+            break;
+          }
+          // Find last period/newline within maxChunkSize
+          let splitIdx = remaining.lastIndexOf(".", maxChunkSize);
+          if (splitIdx < maxChunkSize * 0.4) {
+            splitIdx = remaining.lastIndexOf(" ", maxChunkSize);
+          }
+          if (splitIdx === -1 || splitIdx < maxChunkSize * 0.3) {
+            splitIdx = maxChunkSize;
+          } else {
+            splitIdx += 1;
+          }
+          chunks.push(remaining.substring(0, splitIdx).trim());
+          const nextStart = Math.max(0, splitIdx - overlap);
+          remaining = remaining.substring(nextStart).trim();
+        }
+      } else {
+        currentChunk = trimmedPara;
+      }
+    }
+  }
+
+  if (currentChunk && !chunks.includes(currentChunk)) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks.length > 0 ? chunks : [clean];
+}
+
+// Helper: Generate 768-dim vector embedding with Gemini or OpenAI
+async function generateEmbedding(text: string, provider: string, apiKey: string): Promise<number[] | null> {
+  if (!apiKey || !text) return null;
+  try {
+    if (provider === "openai") {
+      const embRes = await fetch("https://api.openai.com/v1/embeddings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: "text-embedding-3-small",
+          input: text.slice(0, 8000),
+          dimensions: 768
+        })
+      });
+      if (embRes.ok) {
+        const embData = await embRes.json();
+        return embData.data?.[0]?.embedding || null;
+      }
+      const err = await embRes.text();
+      console.warn("OpenAI embedding error:", err);
+    } else {
+      // Default to Gemini gemini-embedding-001 (768 dimensions)
+      const embRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "models/gemini-embedding-2",
+          content: { parts: [{ text: text.slice(0, 8000) }] },
+          outputDimensionality: 768
+        })
+      });
+      if (embRes.ok) {
+        const embData = await embRes.json();
+        return embData.embedding?.values || null;
+      }
+      const err = await embRes.text();
+      console.warn("Gemini embedding error:", err);
+    }
+  } catch (e) {
+    console.error("Embedding generation exception:", e);
+  }
+  return null;
+}
+
+// Helper: Vectorize and chunk an entry into the database
+async function vectorizeAndStoreEntry(
+  supabase: any,
+  stateId: number,
+  title: string,
+  content: string,
+  contentType: string,
+  imageUrl?: string,
+  imageCaption?: string,
+  docUrl?: string,
+  docName?: string,
+  provider = "gemini",
+  apiKey = ""
+) {
+  // 1. Create parent entry or chunk
+  const chunks = chunkText(content);
+
+  // Insert root / primary entry
+  const firstEmbedding = await generateEmbedding(`${title}\n${chunks[0]}`, provider, apiKey);
+
+  const { data: parentEntry, error: pErr } = await supabase
+    .from("whatsapp_knowledge_base")
+    .insert({
+      state_id: stateId,
+      title,
+      content,  // Store full original content on root for UI display
+      content_type: contentType,
+      image_url: imageUrl || null,
+      image_caption: imageCaption || null,
+      doc_url: docUrl || null,
+      doc_name: docName || null,
+      embedding: firstEmbedding ?? null,
+      chunk_index: 0,
+      source_doc_id: null
+    })
+    .select()
+    .single();
+
+  if (pErr) throw pErr;
+
+  // Insert subsequent chunks in background linked to parentEntry.id
+  if (chunks.length > 1) {
+    for (let i = 1; i < chunks.length; i++) {
+      const chunkTextContent = chunks[i];
+      const chunkEmb = await generateEmbedding(`${title} (Part ${i + 1})\n${chunkTextContent}`, provider, apiKey);
+      await supabase.from("whatsapp_knowledge_base").insert({
+        state_id: stateId,
+        title: `${title} (Part ${i + 1})`,
+        content: chunkTextContent,
+        content_type: contentType,
+        image_url: imageUrl || null,
+        image_caption: imageCaption || null,
+        doc_url: docUrl || null,
+        doc_name: docName || null,
+        embedding: chunkEmb ?? null,
+        chunk_index: i,
+        source_doc_id: parentEntry.id
+      });
+    }
+  }
+
+  return parentEntry;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -93,6 +260,62 @@ Deno.serve(async (req: Request) => {
           .single();
 
         if (error) throw error;
+
+        // If an API key is now active, check for unvectorized knowledge entries and auto-embed them in the background
+        const finalApiKey = data.ai_api_key || Deno.env.get("VITE_GOOGLE_AI_KEY") || Deno.env.get("GEMINI_API_KEY") || "";
+        if (finalApiKey) {
+          try {
+            const { data: unEmbedded } = await supabase
+              .from("whatsapp_knowledge_base")
+              .select("id, title, content, content_type, image_url, image_caption, doc_url, doc_name")
+              .eq("state_id", targetStateId)
+              .is("embedding", null)
+              .is("source_doc_id", null);
+
+            if (unEmbedded && unEmbedded.length > 0) {
+              // Vectorize un-embedded entries in background
+              (async () => {
+                for (const item of unEmbedded) {
+                  try {
+                    const chunks = chunkText(item.content);
+                    const rootEmb = await generateEmbedding(`${item.title}\n${chunks[0]}`, data.ai_provider || "gemini", finalApiKey);
+                    await supabase
+                      .from("whatsapp_knowledge_base")
+                      .update({
+                        embedding: rootEmb ?? null,
+                        chunk_index: 0
+                      })
+                      .eq("id", item.id);
+
+                    if (chunks.length > 1) {
+                      for (let i = 1; i < chunks.length; i++) {
+                        const cEmb = await generateEmbedding(`${item.title} (Part ${i + 1})\n${chunks[i]}`, data.ai_provider || "gemini", finalApiKey);
+                        await supabase.from("whatsapp_knowledge_base").insert({
+                          state_id: targetStateId,
+                          title: `${item.title} (Part ${i + 1})`,
+                          content: chunks[i],
+                          content_type: item.content_type || "manifesto",
+                          image_url: item.image_url || null,
+                          image_caption: item.image_caption || null,
+                          doc_url: item.doc_url || null,
+                          doc_name: item.doc_name || null,
+                          embedding: cEmb ?? null,
+                          chunk_index: i,
+                          source_doc_id: item.id
+                        });
+                      }
+                    }
+                  } catch (itemErr) {
+                    console.error("Auto background embedding item error:", itemErr);
+                  }
+                }
+              })();
+            }
+          } catch (autoErr) {
+            console.warn("Auto-reindex check warning:", autoErr);
+          }
+        }
+
         return new Response(JSON.stringify({ success: true, data }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
@@ -639,9 +862,9 @@ Deno.serve(async (req: Request) => {
         });
       }
 
-      // 9. Knowledge Base Upload & Vector Embedding
+      // 9. Knowledge Base Upload with Intelligent Background Chunking & Dual Vectorization
       case "uploadKnowledge": {
-        const { stateId, title, content, contentType = "manifesto", imageUrl, imageCaption } = body;
+        const { stateId, title, content, contentType = "manifesto", imageUrl, imageCaption, docUrl, docName } = body;
         if (!stateId || !title || !content) throw new Error("stateId, title, and content are required");
 
         // Retrieve AI config
@@ -654,64 +877,194 @@ Deno.serve(async (req: Request) => {
         const provider = config?.ai_provider || "gemini";
         const apiKey = config?.ai_api_key || Deno.env.get("VITE_GOOGLE_AI_KEY") || Deno.env.get("GEMINI_API_KEY") || "";
 
-        let embedding: number[] | null = null;
+        const rootItem = await vectorizeAndStoreEntry(
+          supabase,
+          stateId,
+          title,
+          content,
+          contentType,
+          imageUrl,
+          imageCaption,
+          docUrl,
+          docName,
+          provider,
+          apiKey
+        );
 
-        // Generate embedding if Gemini or OpenAI key available
-        if (apiKey) {
-          try {
-            if (provider === "gemini") {
-              const embRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${apiKey}`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  model: "models/text-embedding-004",
-                  content: { parts: [{ text: `${title}\n${content}` }] }
-                })
-              });
-              if (embRes.ok) {
-                const embData = await embRes.json();
-                embedding = embData.embedding?.values || null;
-              }
-            } else if (provider === "openai") {
-              const embRes = await fetch("https://api.openai.com/v1/embeddings", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "Authorization": `Bearer ${apiKey}`
-                },
-                body: JSON.stringify({
-                  model: "text-embedding-3-small",
-                  input: `${title}\n${content}`,
-                  dimensions: 768
-                })
-              });
-              if (embRes.ok) {
-                const embData = await embRes.json();
-                embedding = embData.data?.[0]?.embedding || null;
-              }
-            }
-          } catch (e) {
-            console.error("Failed to generate embedding, storing text without vector:", e);
-          }
+        return new Response(JSON.stringify({ success: true, item: rootItem }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
+      }
+
+      // 9b. Update Knowledge Entry & Re-chunk/Re-embed
+      case "updateKnowledge": {
+        const { id, stateId, title, content, contentType = "manifesto", imageUrl, imageCaption, docUrl, docName } = body;
+        if (!id || !title || !content) throw new Error("id, title, and content are required");
+
+        // First find stateId if not supplied
+        let targetStateId = stateId;
+        if (!targetStateId) {
+          const { data: existing } = await supabase.from("whatsapp_knowledge_base").select("state_id").eq("id", id).single();
+          targetStateId = existing?.state_id;
         }
 
-        const { data: kbItem, error: kbErr } = await supabase
+        // Delete all old child chunks belonging to this entry
+        await supabase.from("whatsapp_knowledge_base").delete().eq("source_doc_id", id);
+
+        // Retrieve AI config
+        const { data: config } = await supabase
+          .from("whatsapp_state_config")
+          .select("ai_provider, ai_model, ai_api_key")
+          .eq("state_id", targetStateId)
+          .single();
+
+        const provider = config?.ai_provider || "gemini";
+        const apiKey = config?.ai_api_key || Deno.env.get("VITE_GOOGLE_AI_KEY") || Deno.env.get("GEMINI_API_KEY") || "";
+
+        // Re-chunk new content
+        const chunks = chunkText(content);
+        const rootEmbedding = await generateEmbedding(`${title}\n${chunks[0]}`, provider, apiKey);
+
+        // Update root entry
+        const { data: updatedRoot, error: uErr } = await supabase
           .from("whatsapp_knowledge_base")
-          .insert({
-            state_id: stateId,
+          .update({
             title,
-            content,
+            content,  // Store full original content on root for UI display
             content_type: contentType,
             image_url: imageUrl || null,
             image_caption: imageCaption || null,
-            embedding: embedding ? JSON.stringify(embedding) : null
+            doc_url: docUrl || null,
+            doc_name: docName || null,
+            embedding: rootEmbedding ?? null,
+            chunk_index: 0
           })
+          .eq("id", id)
           .select()
           .single();
 
-        if (kbErr) throw kbErr;
+        if (uErr) throw uErr;
 
-        return new Response(JSON.stringify({ success: true, item: kbItem }), {
+        // Insert new subsequent chunks if any
+        if (chunks.length > 1) {
+          for (let i = 1; i < chunks.length; i++) {
+            const chunkContent = chunks[i];
+            const chunkEmb = await generateEmbedding(`${title} (Part ${i + 1})\n${chunkContent}`, provider, apiKey);
+            await supabase.from("whatsapp_knowledge_base").insert({
+              state_id: targetStateId,
+              title: `${title} (Part ${i + 1})`,
+              content: chunkContent,
+              content_type: contentType,
+              image_url: imageUrl || null,
+              image_caption: imageCaption || null,
+              doc_url: docUrl || null,
+              doc_name: docName || null,
+              embedding: chunkEmb ?? null,
+              chunk_index: i,
+              source_doc_id: id
+            });
+          }
+        }
+
+        return new Response(JSON.stringify({ success: true, item: updatedRoot }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
+      }
+
+      // 9c. Delete Knowledge Entry & its Chunks
+      case "deleteKnowledge": {
+        const { id } = body;
+        if (!id) throw new Error("id is required");
+
+        // Delete all child chunks first
+        await supabase.from("whatsapp_knowledge_base").delete().eq("source_doc_id", id);
+        // Delete root
+        const { error: dErr } = await supabase.from("whatsapp_knowledge_base").delete().eq("id", id);
+        if (dErr) throw dErr;
+
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
+      }
+
+      // 9d. Re-index / Vectorize All Knowledge Base Entries for State
+      case "reindexKnowledge": {
+        const { stateId } = body;
+        if (!stateId) throw new Error("stateId is required");
+
+        const { data: config } = await supabase
+          .from("whatsapp_state_config")
+          .select("ai_provider, ai_model, ai_api_key")
+          .eq("state_id", stateId)
+          .single();
+
+        const provider = config?.ai_provider || "gemini";
+        const apiKey = config?.ai_api_key || Deno.env.get("VITE_GOOGLE_AI_KEY") || Deno.env.get("GEMINI_API_KEY") || "";
+
+        if (!apiKey) {
+          throw new Error("No AI API key found for this state. Please save an API key first.");
+        }
+
+        // Fetch all root entries
+        const { data: entries, error: fErr } = await supabase
+          .from("whatsapp_knowledge_base")
+          .select("*")
+          .eq("state_id", stateId)
+          .is("source_doc_id", null);
+
+        if (fErr) throw fErr;
+
+        let vectorizedCount = 0;
+        let createdChunksCount = 0;
+
+        for (const entry of entries || []) {
+          // Check if entry needs chunking or embedding
+          const chunks = chunkText(entry.content);
+
+          // Embed root chunk
+          const rootEmb = await generateEmbedding(`${entry.title}\n${chunks[0]}`, provider, apiKey);
+          await supabase
+            .from("whatsapp_knowledge_base")
+            .update({
+              embedding: rootEmb ?? null,
+              chunk_index: 0
+            })
+            .eq("id", entry.id);
+
+          vectorizedCount++;
+
+          // Delete previous child chunks
+          await supabase.from("whatsapp_knowledge_base").delete().eq("source_doc_id", entry.id);
+
+          // Insert new child chunks
+          if (chunks.length > 1) {
+            for (let i = 1; i < chunks.length; i++) {
+              const chunkContent = chunks[i];
+              const cEmb = await generateEmbedding(`${entry.title} (Part ${i + 1})\n${chunkContent}`, provider, apiKey);
+              await supabase.from("whatsapp_knowledge_base").insert({
+                state_id: stateId,
+                title: `${entry.title} (Part ${i + 1})`,
+                content: chunkContent,
+                content_type: entry.content_type || "manifesto",
+                image_url: entry.image_url || null,
+                image_caption: entry.image_caption || null,
+                doc_url: entry.doc_url || null,
+                doc_name: entry.doc_name || null,
+                embedding: cEmb ?? null,
+                chunk_index: i,
+                source_doc_id: entry.id
+              });
+              createdChunksCount++;
+            }
+          }
+        }
+
+        return new Response(JSON.stringify({
+          success: true,
+          vectorizedCount,
+          createdChunksCount,
+          totalProcessed: (entries || []).length
+        }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
       }
@@ -791,6 +1144,38 @@ Deno.serve(async (req: Request) => {
         });
       }
 
+      // 17. Toggle Group AI Defense
+      case "toggleGroupAi": {
+        const { monitorId, enabled } = body;
+        if (!monitorId) throw new Error("monitorId is required");
+        const { data, error } = await supabase
+          .from("whatsapp_group_monitors")
+          .update({ ai_enabled: enabled })
+          .eq("id", monitorId)
+          .select()
+          .single();
+        if (error) throw error;
+        return new Response(JSON.stringify({ success: true, data }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
+      }
+
+      // 18. Bulk Toggle Group AI Defense
+      case "bulkToggleGroupAi": {
+        const { stateId: targetStateId, enabled, monitorIds } = body;
+        let query = supabase.from("whatsapp_group_monitors").update({ ai_enabled: enabled });
+        if (monitorIds && monitorIds.length > 0) {
+          query = query.in("id", monitorIds);
+        } else if (targetStateId) {
+          query = query.eq("state_id", targetStateId);
+        }
+        const { error } = await query;
+        if (error) throw error;
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
+      }
+
       default:
         return new Response(JSON.stringify({ error: `Unknown action: ${action}` }), {
           status: 400,
@@ -804,3 +1189,4 @@ Deno.serve(async (req: Request) => {
     });
   }
 });
+

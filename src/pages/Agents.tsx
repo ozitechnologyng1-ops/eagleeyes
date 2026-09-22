@@ -79,8 +79,8 @@ const DeploymentCard = ({ title, stats, colorClass, subtitle }: {
 };
 
 export default function Agents() {
-  const { user, locations, stats, addAgent, updateAgent, updateAgentStatus } = useApp();
-  const { deployment } = stats;
+  const { user, locations, stats, addAgent, updateAgent, updateAgentStatus, refreshDeploymentStats } = useApp();
+  const deployment = stats.deployment || {};
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -139,7 +139,8 @@ export default function Agents() {
 
   React.useEffect(() => {
     fetchLocalAgents();
-  }, [fetchLocalAgents]);
+    refreshDeploymentStats?.();
+  }, [fetchLocalAgents, refreshDeploymentStats]);
 
   if (!user) return null;
 
@@ -180,6 +181,7 @@ export default function Agents() {
       setShowAddModal(false);
       setEditAgent(null);
       fetchLocalAgents();
+      refreshDeploymentStats?.();
     } catch (err: any) {
       toast.error(getFriendlyErrorMessage(err));
     }

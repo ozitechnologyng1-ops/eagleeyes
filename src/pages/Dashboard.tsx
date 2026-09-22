@@ -1734,17 +1734,17 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
 
       {/* Jurisdiction Filters: Level, LGA, Ward */}
       {(user.role === 'state_admin' || user.role === 'national_admin' || user.role === 'lga_admin') && (
-        <div className="flex flex-wrap items-center gap-3 p-3 bg-gray-50/80 rounded-xl border border-gray-100">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 p-3 bg-gray-50/80 rounded-xl border border-gray-100">
           {/* Level Filter */}
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-semibold text-gray-600">Level:</label>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <label className="text-xs font-semibold text-gray-600 w-12 shrink-0">Level:</label>
             <select
               value={viewLevel}
               onChange={(e) => {
                 const nextLevel = e.target.value as any;
                 setViewLevel(nextLevel);
               }}
-              className="text-xs border border-gray-300 rounded-lg px-2.5 py-1.5 font-bold text-gray-800 bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
+              className="flex-1 sm:w-56 text-xs border border-gray-300 rounded-lg px-3 py-2 font-bold text-gray-800 bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
             >
               {(user.role === 'state_admin' || user.role === 'national_admin') && (
                 <option value="lga">LGAs (LGA Admins)</option>
@@ -1756,8 +1756,8 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
 
           {/* LGA Filter */}
           {(user.role === 'state_admin' || user.role === 'national_admin') && (
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-semibold text-gray-600">LGA:</label>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <label className="text-xs font-semibold text-gray-600 w-12 shrink-0">LGA:</label>
               <select
                 value={selectedLgaFilter || ''}
                 onChange={(e) => {
@@ -1765,7 +1765,7 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
                   setSelectedLgaFilter(val);
                   setSelectedWardFilter(null);
                 }}
-                className="text-xs border border-gray-300 rounded-lg px-2.5 py-1.5 font-medium text-gray-800 bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
+                className="flex-1 sm:w-56 text-xs border border-gray-300 rounded-lg px-3 py-2 font-medium text-gray-800 bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
               >
                 <option value="">All LGAs in State</option>
                 {lgaList.map(lga => (
@@ -1777,12 +1777,12 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
 
           {/* Ward Filter */}
           {(viewLevel === 'ward' || viewLevel === 'pu') && (selectedLgaFilter || user.role === 'lga_admin') && (
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-semibold text-gray-600">Ward:</label>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <label className="text-xs font-semibold text-gray-600 w-12 shrink-0">Ward:</label>
               <select
                 value={selectedWardFilter || ''}
                 onChange={(e) => setSelectedWardFilter(e.target.value ? Number(e.target.value) : null)}
-                className="text-xs border border-gray-300 rounded-lg px-2.5 py-1.5 font-medium text-gray-800 bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
+                className="flex-1 sm:w-56 text-xs border border-gray-300 rounded-lg px-3 py-2 font-medium text-gray-800 bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
               >
                 <option value="">All Wards in LGA</option>
                 {wardList.map(w => (
@@ -1890,29 +1890,31 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
         ) : (
           <div className="divide-y divide-gray-100 border border-gray-100 rounded-xl overflow-hidden max-h-80 overflow-y-auto">
             {filteredVacant.map(unit => (
-              <div key={unit.id} className="p-3.5 hover:bg-amber-50/30 flex items-center justify-between gap-4 transition-colors">
-                <div className="flex items-center gap-3">
+              <div key={unit.id} className="p-3.5 hover:bg-amber-50/30 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 transition-colors">
+                <div className="flex items-center gap-3 min-w-0">
                   <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-xs shrink-0">
                     <UserX size={15} />
                   </div>
-                  <div>
-                    <h5 className="font-bold text-sm text-gray-900">{unit.name}</h5>
-                    <span className="text-[11px] text-gray-400">ID: #{unit.numId} • No agent assigned</span>
+                  <div className="min-w-0 flex-1">
+                    <h5 className="font-bold text-sm text-gray-900 leading-snug">{unit.name}</h5>
+                    <span className="text-[11px] text-gray-500">ID: #{unit.numId} • No agent assigned</span>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onAddAgent({
-                    id: unit.id,
-                    name: unit.name,
-                    type: (viewLevel === 'pu' ? 'polling_unit' : viewLevel === 'ward' ? 'ward' : 'lga') as any,
-                    parentId: user.locationId
-                  }, targetChildRole)}
-                  className="px-3.5 py-1.5 bg-[#004d25] hover:bg-[#006331] text-white text-xs font-bold rounded-lg transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
-                >
-                  <UserPlus size={14} />
-                  <span>Assign Agent</span>
-                </button>
+                <div className="flex justify-end shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => onAddAgent({
+                      id: unit.id,
+                      name: unit.name,
+                      type: (viewLevel === 'pu' ? 'polling_unit' : viewLevel === 'ward' ? 'ward' : 'lga') as any,
+                      parentId: user.locationId
+                    }, targetChildRole)}
+                    className="px-3 py-1.5 bg-[#004d25] hover:bg-[#006331] text-white text-xs font-bold rounded-lg transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <UserPlus size={14} />
+                    <span>Assign Agent</span>
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -1925,8 +1927,8 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
         ) : (
           <div className="divide-y divide-gray-100 border border-gray-100 rounded-xl overflow-hidden max-h-80 overflow-y-auto">
             {filteredAssigned.map(({ unit, agent }) => (
-              <div key={unit.id} className="p-3.5 hover:bg-gray-50/80 flex items-center justify-between gap-4 transition-colors">
-                <div className="flex items-center gap-3">
+              <div key={unit.id} className="p-3.5 hover:bg-gray-50/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 transition-colors">
+                <div className="flex items-center gap-3 min-w-0">
                   {agent.profile_picture_url ? (
                     <img src={agent.profile_picture_url} alt={agent.name} className="w-9 h-9 rounded-full object-cover border border-gray-200 shrink-0" />
                   ) : (
@@ -1934,14 +1936,14 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
                       {agent.name ? agent.name.charAt(0).toUpperCase() : 'A'}
                     </div>
                   )}
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h5 className="font-bold text-sm text-gray-900">{agent.name}</h5>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h5 className="font-bold text-sm text-gray-900 leading-snug">{agent.name}</h5>
                       <span className="text-[10px] bg-emerald-100 text-emerald-800 font-semibold px-2 py-0.2 rounded-full">
                         {agent.role.replace('_', ' ').toUpperCase()}
                       </span>
                     </div>
-                    <div className="flex items-center gap-3 text-[11px] text-gray-500 mt-0.5">
+                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-gray-500 mt-0.5">
                       <span className="font-medium text-gray-700">{unit.name}</span>
                       {agent.phone && (
                         <span className="flex items-center gap-1 text-gray-400">
@@ -1951,26 +1953,28 @@ function JurisdictionDeploymentSummary({ user, locations, onAddAgent, onEditAgen
                     </div>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onEditAgent({
-                    id: agent.id,
-                    name: agent.name,
-                    firstName: agent.first_name,
-                    lastName: agent.last_name,
-                    phone: agent.phone,
-                    role: agent.role,
-                    picture: agent.profile_picture_url,
-                    bankName: agent.bank_name,
-                    accountName: agent.account_name,
-                    accountNumber: agent.account_number,
-                    locationId: unit.id,
-                    status: agent.status
-                  })}
-                  className="px-3 py-1.5 border border-gray-200 hover:bg-gray-100 text-gray-700 text-xs font-semibold rounded-lg transition-colors cursor-pointer shrink-0"
-                >
-                  Edit Agent
-                </button>
+                <div className="flex justify-end shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => onEditAgent({
+                      id: agent.id,
+                      name: agent.name,
+                      firstName: agent.first_name,
+                      lastName: agent.last_name,
+                      phone: agent.phone,
+                      role: agent.role,
+                      picture: agent.profile_picture_url,
+                      bankName: agent.bank_name,
+                      accountName: agent.account_name,
+                      accountNumber: agent.account_number,
+                      locationId: unit.id,
+                      status: agent.status
+                    })}
+                    className="px-3 py-1.5 border border-gray-200 hover:bg-gray-100 text-gray-700 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                  >
+                    Edit Agent
+                  </button>
+                </div>
               </div>
             ))}
           </div>

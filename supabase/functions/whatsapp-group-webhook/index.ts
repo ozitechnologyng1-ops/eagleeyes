@@ -33,6 +33,13 @@ function cleanAiReply(raw: string): string {
   return clean;
 }
 
+// Detect links, web URLs, and invite links in WhatsApp messages
+function containsUrl(str: string): boolean {
+  if (!str) return false;
+  const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(chat\.whatsapp\.com\/[^\s]+)|(wa\.me\/[^\s]+)|(\b[a-zA-Z0-9-]+\.(?:com|ng|org|net|gov|edu|io|co|me|ly|tv|app|site|online|xyz|info|biz|to|tech|news|cc|gg|be)\b(?:\/[^\s]*)?)/i;
+  return urlRegex.test(str);
+}
+
 // Multi-provider AI text generator supporting Groq, OpenAI, and Gemini
 async function generateAiText({
   provider,
@@ -144,6 +151,12 @@ Deno.serve(async (req: Request) => {
 
     if (!inst) {
       return new Response(JSON.stringify({ received: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    const instPhone = (inst.phone_number || "").replace(/\D/g, "");
+    const senderClean = (senderData?.sender || "").replace(/\D/g, "");
+    if (senderData?.fromMe === true || (instPhone && senderClean && (instPhone === senderClean || senderClean.endsWith(instPhone)))) {
+      return new Response(JSON.stringify({ received: true, ignored: "message sent by bot itself" }), { headers: { "Content-Type": "application/json" } });
     }
 
     const stateId = inst.state_id;
@@ -265,7 +278,7 @@ Deno.serve(async (req: Request) => {
 
       if (messageData?.typeMessage === "textMessage") {
         text = messageData.textMessageData?.textMessage || "";
-      } else if (messageData?.typeMessage === "extendedTextMessage") {
+      } else if (messageData?.typeMessage === "extendedTextMessage" || messageData?.typeMessage === "quotedMessage") {
         text = messageData.extendedTextMessageData?.text || "";
       } else if (messageData?.typeMessage === "imageMessage") {
         messageType = "image";
@@ -273,176 +286,204 @@ Deno.serve(async (req: Request) => {
         mediaUrl = messageData.imageMessageData?.downloadUrl || null;
       }
 
+      const quotedText = messageData?.quotedMessage?.textMessage || messageData?.quotedMessage?.caption || "";
+      const queryText = quotedText ? `${text} (Replying to: "${quotedText}")` : text;
+
       if (monitor && text) {
+        const extData = messageData?.extendedTextMessageData;
+        const hasLink = containsUrl(text) || containsUrl(quotedText) || Boolean(extData?.matchedText || extData?.canonicalUrl);
+
         const apiKey = stateCfg?.ai_api_key || Deno.env.get("GROQ_API_KEY") || Deno.env.get("VITE_GOOGLE_AI_KEY") || Deno.env.get("GEMINI_API_KEY") || "";
         const aiProvider = stateCfg?.ai_provider || "groq";
         const aiModel = stateCfg?.ai_model || (aiProvider === "groq" ? "llama-3.3-70b-versatile" : "gemini-2.0-flash");
 
-        let aiCategory = "neutral";
+        let aiCategory = hasLink ? "link_shared" : "neutral";
         let aiSummary = "";
         let shouldRespond = false;
         let aiReplyText = "";
 
         const responseFreq = Number(stateCfg?.group_ai_response_frequency ?? 3);
 
-        if (apiKey && text.trim().length > 3) {
-          try {
-            // Step A: Categorize group message with strict defense criteria
-            const candidateInfo = stateCfg?.group_ai_system_prompt || "ADC Candidate Gbadebo Rhodes-Vivour (GRV)";
-            const catPrompt = `You are an AI political defense detector monitoring a WhatsApp community group.
-Candidate information:
-"${candidateInfo}"
+        if (hasLink) {
+          console.log(`[Group AI] Link detected in message from ${senderPhone} in group ${chatId}. Strictly ignoring link per policy.`);
+        }
 
-Message under review:
-"${text}"
+        // Dynamic low-token pre-filter: Check if message relates to candidate/campaign context for this state
+        let isRelevant = false;
+        const quotedParticipant = (messageData?.extendedTextMessageData?.participant || "").replace(/\D/g, "");
+        const isQuotingBot = Boolean(instPhone && quotedParticipant.length > 5 && (quotedParticipant === instPhone || quotedParticipant.endsWith(instPhone) || instPhone.endsWith(quotedParticipant)));
 
-CRITICAL RULES:
-- The AI must NEVER be intrusive or interrupt casual group conversations, general chatter, greetings, or meta questions about the chat/bot.
-- The AI is STRICTLY a quiet defender. It should ONLY intervene if BOTH conditions are met:
-  1. The candidate is EXPLICITLY mentioned by name (e.g. candidate name, initials, or alias) or directly and unmistakably talked about in THIS message.
-  2. AND the message contains an attack, smear, accusation, misinformation, or a direct inquiry/question explicitly asking about the candidate or their specific policies.
+        if (!hasLink) {
+          if (isQuotingBot) {
+            isRelevant = true;
+          } else if (apiKey && queryText.trim().length > 2) {
+            try {
+              const candidateInfo = stateCfg?.group_ai_system_prompt || "ADC Candidate Gbadebo Rhodes-Vivour (GRV)";
+              const checkPrompt = `Candidate & Campaign Context: ${candidateInfo.slice(0, 300)}
+WhatsApp message: "${queryText.slice(0, 400)}"
 
-If the message is general talk, about the bot/app itself (e.g., "can it initiate conversation", "can it share posters"), general greetings, everyday chatter (e.g., "We love lagos"), or does NOT explicitly mention or directly discuss the candidate, "candidateMentioned" MUST be false and "requiresDefense" MUST be false.
+Does this message mention, ask about, criticize, or relate to the candidate or their campaign/party?
+Reply with only "YES" or "NO".`;
 
-Categories:
-- "attack": direct attack, misinformation, opponent smear, or hostile accusation against the candidate
-- "question": direct inquiry explicitly asking about the candidate's manifesto, credentials, or policies
-- "negative": general criticism or dissatisfaction with unrelated governance or everyday issues
-- "positive": expression of support or encouragement
-- "neutral": general chatter, greeting, questions about the bot/group, or unrelated topic
+              const checkRes = await generateAiText({
+                provider: aiProvider,
+                model: aiModel,
+                apiKey,
+                systemPrompt: "You are a fast relevance classifier. Answer only with YES or NO.",
+                userPrompt: checkPrompt,
+                jsonMode: false
+              });
 
-Respond ONLY with valid JSON in this schema:
-{
-  "candidateMentioned": boolean,
-  "category": "positive" | "negative" | "attack" | "question" | "neutral",
-  "summary": "one line summary",
-  "requiresDefense": boolean
-}`;
+              isRelevant = checkRes.toUpperCase().includes("YES");
+            } catch (chkErr) {
+              console.warn("Pre-filter check error, defaulting to true:", chkErr);
+              isRelevant = true;
+            }
+          }
+        }
 
-            const catResult = await generateAiText({
-              provider: aiProvider,
-              model: aiModel,
-              apiKey,
-              systemPrompt: "You are an AI political defense monitor. Only trigger defense when the candidate is directly mentioned and criticized or questioned. Always output strictly valid JSON.",
-              userPrompt: catPrompt,
-              jsonMode: true
-            });
+        if (!hasLink && apiKey && isRelevant && monitor.ai_enabled && responseFreq > 0) {
+          const lastResponseAt = monitor.last_ai_response_at ? new Date(monitor.last_ai_response_at).getTime() : 0;
+          const inCooldown = (Date.now() - lastResponseAt) < 10000; // 10s cooldown
 
-            const parsed = parseJsonSafe(catResult);
-            aiCategory = parsed.category || "neutral";
-            aiSummary = parsed.summary || "";
-            const candidateMentioned = Boolean(parsed.candidateMentioned);
-            // Strict defense check: candidate MUST be directly mentioned/talked about in this last message
-            const requiresDefense = Boolean(candidateMentioned && (parsed.requiresDefense || aiCategory === "attack"));
+          if (inCooldown) {
+            console.log(`Skipping reply for group ${chatId}: Cooldown active (< 10s since last reply)`);
+          } else if ((monitor.ai_responses_today || 0) < responseFreq * 12) {
+            try {
+              aiCategory = "candidate_inquiry";
+              aiSummary = "";
 
-            console.log(`Classified message: category="${aiCategory}", candidateMentioned=${candidateMentioned}, requiresDefense=${requiresDefense}, ai_enabled=${monitor.ai_enabled}`);
+              // Retrieve Candidate Knowledge Context
+              let contextText = "";
 
-            // Step B: If requires defense AND frequency > 0 AND monitor.ai_enabled
-            if (responseFreq > 0 && monitor.ai_enabled && requiresDefense) {
-              if ((monitor.ai_responses_today || 0) < responseFreq * 12) {
-                // Retrieve Candidate Knowledge Context
-                let contextText = "";
-
-                // Attempt vector embedding if Gemini key is active
-                if (aiProvider === "gemini") {
-                  try {
-                    const embRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${apiKey}`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        model: "models/text-embedding-004",
-                        content: { parts: [{ text: text }] }
-                      })
-                    });
-
-                    if (embRes.ok) {
-                      const embData = await embRes.json();
-                      const queryVec = embData.embedding?.values;
-                      if (queryVec) {
-                        const { data: matched } = await supabase.rpc("match_knowledge_base", {
-                          p_state_id: stateId,
-                          p_query_embedding: JSON.stringify(queryVec),
-                          p_match_count: 3,
-                          p_match_threshold: 0.5
-                        });
-                        if (matched && matched.length > 0) {
-                          contextText = matched.map((m: any) => `[${m.title}]: ${m.content}`).join("\n\n");
-                        }
-                      }
-                    }
-                  } catch (vErr) {
-                    console.warn("Vector search error (falling back to direct KB):", vErr);
+              // Attempt vector search if Gemini or OpenAI key is active
+              try {
+                let queryVec: number[] | null = null;
+                if (aiProvider === "openai" && apiKey) {
+                  const embRes = await fetch("https://api.openai.com/v1/embeddings", {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      "Authorization": `Bearer ${apiKey}`
+                    },
+                    body: JSON.stringify({
+                      model: "text-embedding-3-small",
+                      input: queryText.slice(0, 8000),
+                      dimensions: 768
+                    })
+                  });
+                  if (embRes.ok) {
+                    const embData = await embRes.json();
+                    queryVec = embData.data?.[0]?.embedding || null;
+                  }
+                } else if (apiKey) {
+                  // Default to Gemini gemini-embedding-2 (768 dimensions)
+                  const embRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key=${apiKey}`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      model: "models/gemini-embedding-2",
+                      content: { parts: [{ text: queryText.slice(0, 8000) }] },
+                      outputDimensionality: 768
+                    })
+                  });
+                  if (embRes.ok) {
+                    const embData = await embRes.json();
+                    queryVec = embData.embedding?.values || null;
                   }
                 }
 
-                // Fallback / direct knowledge retrieval for Groq / OpenAI or when vector matches are empty
-                if (!contextText) {
-                  const { data: directKbs } = await supabase
-                    .from("whatsapp_knowledge_base")
-                    .select("title, content")
-                    .eq("state_id", stateId)
-                    .limit(5);
-
-                  if (directKbs && directKbs.length > 0) {
-                    contextText = directKbs.map((k: any) => `[${k.title}]: ${k.content}`).join("\n\n");
+                if (queryVec) {
+                  const { data: matched } = await supabase.rpc("match_knowledge_base", {
+                    p_state_id: stateId,
+                    p_query_embedding: queryVec,
+                    p_match_count: 5,
+                    p_match_threshold: 0.45
+                  });
+                  if (matched && matched.length > 0) {
+                    contextText = matched.map((m: any) => `[${m.title}]: ${m.content}`).join("\n\n");
                   }
                 }
+              } catch (vErr) {
+                console.warn("Vector search error (falling back to direct KB):", vErr);
+              }
 
-                // Generate defense response using candidate knowledge
-                const systemPrompt = stateCfg?.group_ai_system_prompt || "You are a calm, respectful community supporter defending the candidate factually and peacefully.";
-                const respPrompt = `Candidate Knowledge & Facts:
+              // Fallback / direct knowledge retrieval when vector matches are empty
+              if (!contextText) {
+                const { data: directKbs } = await supabase
+                  .from("whatsapp_knowledge_base")
+                  .select("title, content")
+                  .eq("state_id", stateId)
+                  .limit(5);
+
+                if (directKbs && directKbs.length > 0) {
+                  contextText = directKbs.map((k: any) => `[${k.title}]: ${k.content}`).join("\n\n");
+                }
+              }
+
+              // Generate defense response using candidate knowledge (single AI call)
+              const systemPrompt = stateCfg?.group_ai_system_prompt || "You are a calm, respectful community supporter defending the candidate factually and peacefully.";
+              const respPrompt = `Candidate Knowledge & Facts:
 ${contextText || "ADC Core Commitments: Grassroots welfare, infrastructure transparency, healthcare revitalization, and youth enterprise support."}
 
 A participant in the WhatsApp group stated:
-"${text}"
+"${queryText}"
 
 STRICT ANTI-SLOP & WHATSAPP VOICE RULES:
 - Write strictly like a real person typing a fast message on WhatsApp. Keep it plain, natural, and grounded.
 - Maximum 1 to 2 short sentences (strictly under 35 words total).
+- BANNED: Never acknowledge, comment on, thank the sender for, or reply to links, web URLs, or invite links.
 - BANNED: Never use em dashes (—), bullet points, markdown bolding, or corporate PR buzzwords.
-- BANNED WORDS: "delve", "testament", "beacon", "foster", "paramount", "pivotal", "revolutionize", "tapestry", "comprehensive", "rest assured", "furthermore", "in conclusion", "it is worth noting".
+- BANNED WORDS: "delve", "testament", "beacon", "foster", "paramount", "pivotal", "revolutionize", "tapestry", "comprehensive", "rest assured", "furthermore", "in conclusion", "it is worth noting", "thank you for sharing".
 - Do NOT dump campaign slogans or manifesto bullet lists.
 - Address ONLY the specific claim or question raised factually and politely.`;
 
-                const rawAiReply = await generateAiText({
-                  provider: aiProvider,
-                  model: aiModel,
-                  apiKey,
-                  systemPrompt,
-                  userPrompt: respPrompt,
-                  jsonMode: false
+              const rawAiReply = await generateAiText({
+                provider: aiProvider,
+                model: aiModel,
+                apiKey,
+                systemPrompt,
+                userPrompt: respPrompt,
+                jsonMode: false
+              });
+
+              aiReplyText = cleanAiReply(rawAiReply);
+
+              if (aiReplyText) {
+                shouldRespond = true;
+
+                // Variable delay between 10 to 30 seconds before replying (natural human timing)
+                const delayMs = Math.floor(Math.random() * (30000 - 10000 + 1)) + 10000;
+                console.log(`[Group AI] Delaying ${(delayMs / 1000).toFixed(1)}s before dispatching reply to ${chatId}...`);
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+
+                // Send response to WhatsApp Group via Green API
+                const sendRes = await fetch(`${inst.api_url}waInstance${inst.id_instance}/sendMessage/${inst.api_token_instance}`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    chatId,
+                    message: aiReplyText,
+                    quotedMessageId: idMessage
+                  })
                 });
 
-                aiReplyText = cleanAiReply(rawAiReply);
+                console.log(`Dispatched AI reply to group ${chatId} after ${(delayMs / 1000).toFixed(1)}s delay, status=${sendRes.status}`);
 
-                if (aiReplyText) {
-                  shouldRespond = true;
-
-                  // Send response to WhatsApp Group via Green API
-                  const sendRes = await fetch(`${inst.api_url}waInstance${inst.id_instance}/sendMessage/${inst.api_token_instance}`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      chatId,
-                      message: aiReplyText,
-                      quotedMessageId: idMessage
-                    })
-                  });
-
-                  console.log(`Dispatched AI reply to group ${chatId}, status=${sendRes.status}`);
-
-                  // Increment today's AI responses
-                  await supabase
-                    .from("whatsapp_group_monitors")
-                    .update({ ai_responses_today: (monitor.ai_responses_today || 0) + 1 })
-                    .eq("id", monitor.id);
-                }
-              } else {
-                console.log("Daily response limit reached for group", chatId);
+                // Increment today's AI responses and stamp last_ai_response_at
+                await supabase
+                  .from("whatsapp_group_monitors")
+                  .update({ 
+                    ai_responses_today: (monitor.ai_responses_today || 0) + 1,
+                    last_ai_response_at: new Date().toISOString()
+                  })
+                  .eq("id", monitor.id);
               }
+            } catch (aiErr) {
+              console.error("AI group processing error:", aiErr);
             }
-          } catch (aiErr) {
-            console.error("AI group processing error:", aiErr);
+          } else {
+            console.log("Daily response limit reached for group", chatId);
           }
         }
 
@@ -469,13 +510,21 @@ STRICT ANTI-SLOP & WHATSAPP VOICE RULES:
       let text = "";
       if (messageData?.typeMessage === "textMessage") {
         text = messageData.textMessageData?.textMessage || "";
-      } else if (messageData?.typeMessage === "extendedTextMessage") {
+      } else if (messageData?.typeMessage === "extendedTextMessage" || messageData?.typeMessage === "quotedMessage") {
         text = messageData.extendedTextMessageData?.text || "";
       } else if (messageData?.typeMessage === "imageMessage") {
         text = messageData.imageMessageData?.caption || "";
       }
 
-      if (text.trim().length > 1) {
+      const quotedText = messageData?.quotedMessage?.textMessage || messageData?.quotedMessage?.caption || "";
+      const queryText = quotedText ? `${text} (Replying to: "${quotedText}")` : text;
+
+      const extData = messageData?.extendedTextMessageData;
+      const hasLink = containsUrl(text) || containsUrl(quotedText) || Boolean(extData?.matchedText || extData?.canonicalUrl);
+
+      if (hasLink) {
+        console.log(`[Direct AI] Link detected from ${chatId}. Skipping AI response.`);
+      } else if (text.trim().length > 1) {
         const apiKey = stateCfg?.ai_api_key || Deno.env.get("GROQ_API_KEY") || Deno.env.get("VITE_GOOGLE_AI_KEY") || Deno.env.get("GEMINI_API_KEY") || "";
         const aiProvider = stateCfg?.ai_provider || "groq";
         const aiModel = stateCfg?.ai_model || (aiProvider === "groq" ? "llama-3.3-70b-versatile" : "gemini-2.0-flash");
@@ -499,7 +548,7 @@ STRICT ANTI-SLOP & WHATSAPP VOICE RULES:
 ${contextText || "ADC Core Commitments: Grassroots welfare, infrastructure transparency, healthcare revitalization, and youth enterprise support."}
 
 A voter sent this direct WhatsApp message:
-"${text}"
+"${queryText}"
 
 STRICT ANTI-SLOP RULES:
 - Write in natural, polite everyday WhatsApp conversational style (maximum 2-3 short sentences).
@@ -519,6 +568,11 @@ STRICT ANTI-SLOP RULES:
             const replyText = cleanAiReply(rawReplyText);
 
             if (replyText) {
+              // Variable delay between 10 and 30 seconds before replying
+              const delayMs = Math.floor(Math.random() * (30000 - 10000 + 1)) + 10000;
+              console.log(`[Direct AI] Delaying ${(delayMs / 1000).toFixed(1)}s before replying to ${chatId}...`);
+              await new Promise(resolve => setTimeout(resolve, delayMs));
+
               const directSendRes = await fetch(`${inst.api_url}waInstance${inst.id_instance}/sendMessage/${inst.api_token_instance}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -528,7 +582,7 @@ STRICT ANTI-SLOP RULES:
                   quotedMessageId: idMessage
                 })
               });
-              console.log(`Dispatched direct 1-on-1 AI reply to ${chatId}, status=${directSendRes.status}`);
+              console.log(`Dispatched direct 1-on-1 AI reply to ${chatId} after ${(delayMs / 1000).toFixed(1)}s delay, status=${directSendRes.status}`);
             }
           } catch (directAiErr) {
             console.error("Direct 1-on-1 chat AI error:", directAiErr);

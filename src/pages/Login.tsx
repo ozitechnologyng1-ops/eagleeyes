@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext';
 import { Shield, Phone, Lock, ChevronRight, ArrowLeft, Eye, EyeOff, CheckCircle2, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getFriendlyErrorMessage } from '../lib/utils';
+import Rvtech from "../assets/RVCTECH.png";
 
 interface PasswordRule {
   label: string;
@@ -50,36 +51,41 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative overflow-hidden">
+    <div className="min-h-screen bg-gray-50 flex flex-col justify-between py-4 sm:py-8 sm:px-6 lg:px-8 relative overflow-hidden">
       {/* Background decoration */}
-      <div className="absolute top-0 left-0 w-full h-64 bg-[#004d25] rounded-b-[50%] scale-x-150 transform -translate-y-24 z-0" />
+      <div className="absolute top-0 left-0 w-full h-80 sm:h-96 bg-[#004d25] rounded-b-[40%] scale-x-150 transform -translate-y-16 z-0 shadow-lg" />
 
-      {/* Back Button */}
-      <button
-        onClick={() => navigate('/')}
-        className="absolute top-6 left-6 sm:top-8 sm:left-8 z-20 flex items-center space-x-2 text-white/90 hover:text-white bg-black/10 hover:bg-black/20 px-4 py-2 rounded-full backdrop-blur-sm transition-all duration-300 cursor-pointer"
-      >
-        <ArrowLeft className="w-5 h-5" />
-        <span className="font-medium text-sm">Back to Home</span>
-      </button>
-
-      <div className="sm:mx-auto sm:w-full sm:max-w-md relative z-10">
-        <div className="flex justify-center">
-          <div className="w-20 h-20 bg-[#d4af37] rounded-2xl flex items-center justify-center shadow-xl transform rotate-12">
-            <Shield className="text-[#004d25] w-12 h-12 -rotate-12" />
-          </div>
-        </div>
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900 tracking-tight">
-          EagleEye 2027
-        </h2>
-        <p className="mt-2 text-center text-sm text-gray-600">
-          Secure Election Management System
-        </p>
+      {/* Top Header Bar */}
+      <div className="w-full max-w-md mx-auto px-4 sm:px-0 pt-2 pb-2 relative z-20 flex items-center justify-start">
+        <button
+          onClick={() => navigate('/')}
+          className="inline-flex items-center gap-1.5 text-white/90 hover:text-white bg-white/10 hover:bg-white/20 active:scale-95 px-3.5 py-1.5 rounded-full backdrop-blur-md transition-all text-xs font-semibold cursor-pointer border border-white/20 shadow-xs"
+        >
+          <ArrowLeft size={14} />
+          <span>Back to Home</span>
+        </button>
       </div>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md relative z-10">
-        <div className="bg-white py-8 px-4 shadow-2xl sm:rounded-xl sm:px-10 border border-gray-100">
-          <form className="space-y-6" onSubmit={handleLogin}>
+      <div className="flex-1 flex flex-col justify-center my-auto relative z-10 pt-2 pb-4">
+        {/* Logo & Title */}
+        <div className="sm:mx-auto sm:w-full sm:max-w-md">
+          <div className="flex justify-center">
+            <div className="w-18 h-18 sm:w-20 sm:h-20 bg-[#d4af37] rounded-2xl flex items-center justify-center shadow-xl transform rotate-12">
+              <Shield className="text-[#004d25] w-10 h-10 sm:w-12 sm:h-12 -rotate-12" />
+            </div>
+          </div>
+          <h2 className="mt-5 text-center text-2xl sm:text-3xl font-extrabold text-white tracking-tight drop-shadow-sm">
+            EagleEye 2027
+          </h2>
+          <p className="mt-1 text-center text-xs sm:text-sm text-green-100/90 font-medium">
+            Secure Election Management System
+          </p>
+        </div>
+
+        {/* Login Card */}
+        <div className="mt-6 sm:mt-8 mx-4 sm:mx-auto sm:w-full sm:max-w-md">
+          <div className="bg-white py-8 px-6 sm:px-10 shadow-xl rounded-2xl border border-gray-100">
+            <form className="space-y-6" onSubmit={handleLogin}>
 
             {/* Phone */}
             <div>
@@ -135,30 +141,6 @@ export default function Login() {
                   {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                 </button>
               </div>
-
-              {/* TODO: re-enable live strength checklist when enforcing password rules */}
-              {/* {passwordTouched && (
-                <ul className="mt-3 space-y-1.5">
-                  {PASSWORD_RULES.map((rule, i) => {
-                    const met = ruleResults[i];
-                    return (
-                      <li
-                        key={rule.label}
-                        className={`flex items-center gap-2 text-xs font-medium transition-colors duration-200 ${
-                          met ? 'text-emerald-600' : 'text-gray-400'
-                        }`}
-                      >
-                        {met ? (
-                          <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-500" />
-                        ) : (
-                          <XCircle className="w-4 h-4 flex-shrink-0 text-gray-300" />
-                        )}
-                        {rule.label}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )} */}
             </div>
 
             {/* Submit */}
@@ -167,7 +149,7 @@ export default function Login() {
                 id="login-submit-btn"
                 type="submit"
                 disabled={isLoading}
-                className="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-[#004d25] bg-[#d4af37] hover:bg-[#c4a030] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#d4af37] transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                className="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-[#004d25] bg-[#d4af37] hover:bg-[#c4a030] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#d4af37] transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer active:scale-98"
               >
                 {isLoading ? (
                   <div className="w-5 h-5 border-2 border-[#004d25] border-t-transparent rounded-full animate-spin" />
@@ -181,6 +163,21 @@ export default function Login() {
           </form>
         </div>
       </div>
+      </div>
+
+      {/* Footer from mainpage */}
+      <footer className="relative z-10 w-full pt-2 pb-1 flex justify-center items-center pointer-events-none">
+        <div className="flex flex-row items-center justify-center gap-0 px-1 -mb-6 sm:-mb-8">
+          <p className="italic text-xs sm:text-sm text-yellow-600 whitespace-nowrap">
+            Designed & Powered By
+          </p>
+          <img
+            src={Rvtech}
+            alt="RVTech"
+            className="-ml-6 h-32 sm:h-36 object-contain filter brightness-[.15] sepia-[0.3] saturate-[3.5] hue-rotate-[25deg] contrast-[.1] drop-shadow-[0_0_8px_rgba(212,175,55,0.35)]"
+          />
+        </div>
+      </footer>
     </div>
   );
 }

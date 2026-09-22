@@ -164,6 +164,7 @@ interface AppState {
   setVoterWardFilter: (wardId: number | null) => void;
   voterPuFilter: number | null;
   setVoterPuFilter: (puId: number | null) => void;
+  refreshDeploymentStats?: () => Promise<void>;
 }
 
 const AppContext = createContext<AppState | undefined>(undefined);
@@ -401,37 +402,65 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const depStats: DeploymentStats = {};
 
       // ─── Query Helpers ──────────────────────────────────────────────
-      const getCoverage = async (sourceTable: string, agentRole: Role, filterKey: string, filterVal: any, distinctCol: string, agentFilterKeyOverride?: string) => {
-        const { count: total } = await supabase.from(sourceTable).select('*', { count: 'exact', head: true }).eq(filterKey, filterVal);
-        const agentKey = agentFilterKeyOverride || filterKey;
-        const { data: cov } = await supabase.from('agents').select(distinctCol).eq(agentKey, filterVal).not(distinctCol, 'is', null);
-        const unique = new Set(cov?.map(d => d[distinctCol]));
+      const getCoverage = async (
+        sourceTable: string, 
+        agentRole: Role, 
+        filterKey: string | null, 
+        filterVal: any, 
+        distinctCol: string, 
+        agentFilterKeyOverride?: string | null
+      ) => {
+        let tableQuery = supabase.from(sourceTable).select('*', { count: 'exact', head: true });
+        if (filterKey && filterVal !== undefined && filterVal !== null) {
+          tableQuery = tableQuery.eq(filterKey, filterVal);
+        }
+        const { count: total } = await tableQuery;
+
+        const agentKey = agentFilterKeyOverride !== undefined ? agentFilterKeyOverride : filterKey;
+        let agentQuery = supabase.from('agents')
+          .select(`${distinctCol}, status`)
+          .eq('role', agentRole)
+          .not(distinctCol, 'is', null);
+
+        if (agentKey && filterVal !== undefined && filterVal !== null) {
+          agentQuery = agentQuery.eq(agentKey, filterVal);
+        }
+
+        const { data: cov } = await agentQuery;
+        const validAgents = (cov || []).filter((a: any) => {
+          const s = (a.status || 'active').toLowerCase();
+          return s !== 'revoked';
+        });
+        const unique = new Set(validAgents.map((d: any) => d[distinctCol]));
         return { covered: unique.size, total: total || 0 };
       };
 
-      // ─── Scoped Logic ──────────────────────────────────────────────
-      if (user.role === 'national_admin') {
-        const { count: sTotal } = await supabase.from('states').select('*', { count: 'exact', head: true });
-        const { data: sCov } = await supabase.from('agents').select('state_id').not('state_id', 'is', null);
-        depStats.state = { covered: new Set(sCov?.map(d => d.state_id)).size, total: sTotal || 0 };
-      }
+      const wardId = user.wardId || (user.locationId?.startsWith('ward_') ? parseInt(user.locationId.replace('ward_', '')) : null);
+      const lgaId = user.lgaId || (user.locationId?.startsWith('lga_') ? parseInt(user.locationId.replace('lga_', '')) : null);
+      const stateId = user.stateId || (user.locationId?.startsWith('state_') ? parseInt(user.locationId.replace('state_', '')) : null);
 
-      if (user.stateId) {
-        if (roleHierarchy[user.role] >= roleHierarchy['state_admin']) {
-          depStats.lga = await getCoverage('local_governments', 'lga_admin', 'state_id', user.stateId, 'local_governments_id');
+      // ─── Scoped Logic ──────────────────────────────────────────────
+      if (user.role === 'ward_admin') {
+        // For ward admin, only coverage for PU will be shown
+        if (wardId) {
+          depStats.pu = await getCoverage('polling_units', 'pu_agent', 'ward_id', wardId, 'polling_units_id', 'wards_id');
         }
-        if (roleHierarchy[user.role] >= roleHierarchy['state_admin'] || user.lgaId) {
-          const filterKey = user.lgaId ? 'localgovernment_id' : 'state_id';
-          const agentKey = user.lgaId ? 'local_governments_id' : 'state_id';
-          const filterVal = user.lgaId || user.stateId;
-          depStats.ward = await getCoverage('wards', 'ward_admin', filterKey, filterVal, 'wards_id', agentKey);
+      } else if (user.role === 'lga_admin') {
+        if (lgaId) {
+          depStats.ward = await getCoverage('wards', 'ward_admin', 'localgovernment_id', lgaId, 'wards_id', 'local_governments_id');
+          depStats.pu = await getCoverage('polling_units', 'pu_agent', 'localgovernment_id', lgaId, 'polling_units_id', 'local_governments_id');
         }
-        if (roleHierarchy[user.role] >= roleHierarchy['state_admin'] || user.wardId || user.lgaId) {
-          const filterKey = user.wardId ? 'ward_id' : user.lgaId ? 'localgovernment_id' : 'state_id';
-          const agentKey = user.wardId ? 'wards_id' : user.lgaId ? 'local_governments_id' : 'state_id';
-          const filterVal = user.wardId || user.lgaId || user.stateId;
-          depStats.pu = await getCoverage('polling_units', 'pu_agent', filterKey, filterVal, 'polling_units_id', agentKey);
+      } else if (user.role === 'state_admin') {
+        if (stateId) {
+          depStats.lga = await getCoverage('local_governments', 'lga_admin', 'state_id', stateId, 'local_governments_id', 'state_id');
+          depStats.ward = await getCoverage('wards', 'ward_admin', 'state_id', stateId, 'wards_id', 'state_id');
+          depStats.pu = await getCoverage('polling_units', 'pu_agent', 'state_id', stateId, 'polling_units_id', 'state_id');
         }
+      } else if (user.role === 'national_admin') {
+        depStats.state = await getCoverage('states', 'state_admin', null, null, 'state_id', null);
+        depStats.lga = await getCoverage('local_governments', 'lga_admin', null, null, 'local_governments_id', null);
+        depStats.ward = await getCoverage('wards', 'ward_admin', null, null, 'wards_id', null);
+        depStats.pu = await getCoverage('polling_units', 'pu_agent', null, null, 'polling_units_id', null);
       }
 
       setStats(prev => ({ ...prev, deployment: depStats }));
@@ -1212,6 +1241,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (Object.keys(payload).length > 0) {
         const { error } = await supabase.from('agents').update(payload).eq('id', id);
         if (error) throw new Error(getFriendlyErrorMessage(error));
+        await refreshDeploymentStats();
+        await refreshAgentStats();
       }
     } catch (err) {
       console.error('Failed to update agent in db', err);
@@ -1225,6 +1256,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const dbStatus = status.charAt(0).toUpperCase() + status.slice(1);
       const { error } = await supabase.from('agents').update({ status: dbStatus }).eq('id', id);
       if (error) throw error;
+      await refreshDeploymentStats();
+      await refreshAgentStats();
     } catch (err) {
       console.error('Failed to update agent status in db', err);
       throw err;
@@ -1262,7 +1295,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       votersPage, isLoadingVoters, fetchVotersPage,
       voterLgaFilter, setVoterLgaFilter, voterWardFilter, setVoterWardFilter, voterPuFilter, setVoterPuFilter,
       login, logout, updateUser, updateVoterStatus, updateVoterDetails, logVoterContact, addVoterNote, submitResult, toggleMockMode, endAllMockElections, setActiveElectionGroup,
-      addAgent, updateAgent, updateAgentStatus, addLocation, updateLocation, getDescendantLocations, analyzeResultImage
+      addAgent, updateAgent, updateAgentStatus, addLocation, updateLocation, getDescendantLocations, analyzeResultImage, refreshDeploymentStats
     }}>
       {children}
     </AppContext.Provider>

@@ -8,7 +8,7 @@ import toast from 'react-hot-toast';
 type Step = 'select_pu' | 'select_election' | 'camera' | 'scanning' | 'verify' | 'success';
 
 export default function ResultCapture() {
-  const { user, locations, submitResult, isMockMode, toggleMockMode, activeElectionGroup, analyzeResultImage } = useApp();
+  const { user, locations, submitResult, activeElectionGroup, analyzeResultImage } = useApp();
   const navigate = useNavigate();
   
   // Skip PU selection if user is a pu_agent
@@ -187,21 +187,6 @@ export default function ResultCapture() {
       <div className="mb-6">
         <div className="flex justify-between items-center">
           <h1 className="text-2xl font-bold text-gray-900">Result Capture</h1>
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-gray-700">Mock Mode</span>
-            <button 
-              onClick={toggleMockMode}
-              className={cn(
-                "w-11 h-6 rounded-full transition-colors relative",
-                isMockMode ? "bg-[#004d25]" : "bg-gray-300"
-              )}
-            >
-              <span className={cn(
-                "absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform",
-                isMockMode ? "translate-x-5" : "translate-x-0"
-              )} />
-            </button>
-          </div>
         </div>
         <div className="flex items-center gap-2 mt-2 text-sm font-medium text-gray-500 overflow-x-auto whitespace-nowrap pb-2">
           {user?.role !== 'pu_agent' && (
