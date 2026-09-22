@@ -6,8 +6,6 @@ import { supabase } from './supabase';
  * Keeps the live secret key protected on Supabase backend.
  */
 
-const PAYSTACK_BASE = 'https://api.paystack.co';
-const LOCAL_SECRET_KEY = import.meta.env.VITE_PAYSTACK_SECRET_KEY as string | undefined;
 
 export interface PaystackBank {
   id: number;
@@ -52,28 +50,7 @@ export async function fetchBanks(): Promise<PaystackBank[]> {
       return list;
     }
   } catch (fnErr) {
-    console.warn('Edge function paystack banks call failed, checking fallback...', fnErr);
-  }
-
-  // 2. Local fallback if secret key is present in env
-  if (LOCAL_SECRET_KEY) {
-    const res = await fetch(`${PAYSTACK_BASE}/bank?currency=NGN&perPage=300`, {
-      headers: {
-        Authorization: `Bearer ${LOCAL_SECRET_KEY}`,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    if (res.ok) {
-      const json = await res.json();
-      if (json.status) {
-        const list = (json.data as PaystackBank[])
-          .filter(b => b.active)
-          .sort((a, b) => a.name.localeCompare(b.name));
-        cachedBanks = list;
-        return list;
-      }
-    }
+    console.error('Edge function paystack banks call failed:', fnErr);
   }
 
   throw new Error('Could not load banks from Paystack. Please ensure PAYSTACK_SECRET_KEY is configured in Supabase Edge Functions.');
@@ -92,7 +69,7 @@ export async function verifyAccount(
     throw new Error('Account number must be exactly 10 digits');
   }
 
-  // 1. Try Supabase Edge Function
+  // Route through Supabase Edge Function
   try {
     const { data, error } = await supabase.functions.invoke('paystack', {
       body: { action: 'resolve', accountNumber: cleanNumber, bankCode },
@@ -106,30 +83,10 @@ export async function verifyAccount(
       throw new Error(data.message);
     }
   } catch (fnErr: any) {
-    // If not a missing key or server unreachable, rethrow
-    if (fnErr?.message && !fnErr.message.includes('secret is not configured')) {
+    console.error('Paystack account verification error:', fnErr);
+    if (fnErr?.message) {
       throw fnErr;
     }
-  }
-
-  // 2. Local fallback if secret key is present in env
-  if (LOCAL_SECRET_KEY) {
-    const res = await fetch(
-      `${PAYSTACK_BASE}/bank/resolve?account_number=${encodeURIComponent(cleanNumber)}&bank_code=${encodeURIComponent(bankCode)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${LOCAL_SECRET_KEY}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-
-    const json = await res.json().catch(() => null);
-    if (!res.ok || !json?.status) {
-      throw new Error(json?.message || 'Could not verify account. Please check the bank and account number.');
-    }
-
-    return json.data as PaystackAccountVerification;
   }
 
   throw new Error('Account verification service is unavailable. Please check Supabase secrets configuration.');
