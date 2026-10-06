@@ -1,3 +1,5 @@
+import jalBlackLogo from '../assets/JAL-black.png';
+
 /**
  * branding.ts - Dynamic Multi-Tenant Branding Engine
  *
@@ -25,7 +27,7 @@ const BRANDS: Record<string, BrandConfig> = {
     appName: 'Ogun 2027',
     subtitle: 'Ogun ADC Secure Election Management System',
     fullTitle: 'Ogun 2027 | Ogun ADC Secure Election Management System',
-    logoUrl: '/brands/ogun-jal-2027.png',
+    logoUrl: jalBlackLogo,
     shortCode: 'OG',
     metaDescription: 'Ogun ADC High-Fidelity Multi-Tiered Election Management System for real-time result collation and voter canvassing.'
   },

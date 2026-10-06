@@ -62,13 +62,12 @@ export default function Login() {
         <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
           <div className="flex justify-center items-center">
             {brand.logoUrl ? (
-              <div className="bg-white p-3 rounded-2xl shadow-xl border border-white/40 max-w-[260px] sm:max-w-[300px]">
-                <img 
-                  src={brand.logoUrl} 
-                  alt={brand.appName} 
-                  className="h-14 sm:h-16 w-auto object-contain mx-auto"
-                />
-              </div>
+              <img
+                src={brand.logoUrl}
+                alt={brand.appName}
+                className="h-16 sm:h-20 w-auto object-contain"
+                style={{ filter: 'brightness(0) invert(1)', maxWidth: '180px' }}
+              />
             ) : (
               <div className="w-18 h-18 sm:w-20 sm:h-20 bg-[#d4af37] rounded-2xl flex items-center justify-center shadow-xl transform rotate-12">
                 <Shield className="text-[#004d25] w-10 h-10 sm:w-12 sm:h-12 -rotate-12" />

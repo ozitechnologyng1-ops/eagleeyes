@@ -62,9 +62,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="p-4 sm:p-5 flex items-center justify-between border-b border-[#006331] shrink-0">
         <div className="flex items-center gap-3">
           {brand.logoUrl ? (
-            <div className="bg-white px-2 py-1 rounded-lg flex items-center justify-center max-w-[120px] shadow-inner">
-              <img src={brand.logoUrl} alt={brand.appName} className="h-6 w-auto object-contain" />
-            </div>
+            <img
+              src={brand.logoUrl}
+              alt={brand.appName}
+              className="h-7 w-auto object-contain shrink-0"
+              style={{ filter: 'brightness(0) invert(1)', maxWidth: '90px' }}
+            />
           ) : (
             <div className="w-9 h-9 bg-[#d4af37] rounded-lg flex items-center justify-center font-bold text-[#004d25] text-base shadow-inner">
               {brand.shortCode}
