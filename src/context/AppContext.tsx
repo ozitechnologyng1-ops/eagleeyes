@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { VISION_AI_PROMPT } from '../lib/prompts';
 import toast from 'react-hot-toast';
 import { getFriendlyErrorMessage } from '../lib/utils';
+import { sendSms, buildLoginSms, getSmsConfig } from '../lib/smsService';
 
 export type Role = 'national_admin' | 'state_admin' | 'lga_admin' | 'ward_admin' | 'pu_agent';
 
@@ -1245,6 +1246,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
         wardId,
         puId,
       }]);
+
+      // Fire-and-forget: send login credentials SMS
+      if (agent.phone && agent.password && stateId) {
+        getSmsConfig(stateId).then(smsConfig => {
+          if (!smsConfig?.sms_api_key || !smsConfig?.sms_sender_id) return;
+          const template = smsConfig.sms_login_template ||
+            'Hello {{firstname}}, your EagleEye login credentials: Phone: {{phone}}, Password: {{password}}. Keep this safe.';
+          const message = buildLoginSms(template, {
+            firstname: agent.firstName || agent.name?.split(' ')[0] || '',
+            phone: agent.phone,
+            password: agent.password,
+          });
+          sendSms({
+            to: agent.phone,
+            message,
+            apiKey: smsConfig.sms_api_key,
+            senderId: smsConfig.sms_sender_id,
+            channel: smsConfig.sms_channel || 'dnd',
+          })
+            .then(() => toast.success('Login credentials SMS sent'))
+            .catch(() => toast('SMS delivery failed — credentials saved', { icon: '⚠️' }));
+        }).catch(() => {/* no SMS config, silently skip */});
+      }
     } catch (err: any) {
       console.error('Failed to add agent:', err);
       throw err;

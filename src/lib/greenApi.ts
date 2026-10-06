@@ -18,6 +18,11 @@ export interface WhatsAppStateConfig {
   ai_model: string;
   ai_api_key?: string;
   group_ai_system_prompt: string;
+  // Termii SMS
+  sms_api_key?: string;
+  sms_sender_id?: string;
+  sms_channel?: 'dnd' | 'generic' | 'whatsapp' | 'voice';
+  sms_login_template?: string;
 }
 
 export interface WhatsAppInstance {

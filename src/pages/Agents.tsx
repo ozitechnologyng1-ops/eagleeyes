@@ -1,10 +1,11 @@
 import React, { useState, useCallback } from 'react';
 import { useApp, Role, Location, Agent, roleHierarchy } from '../context/AppContext';
-import { Users, Plus, Search, ShieldAlert, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { Users, Plus, Search, ShieldAlert, CheckCircle, XCircle, Loader2, SendHorizonal } from 'lucide-react';
 import { cn, getFriendlyErrorMessage } from '../lib/utils';
 import AgentModal from '../components/AgentModal';
 import { supabase } from '../lib/supabase';
 import toast from 'react-hot-toast';
+import { sendSms, buildLoginSms, getSmsConfig } from '../lib/smsService';
 
 const JurisdictionCell = ({ id, locations }: { id: string, locations: Location[] }) => {
   const existing = locations.find(l => l.id === id);
@@ -86,6 +87,40 @@ export default function Agents() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editAgent, setEditAgent] = useState<Agent | null>(null);
+  const [resendingId, setResendingId] = useState<string | null>(null);
+
+  const handleResendSms = async (agent: Agent, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!agent.stateId) { toast.error('No state associated with this agent'); return; }
+    setResendingId(agent.id);
+    try {
+      const smsConfig = await getSmsConfig(agent.stateId);
+      if (!smsConfig?.sms_api_key || !smsConfig?.sms_sender_id) {
+        toast.error('SMS not configured for this state. Set it up in Message Hub.');
+        return;
+      }
+      const template = smsConfig.sms_login_template ||
+        'Hello {{firstname}}, your EagleEye login: Phone: {{phone}}. Contact your admin for your password.';
+      // We don't store the plain password after creation — remind admin
+      const message = buildLoginSms(template, {
+        firstname: agent.firstName || agent.name.split(' ')[0] || '',
+        phone: agent.phone,
+        password: '(contact your admin)',
+      });
+      await sendSms({
+        to: agent.phone,
+        message,
+        apiKey: smsConfig.sms_api_key,
+        senderId: smsConfig.sms_sender_id,
+        channel: smsConfig.sms_channel || 'dnd',
+      });
+      toast.success(`SMS sent to ${agent.name}`);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to send SMS');
+    } finally {
+      setResendingId(null);
+    }
+  };
 
   const fetchLocalAgents = useCallback(async () => {
     if (!user) return;
@@ -309,6 +344,17 @@ export default function Agents() {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right space-x-2" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        onClick={(e) => handleResendSms(agent, e)}
+                        disabled={resendingId === agent.id}
+                        className="text-blue-600 hover:text-blue-800 font-medium text-xs disabled:opacity-50 inline-flex items-center gap-1"
+                        title="Resend login SMS"
+                      >
+                        {resendingId === agent.id
+                          ? <Loader2 size={12} className="animate-spin" />
+                          : <SendHorizonal size={12} />}
+                        SMS
+                      </button>
                       {agent.status !== 'active' && (
                         <button 
                           onClick={async () => {

@@ -46,7 +46,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: CreditCard, 
       roles: ['national_admin', 'state_admin', 'lga_admin', 'ward_admin', 'pu_agent'] 
     },
-    { name: 'WhatsApp Hub', path: '/whatsapp-config', icon: MessageSquare, roles: ['national_admin', 'state_admin'] },
+    { name: 'Message Hub', path: '/whatsapp-config', icon: MessageSquare, roles: ['national_admin', 'state_admin'] },
     { name: 'Group AI Monitor', path: '/group-monitor', icon: Bot, roles: ['national_admin', 'state_admin'] },
   ];
 

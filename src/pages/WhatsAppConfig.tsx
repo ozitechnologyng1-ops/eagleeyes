@@ -9,12 +9,13 @@ import toast from 'react-hot-toast';
 import { useApp } from '../context/AppContext';
 import { greenApiService, WhatsAppStateConfig, WhatsAppInstance, KnowledgeEntry, GroupMonitor } from '../lib/greenApi';
 import { supabase } from '../lib/supabase';
+import { saveSmsConfig } from '../lib/smsService';
 
 export const WhatsAppConfig: React.FC = () => {
   const { user } = useApp();
   const stateId = user?.stateId || 24; // Default to Lagos (24) or user's assigned state
 
-  const [activeTab, setActiveTab] = useState<'settings' | 'ai' | 'earnings' | 'pool' | 'groups'>('settings');
+  const [activeTab, setActiveTab] = useState<'settings' | 'sms' | 'ai' | 'earnings' | 'pool' | 'groups'>('settings');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -144,6 +145,15 @@ export const WhatsAppConfig: React.FC = () => {
       ]);
 
       if (cfg) setConfig(cfg);
+      // Also load SMS fields (they may not be returned by greenApiService.getConfig)
+      const { data: smsCfg } = await supabase
+        .from('whatsapp_state_config')
+        .select('sms_api_key, sms_sender_id, sms_channel, sms_login_template')
+        .eq('state_id', stateId)
+        .maybeSingle();
+      if (smsCfg) {
+        setConfig(prev => ({ ...prev, ...smsCfg }));
+      }
       setInstances(insts);
       setPoolStatus(pStatus);
       setKnowledgeList(kbs);
@@ -171,11 +181,21 @@ export const WhatsAppConfig: React.FC = () => {
   const handleSaveConfig = async () => {
     setSaving(true);
     try {
-      const saved = await greenApiService.saveConfig(stateId, config);
-      if (saved) {
-        setConfig(prev => ({ ...prev, ...saved }));
+      if (activeTab === 'sms') {
+        await saveSmsConfig(stateId, {
+          sms_api_key: config.sms_api_key,
+          sms_sender_id: config.sms_sender_id,
+          sms_channel: config.sms_channel,
+          sms_login_template: config.sms_login_template,
+        });
+        toast.success('SMS configuration saved successfully');
+      } else {
+        const saved = await greenApiService.saveConfig(stateId, config);
+        if (saved) {
+          setConfig(prev => ({ ...prev, ...saved }));
+        }
+        toast.success('WhatsApp state configuration saved successfully');
       }
-      toast.success('WhatsApp state configuration saved successfully');
     } catch (err: any) {
       toast.error(err.message || 'Failed to save configuration');
     } finally {
@@ -463,10 +483,10 @@ export const WhatsAppConfig: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 flex items-center gap-2">
             <MessageSquare className="h-7 w-7 text-[#004d25]" />
-            WhatsApp Outreach & AI Command Center
+            Message Hub
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Configure Green API instances, agent outreach rules, RAG candidate knowledge, and group chat defense.
+            Configure SMS credentials, WhatsApp outreach, AI knowledge, and group chat defense.
           </p>
         </div>
 
@@ -501,6 +521,18 @@ export const WhatsAppConfig: React.FC = () => {
         >
           <Settings className="h-4 w-4" />
           General & Flyer
+        </button>
+
+        <button
+          onClick={() => setActiveTab('sms')}
+          className={`px-4 py-3 text-sm font-semibold flex items-center gap-2 border-b-2 transition cursor-pointer ${
+            activeTab === 'sms'
+              ? 'border-[#004d25] text-[#004d25]'
+              : 'border-transparent text-gray-500 hover:text-gray-800'
+          }`}
+        >
+          <Phone className="h-4 w-4" />
+          SMS Settings
         </button>
 
         <button
@@ -551,6 +583,125 @@ export const WhatsAppConfig: React.FC = () => {
           Monitored Groups ({monitors.length})
         </button>
       </div>
+
+      {/* TAB: SMS Settings */}
+      {activeTab === 'sms' && (
+        <div className="max-w-2xl space-y-6">
+          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-5">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <Phone className="h-5 w-5 text-[#004d25]" />
+                Termii SMS Credentials
+              </h2>
+              <p className="text-xs text-gray-500 mt-1">
+                Configure your Termii API key and sender ID for this state. Credentials are stored per-state and never shared across states.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 mb-1">
+                API Key
+              </label>
+              <input
+                type="password"
+                value={config.sms_api_key || ''}
+                onChange={e => setConfig({ ...config, sms_api_key: e.target.value })}
+                placeholder="Your Termii API key"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 font-mono focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 mb-1">
+                Sender ID
+              </label>
+              <input
+                type="text"
+                value={config.sms_sender_id || ''}
+                onChange={e => setConfig({ ...config, sms_sender_id: e.target.value })}
+                placeholder="e.g. EagleEye (3–11 chars)"
+                maxLength={11}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
+              />
+              <p className="text-xs text-gray-400 mt-1">Alphanumeric, 3–11 characters.</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 mb-1">
+                Channel / Route
+              </label>
+              <select
+                value={config.sms_channel || 'dnd'}
+                onChange={e => setConfig({ ...config, sms_channel: e.target.value as any })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
+              >
+                <option value="dnd">DND — Transactional (bypasses Do-Not-Disturb, recommended)</option>
+                <option value="generic">Generic — Promotional</option>
+                <option value="whatsapp">WhatsApp</option>
+                <option value="voice">Voice (text-to-speech call)</option>
+              </select>
+              <p className="text-xs text-gray-400 mt-1">Use <strong>DND</strong> for login credentials to guarantee delivery to all numbers.</p>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <Send className="h-5 w-5 text-[#004d25]" />
+                Login Credentials SMS Template
+              </h2>
+              <p className="text-xs text-gray-500 mt-1">
+                This message is sent automatically when an agent is registered, and can be re-sent manually from the Agents page.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2 text-xs">
+              {['{{firstname}}', '{{phone}}', '{{password}}'].map(tag => (
+                <span
+                  key={tag}
+                  onClick={() => setConfig(prev => ({ ...prev, sms_login_template: (prev.sms_login_template || '') + tag }))}
+                  className="bg-[#004d25]/10 text-[#004d25] px-2 py-1 rounded cursor-pointer hover:bg-[#004d25]/20 font-mono select-none"
+                  title={`Click to insert ${tag}`}
+                >
+                  {tag}
+                </span>
+              ))}
+              <span className="text-gray-400 italic">Click a tag to insert it into the template</span>
+            </div>
+
+            <textarea
+              rows={5}
+              value={config.sms_login_template || ''}
+              onChange={e => setConfig({ ...config, sms_login_template: e.target.value })}
+              placeholder="Hello {{firstname}}, your EagleEye login credentials: Phone: {{phone}}, Password: {{password}}. Keep this safe and do not share."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none resize-none"
+            />
+
+            <div className="bg-gray-50 border border-dashed border-gray-200 rounded-lg p-3 text-xs text-gray-500 space-y-1">
+              <p className="font-semibold text-gray-700">Preview</p>
+              <p className="break-words">
+                {(config.sms_login_template || 'Hello {{firstname}}, your login: Phone: {{phone}}, Password: {{password}}.')
+                  .replace(/\{\{firstname\}\}/gi, 'Adeola')
+                  .replace(/\{\{phone\}\}/gi, '08012345678')
+                  .replace(/\{\{password\}\}/gi, 'SecurePass1!')}
+              </p>
+            </div>
+
+            <p className="text-xs text-gray-400">
+              Character count: {(config.sms_login_template || '').length} / 160 per page
+            </p>
+          </div>
+
+          <button
+            onClick={handleSaveConfig}
+            disabled={saving}
+            className="w-full px-4 py-2.5 bg-[#004d25] hover:bg-[#00381b] text-white rounded-lg font-medium flex items-center justify-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
+          >
+            {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            Save SMS Settings
+          </button>
+        </div>
+      )}
 
       {/* TAB 1: General & Flyer Settings */}
       {activeTab === 'settings' && (
