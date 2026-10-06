@@ -40,6 +40,8 @@ export interface User {
   wardId?: number | null;
   puId?: number | null;
   lagosPollingUnitId?: number | null;
+  puid?: string | null;
+  puCode?: string | null;
   picture?: string;
   bankName?: string;
   accountName?: string;
@@ -157,7 +159,7 @@ interface AppState {
   analyzeResultImage: (file: File) => Promise<{ results: any; ai_used?: string }>;
   votersPage: number;
   isLoadingVoters: boolean;
-  fetchVotersPage: (page: number, filters?: { lgaId?: number | null; wardId?: number | null; puId?: number | null }) => Promise<void>;
+  fetchVotersPage: (page: number, filters?: { lgaId?: number | null; wardId?: number | null; puId?: number | null; puid?: string | null }) => Promise<void>;
   voterLgaFilter: number | null;
   setVoterLgaFilter: (lgaId: number | null) => void;
   voterWardFilter: number | null;
@@ -477,6 +479,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshDeploymentStats();
   }, [refreshElectionStats, refreshAgentStats, refreshDeploymentStats]);
 
+  // Auto-resolve puid and puCode for logged-in PU agents if missing from stored session
+  useEffect(() => {
+    if (user && user.role === 'pu_agent' && (user.puId || user.lagosPollingUnitId) && !user.puid) {
+      const pid = user.puId || user.lagosPollingUnitId;
+      supabase
+        .from('polling_units')
+        .select('"puId", pu_code, no')
+        .eq('id', pid)
+        .single()
+        .then(({ data }) => {
+          if (data && (data.puId || data.pu_code)) {
+            const resolvedPuid = data.puId || data.pu_code;
+            const updatedUser = { ...user, puid: resolvedPuid, puCode: data.no || user.puCode };
+            setUser(updatedUser);
+            localStorage.setItem('eagleeye_user', JSON.stringify(updatedUser));
+          }
+        });
+    }
+  }, [user]);
+
   // Automatic logout disabled per user request
   // useEffect(() => {
   //   let interval: any;
@@ -496,7 +518,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const fetchVotersPage = React.useCallback(async (
     page: number, 
-    customFilters?: { lgaId?: number | null; wardId?: number | null; puId?: number | null }
+    customFilters?: { lgaId?: number | null; wardId?: number | null; puId?: number | null; puid?: string | null }
   ) => {
     setIsLoadingVoters(true);
     setVotersPage(page);
@@ -505,23 +527,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const start = (page - 1) * pageSize;
       const end = start + pageSize - 1;
 
-      let votersQuery = supabase.from('voters').select('*', { count: 'exact' });
+      let votersQuery = supabase.from('voters').select('*');
 
       const activePu = customFilters?.puId !== undefined ? customFilters.puId : voterPuFilter;
       const activeWard = customFilters?.wardId !== undefined ? customFilters.wardId : voterWardFilter;
       const activeLga = customFilters?.lgaId !== undefined ? customFilters.lgaId : voterLgaFilter;
 
-      if (user?.role === 'pu_agent' && (user?.puId || user?.lagosPollingUnitId)) {
+      if (user?.role === 'pu_agent') {
         const puTarget = user.puId || user.lagosPollingUnitId;
-        votersQuery = votersQuery.or(`polling_unit_id.eq.${puTarget},pollingunit_lagos_id.eq.${puTarget}`);
+        if (user.puid) {
+          votersQuery = puTarget 
+            ? votersQuery.or(`puid.eq.${user.puid},polling_unit_id.eq.${puTarget}`)
+            : votersQuery.eq('puid', user.puid);
+        } else if (puTarget) {
+          votersQuery = votersQuery.eq('polling_unit_id', puTarget);
+        }
+      } else if (customFilters?.puid) {
+        votersQuery = activePu 
+          ? votersQuery.or(`puid.eq.${customFilters.puid},polling_unit_id.eq.${activePu}`)
+          : votersQuery.eq('puid', customFilters.puid);
       } else if (activePu) {
-        votersQuery = votersQuery.or(`polling_unit_id.eq.${activePu},pollingunit_lagos_id.eq.${activePu}`);
+        votersQuery = votersQuery.eq('polling_unit_id', activePu);
       } else if (activeWard || (user?.role === 'ward_admin' && user?.wardId)) {
         const wTarget = activeWard || user?.wardId;
-        votersQuery = votersQuery.or(`ward_id.eq.${wTarget},ward_lagos_id.eq.${wTarget}`);
+        votersQuery = votersQuery.eq('ward_id', wTarget);
       } else if (activeLga || (user?.role === 'lga_admin' && user?.lgaId)) {
         const lgTarget = activeLga || user?.lgaId;
-        votersQuery = votersQuery.or(`localgovernment_id.eq.${lgTarget},localgovernment_lagos_id.eq.${lgTarget}`);
+        votersQuery = votersQuery.eq('localgovernment_id', lgTarget);
       } else if (user?.stateId) {
         votersQuery = votersQuery.eq('state_id', user.stateId);
       }
@@ -541,11 +573,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
            dob: v.dob,
            image: v.image || '',
            status: (v.status || 'Undecided') as Voter['status'],
-           locationId: `pu_${v.polling_unit_id || v.pollingunit_lagos_id || ''}` || 'nat1',
+           locationId: `pu_${v.polling_unit_id || ''}` || 'nat1',
            stateId: v.state_id,
-           lgaId: v.localgovernment_id || v.localgovernment_lagos_id || null,
-           wardId: v.ward_id || v.ward_lagos_id || null,
-           puNumberId: v.polling_unit_id || v.pollingunit_lagos_id || null,
+           lgaId: v.localgovernment_id || null,
+           wardId: v.ward_id || null,
+           puNumberId: v.polling_unit_id || null,
            notes: v.notes || [],
            contact_logs: v.contact_logs || [],
         })));
@@ -557,7 +589,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoadingVoters(false);
     }
-  }, [user?.stateId, user?.role, user?.lagosPollingUnitId, user?.puId, user?.lgaId, user?.wardId, voterPuFilter, voterWardFilter, voterLgaFilter]);
+  }, [user?.stateId, user?.role, user?.lagosPollingUnitId, user?.puId, user?.puid, user?.lgaId, user?.wardId, voterPuFilter, voterWardFilter, voterLgaFilter]);
 
   useEffect(() => {
     const fetchSupabaseData = async () => {
@@ -597,10 +629,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // ── Exact voter count via Postgres RPC ──────────────────────────
         // Build scoped RPC params based on role hierarchy
         const rpcParams: Record<string, any> = {};
-        if (user?.role === 'pu_agent' && (user?.lagosPollingUnitId || user?.puId)) {
-          rpcParams.p_polling_unit_lagos_id = user.lagosPollingUnitId || user.puId;
+        if (user?.role === 'pu_agent') {
+          if (user?.puid) {
+            rpcParams.p_puid = user.puid;
+          } else if (user?.puId || user?.lagosPollingUnitId) {
+            rpcParams.p_polling_unit_id = user.puId || user.lagosPollingUnitId;
+          }
         } else if (voterPuFilter) {
-          rpcParams.p_polling_unit_lagos_id = voterPuFilter;
+          rpcParams.p_polling_unit_id = voterPuFilter;
         } else if (voterWardFilter || (user?.role === 'ward_admin' && user?.wardId)) {
           rpcParams.p_ward_id = voterWardFilter || user?.wardId;
         } else if (voterLgaFilter || (user?.role === 'lga_admin' && user?.lgaId)) {
@@ -646,7 +682,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     };
     fetchSupabaseData();
-  }, [user?.id, user?.stateId, user?.lagosPollingUnitId, voterPuFilter]);
+  }, [user?.id, user?.stateId, user?.lagosPollingUnitId, user?.puId, user?.puid, voterPuFilter]);
 
   const toggleMockMode = () => setIsMockMode(!isMockMode);
   const endAllMockElections = () => setIsMockMode(false);
@@ -713,11 +749,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Build locationId from the most specific jurisdiction available
     let locationId = 'nat1';
     let locationName = 'Nigeria';
+    let puid: string | null = null;
+    let puCode: string | null = null;
     
     if (agentData.polling_units_id) {
       locationId = `pu_${agentData.polling_units_id}`;
-      const { data } = await supabase.from('polling_units').select('name').eq('id', agentData.polling_units_id).single();
-      if (data) locationName = data.name;
+      const { data } = await supabase.from('polling_units').select('name, "puId", pu_code, no').eq('id', agentData.polling_units_id).single();
+      if (data) {
+        locationName = data.name;
+        puid = data.puId || data.pu_code || null;
+        puCode = data.no || null;
+      }
     }
     else if (agentData.wards_id) {
       locationId = `ward_${agentData.wards_id}`;
@@ -751,8 +793,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       stateId: agentData.state_id ?? null,
       lgaId: agentData.local_governments_id ?? null,
       wardId: agentData.wards_id ?? null,
-      puId: agentData.polling_units_id ?? null,
-      lagosPollingUnitId: agentData.pollingunit_lagos_id ?? null,
+      puId: agentData.polling_units_id ?? agentData.pollingunit_lagos_id ?? null,
+      lagosPollingUnitId: agentData.polling_units_id ?? agentData.pollingunit_lagos_id ?? null,
+      puid,
+      puCode,
       picture: agentData.profile_picture_url || undefined,
       bankName: agentData.bank_name || undefined,
       accountName: agentData.account_name || undefined,
@@ -825,9 +869,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const buildScopedRpcParams = (): Record<string, any> => {
     if (user?.role === 'pu_agent' && (user?.lagosPollingUnitId || user?.puId)) {
-      return { p_polling_unit_lagos_id: user.lagosPollingUnitId || user.puId };
+      return { p_polling_unit_id: user.puId || user.lagosPollingUnitId };
     } else if (voterPuFilter) {
-      return { p_polling_unit_lagos_id: voterPuFilter };
+      return { p_polling_unit_id: voterPuFilter };
     } else if (voterWardFilter || (user?.role === 'ward_admin' && user?.wardId)) {
       return { p_ward_id: voterWardFilter || user?.wardId };
     } else if (voterLgaFilter || (user?.role === 'lga_admin' && user?.lgaId)) {

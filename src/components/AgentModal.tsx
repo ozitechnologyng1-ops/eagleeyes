@@ -1339,6 +1339,20 @@ function JurisdictionSelector({
   user: any;
   targetRole?: Role;
 }) {
+  const sortWards = (list: any[]) => [...list].sort((a, b) => {
+    const numA = parseInt(a.ward_number || '', 10);
+    const numB = parseInt(b.ward_number || '', 10);
+    if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+
+  const sortPus = (list: any[]) => [...list].sort((a, b) => {
+    const noA = parseInt(a.no || (a.puId ? a.puId.split('-').pop() : '') || '', 10);
+    const noB = parseInt(b.no || (b.puId ? b.puId.split('-').pop() : '') || '', 10);
+    if (!isNaN(noA) && !isNaN(noB)) return noA - noB;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+
   const [states, setStates] = useState<any[]>([]);
   const [lgas, setLgas] = useState<any[]>([]);
   const [wards, setWards] = useState<any[]>([]);
@@ -1427,14 +1441,14 @@ function JurisdictionSelector({
 
         // Fetch Wards if LGA is set
         if (lg) {
-          const { data: wardData } = await supabase.from('wards').select('id,name').eq('localgovernment_id', lg).order('name');
-          if (!isCancelled) setWards(wardData || []);
+          const { data: wardData } = await supabase.from('wards').select('id,name,ward_number').eq('localgovernment_id', lg);
+          if (!isCancelled) setWards(sortWards(wardData || []));
         }
 
         // Fetch PUs if Ward is set
         if (wd) {
-          const { data: puData } = await supabase.from('polling_units').select('id,name').eq('ward_id', wd).order('name');
-          if (!isCancelled) setPus(puData || []);
+          const { data: puData } = await supabase.from('polling_units').select('id,name,no,puId').eq('ward_id', wd);
+          if (!isCancelled) setPus(sortPus(puData || []));
         }
 
         // Calculate and sync assigned location ID based on targetRole
@@ -1508,8 +1522,8 @@ function JurisdictionSelector({
     
     if (val) {
       setLoading(true);
-      const { data } = await supabase.from('wards').select('id,name').eq('localgovernment_id', val).order('name');
-      setWards(data || []);
+      const { data } = await supabase.from('wards').select('id,name,ward_number').eq('localgovernment_id', val);
+      setWards(sortWards(data || []));
       setLoading(false);
     }
   };
@@ -1531,8 +1545,8 @@ function JurisdictionSelector({
     
     if (val && targetRole === 'pu_agent') {
       setLoading(true);
-      const { data } = await supabase.from('polling_units').select('id,name').eq('ward_id', val).order('name');
-      setPus(data || []);
+      const { data } = await supabase.from('polling_units').select('id,name,no,puId').eq('ward_id', val);
+      setPus(sortPus(data || []));
       setLoading(false);
     }
   };
@@ -1550,18 +1564,39 @@ function JurisdictionSelector({
     });
   };
 
-  const levelPriority: Record<string, number> = { 'national': 4, 'state': 3, 'lga': 2, 'ward': 1, 'pu': 0 };
-  const fixedLevel = fixedLocation ? (levelPriority[fixedLocation.type] ?? -1) : -1;
-
   // Strict jurisdictional isolation:
   // - National admin can manage any state
   // - State admin has State locked; can only see/assign LGAs/Wards/PUs within that state
   // - LGA admin has State and LGA locked; can only see/assign Wards/PUs within that LGA
   // - Ward admin has State, LGA, and Ward locked; can only see/assign PUs within that Ward
-  const isStateDisabled = (user?.role !== 'national_admin' && !!user?.stateId) || (fixedLevel >= 3);
-  const isLgaDisabled = (['lga_admin', 'ward_admin', 'pu_agent'].includes(user?.role) && !!user?.lgaId) || (fixedLevel >= 2);
-  const isWardDisabled = (['ward_admin', 'pu_agent'].includes(user?.role) && !!user?.wardId) || (fixedLevel >= 1);
-  const isPuDisabled = (user?.role === 'pu_agent' && !!user?.puId) || (fixedLevel >= 0);
+  // - fixedLocation locks only its own level and parents, leaving children selectable
+  const fixedType = fixedLocation?.type;
+  const isStateDisabled = (user?.role !== 'national_admin' && !!user?.stateId) || 
+                          Boolean(fixedType && ['state', 'lga', 'ward', 'pu', 'polling_unit'].includes(fixedType));
+
+  const isLgaDisabled = (['lga_admin', 'ward_admin', 'pu_agent'].includes(user?.role) && !!user?.lgaId) || 
+                        Boolean(fixedType && ['lga', 'ward', 'pu', 'polling_unit'].includes(fixedType));
+
+  const isWardDisabled = (['ward_admin', 'pu_agent'].includes(user?.role) && !!user?.wardId) || 
+                         Boolean(fixedType && ['ward', 'pu', 'polling_unit'].includes(fixedType));
+
+  const isPuDisabled = (user?.role === 'pu_agent' && !!user?.puId) || 
+                       Boolean(fixedType && ['pu', 'polling_unit'].includes(fixedType));
+
+  // Automatically ensure polling units are loaded if a ward is selected and target role is pu_agent
+  useEffect(() => {
+    if (selectedWard && targetRole === 'pu_agent' && pus.length === 0) {
+      setLoading(true);
+      supabase
+        .from('polling_units')
+        .select('id,name,no,puId')
+        .eq('ward_id', selectedWard)
+        .then(({ data }) => {
+          setPus(sortPus(data || []));
+          setLoading(false);
+        });
+    }
+  }, [selectedWard, targetRole, pus.length]);
 
   return (
     <div className="space-y-4">
@@ -1616,7 +1651,10 @@ function JurisdictionSelector({
             <option value="">
               {!selectedLga ? 'Select LGA first...' : wards.length === 0 && loading ? 'Loading Wards...' : 'Select Ward...'}
             </option>
-            {wards.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            {wards.map(l => {
+              const wardNo = l.ward_number ? `${String(l.ward_number).padStart(2, '0')} - ` : '';
+              return <option key={l.id} value={l.id}>{wardNo}{l.name}</option>;
+            })}
           </select>
         </div>
       )}
@@ -1643,7 +1681,11 @@ function JurisdictionSelector({
                 ? 'No polling units found for this ward' 
                 : `Select Polling Unit (${pus.length} available)...`}
             </option>
-            {pus.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            {pus.map(l => {
+              const puNo = l.no ? String(l.no).padStart(3, '0') : (l.puId ? l.puId.split('-').pop() : '');
+              const puLabel = puNo ? `${puNo} - ${l.name}` : l.name;
+              return <option key={l.id} value={l.id}>{puLabel}</option>;
+            })}
           </select>
         </div>
       )}

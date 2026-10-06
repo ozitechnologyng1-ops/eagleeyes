@@ -5,7 +5,7 @@ import {
   FileText, PieChart as PieChartIcon, ChevronRight, UserPlus, AlertTriangle, 
   CheckCircle2, XCircle, Search, ChevronDown, ChevronUp, UserCheck, UserX, Shield, 
   Phone, Layers, Loader2, MessageSquare, Bot, QrCode, DollarSign, Send, RefreshCw,
-  Copy, Check, MessageCircle
+  Copy, Check, MessageCircle, Trash2
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList } from 'recharts';
 import { useNavigate } from 'react-router-dom';
@@ -16,13 +16,16 @@ import toast from 'react-hot-toast';
 import { greenApiService, WhatsAppInstance } from '../lib/greenApi';
 
 import { supabase } from '../lib/supabase';
+import Voters from './Voters';
+import Volunteers from './Volunteers';
+import { clearAllImageCache } from '../lib/imageStorage';
 
 export default function Dashboard() {
   const { 
     user, stats, agents, locations, getDescendantLocations, voters, totalVotersCount, 
     electionResults, voterPuFilter, setVoterPuFilter, addAgent, updateAgent 
   } = useApp();
-  const [activeTab, setActiveTab] = useState<'canvassing' | 'elections'>('canvassing');
+  const [activeTab, setActiveTab] = useState<'canvassing' | 'elections' | 'voters' | 'volunteers'>('canvassing');
 
   // Agent Modal & quick assign state
   const [isAgentModalOpen, setIsAgentModalOpen] = useState(false);
@@ -86,25 +89,50 @@ export default function Dashboard() {
         <AgentQuickActions user={user} locations={locations} />
       )}
       
-      {user.role !== 'pu_agent' && user.role !== 'ward_admin' && (
-        <div className="flex border-b border-gray-200">
+      <div className="flex border-b border-gray-200 overflow-x-auto">
+        <button 
+          onClick={() => setActiveTab('canvassing')}
+          className={cn("px-6 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer whitespace-nowrap", activeTab === 'canvassing' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
+        >
+          Canvassing Overview
+        </button>
+        <button 
+          onClick={() => setActiveTab('elections')}
+          className={cn("px-6 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer whitespace-nowrap", activeTab === 'elections' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
+        >
+          Election Results
+        </button>
+        {(user.role === 'state_admin' || user.role === 'national_admin') && (
           <button 
-            onClick={() => setActiveTab('canvassing')}
-            className={cn("px-6 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer", activeTab === 'canvassing' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
+            onClick={() => setActiveTab('volunteers')}
+            className={cn("px-6 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer whitespace-nowrap flex items-center gap-2", activeTab === 'volunteers' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
           >
-            Canvassing Overview
+            <span>Volunteers</span>
+            <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-800">
+              State
+            </span>
           </button>
-          <button 
-            onClick={() => setActiveTab('elections')}
-            className={cn("px-6 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer", activeTab === 'elections' ? "border-[#004d25] text-[#004d25]" : "border-transparent text-gray-500 hover:text-gray-700")}
-          >
-            Election Results
-          </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {activeTab === 'canvassing' ? (
-        <CanvassingDashboard stats={stats} agents={visibleAgents} locations={allowedLocations} user={user} voters={voters} totalVotersCount={totalVotersCount} />
+        <CanvassingDashboard 
+          stats={stats} 
+          agents={visibleAgents} 
+          locations={allowedLocations} 
+          user={user} 
+          voters={voters} 
+          totalVotersCount={totalVotersCount} 
+          onViewAllVoters={() => setActiveTab('voters')}
+        />
+      ) : activeTab === 'volunteers' ? (
+        <div className="bg-white rounded-xl shadow-xs border border-gray-200 p-4 sm:p-6">
+          <Volunteers embedded />
+        </div>
+      ) : activeTab === 'voters' ? (
+        <div className="bg-white rounded-xl shadow-xs border border-gray-200 p-4 sm:p-6">
+          <Voters />
+        </div>
       ) : user.role === 'national_admin' ? (
         <>
           <NationalDashboard stats={stats} />
@@ -253,8 +281,23 @@ function DashboardHeader({ user, locations, onOpenRegisterAgent }: any) {
         )}
       </div>
 
-      {user.role !== 'pu_agent' && (
-        <div className="flex items-center gap-2 shrink-0">
+      <div className="flex items-center gap-2 shrink-0 flex-wrap">
+        {import.meta.env.DEV && (
+          <button
+            type="button"
+            onClick={() => {
+              const count = clearAllImageCache();
+              toast.success(`[DEV] Cleared ${count} cached voter images from localStorage.`);
+            }}
+            className="flex items-center gap-1.5 px-3 py-2 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-semibold rounded-xl shadow-xs transition-all cursor-pointer"
+            title="Development Only: Clears all localStorage cached voter photos immediately"
+          >
+            <Trash2 size={14} className="text-rose-600" />
+            <span>Clear Cache (Dev)</span>
+          </button>
+        )}
+
+        {user.role !== 'pu_agent' && (
           <button
             type="button"
             onClick={onOpenRegisterAgent}
@@ -263,8 +306,8 @@ function DashboardHeader({ user, locations, onOpenRegisterAgent }: any) {
             <UserPlus size={17} />
             <span>Register Agent</span>
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -362,7 +405,7 @@ function NationalDashboard({ stats }: any) {
   );
 }
 
-function CanvassingDashboard({ stats, agents, locations, user, voters, totalVotersCount }: any) {
+function CanvassingDashboard({ stats, agents, locations, user, voters, totalVotersCount, onViewAllVoters }: any) {
   const navigate = useNavigate();
   const COLORS = ['#004d25', '#d4af37', '#e11d48', '#6b7280'];
   const { canvassing } = stats;
@@ -400,7 +443,7 @@ function CanvassingDashboard({ stats, agents, locations, user, voters, totalVote
               <span>{listHeading}</span>
             </h3>
             <button
-              onClick={() => navigate('/voters')}
+              onClick={() => onViewAllVoters ? onViewAllVoters() : navigate('/voters')}
               className="text-xs font-semibold text-[#004d25] hover:text-[#006331] flex items-center gap-1 cursor-pointer"
             >
               <span>View More</span>

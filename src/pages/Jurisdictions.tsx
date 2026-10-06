@@ -125,8 +125,8 @@ const TreeNode: React.FC<NodeProps> = ({
           stateId: a.state_id,
           lgaId: a.local_governments_id,
           wardId: a.wards_id,
-          puId: a.polling_units_id,
-          lagosPollingUnitId: a.pollingunit_lagos_id
+          puId: a.polling_units_id || a.pollingunit_lagos_id,
+          lagosPollingUnitId: a.polling_units_id || a.pollingunit_lagos_id
         })).filter(a => roleHierarchy[a.role] < roleHierarchy[userRole]));
       }
       setAgentsLoaded(true);

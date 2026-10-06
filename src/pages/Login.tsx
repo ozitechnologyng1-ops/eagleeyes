@@ -5,6 +5,7 @@ import { Shield, Phone, Lock, ChevronRight, ArrowLeft, Eye, EyeOff, CheckCircle2
 import toast from 'react-hot-toast';
 import { getFriendlyErrorMessage } from '../lib/utils';
 import Rvtech from "../assets/RVCTECH.png";
+import { getBrandConfig } from '../lib/branding';
 
 interface PasswordRule {
   label: string;
@@ -19,6 +20,7 @@ const PASSWORD_RULES: PasswordRule[] = [
 ];
 
 export default function Login() {
+  const brand = getBrandConfig();
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -51,34 +53,34 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-between py-4 sm:py-8 sm:px-6 lg:px-8 relative overflow-hidden">
+    <div className="min-h-screen bg-gray-50 flex flex-col justify-between py-6 sm:py-10 sm:px-6 lg:px-8 relative overflow-hidden">
       {/* Background decoration */}
       <div className="absolute top-0 left-0 w-full h-80 sm:h-96 bg-[#004d25] rounded-b-[40%] scale-x-150 transform -translate-y-16 z-0 shadow-lg" />
 
-      {/* Top Header Bar */}
-      <div className="w-full max-w-md mx-auto px-4 sm:px-0 pt-2 pb-2 relative z-20 flex items-center justify-start">
-        <button
-          onClick={() => navigate('/')}
-          className="inline-flex items-center gap-1.5 text-white/90 hover:text-white bg-white/10 hover:bg-white/20 active:scale-95 px-3.5 py-1.5 rounded-full backdrop-blur-md transition-all text-xs font-semibold cursor-pointer border border-white/20 shadow-xs"
-        >
-          <ArrowLeft size={14} />
-          <span>Back to Home</span>
-        </button>
-      </div>
-
-      <div className="flex-1 flex flex-col justify-center my-auto relative z-10 pt-2 pb-4">
+      <div className="flex-1 flex flex-col justify-center my-auto relative z-10 pt-4 pb-4">
         {/* Logo & Title */}
-        <div className="sm:mx-auto sm:w-full sm:max-w-md">
-          <div className="flex justify-center">
-            <div className="w-18 h-18 sm:w-20 sm:h-20 bg-[#d4af37] rounded-2xl flex items-center justify-center shadow-xl transform rotate-12">
-              <Shield className="text-[#004d25] w-10 h-10 sm:w-12 sm:h-12 -rotate-12" />
-            </div>
+        <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
+          <div className="flex justify-center items-center">
+            {brand.logoUrl ? (
+              <div className="bg-white p-3 rounded-2xl shadow-xl border border-white/40 max-w-[260px] sm:max-w-[300px]">
+                <img 
+                  src={brand.logoUrl} 
+                  alt={brand.appName} 
+                  className="h-14 sm:h-16 w-auto object-contain mx-auto"
+                />
+              </div>
+            ) : (
+              <div className="w-18 h-18 sm:w-20 sm:h-20 bg-[#d4af37] rounded-2xl flex items-center justify-center shadow-xl transform rotate-12">
+                <Shield className="text-[#004d25] w-10 h-10 sm:w-12 sm:h-12 -rotate-12" />
+              </div>
+            )}
           </div>
+
           <h2 className="mt-5 text-center text-2xl sm:text-3xl font-extrabold text-white tracking-tight drop-shadow-sm">
-            EagleEye 2027
+            {brand.appName}
           </h2>
-          <p className="mt-1 text-center text-xs sm:text-sm text-green-100/90 font-medium">
-            Secure Election Management System
+          <p className="mt-1 text-center text-xs sm:text-sm text-green-100/90 font-medium px-4">
+            {brand.subtitle}
           </p>
         </div>
 

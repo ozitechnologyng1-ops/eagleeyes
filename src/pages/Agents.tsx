@@ -127,8 +127,8 @@ export default function Agents() {
         stateId: a.state_id,
         lgaId: a.local_governments_id,
         wardId: a.wards_id,
-        puId: a.polling_units_id,
-        lagosPollingUnitId: a.pollingunit_lagos_id
+        puId: a.polling_units_id || a.pollingunit_lagos_id,
+        lagosPollingUnitId: a.polling_units_id || a.pollingunit_lagos_id
       })));
     } catch (err) {
       console.error('Failed to fetch agents', err);

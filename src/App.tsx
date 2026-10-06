@@ -18,23 +18,29 @@ const Sms          = lazy(() => import('./pages/Sms'));
 const Billing      = lazy(() => import('./pages/Billing'));
 const WhatsAppConfig = lazy(() => import('./pages/WhatsAppConfig').then(m => ({ default: m.WhatsAppConfig })));
 const GroupMonitor = lazy(() => import('./pages/GroupMonitor').then(m => ({ default: m.GroupMonitor })));
+const Volunteers   = lazy(() => import('./pages/Volunteers'));
+import { getBrandConfig } from './lib/branding';
 
 export default function App() {
+  const brand = getBrandConfig();
+
   return (
     <HelmetProvider>
       <AppProvider>
         <Toaster position="top-right" />
         <Helmet>
-          <title>EagleEye 2027 | Election Management System</title>
-          <meta name="description" content="High-fidelity, interactive multi-tiered election management system for real-time result collation and voter canvassing." />
+          <title>{brand.fullTitle}</title>
+          <meta name="description" content={brand.metaDescription} />
         </Helmet>
         <BrowserRouter>
           <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="w-8 h-8 border-4 border-[#004d25] border-t-transparent rounded-full animate-spin" /></div>}>
             <Routes>
-              <Route path="/" element={<Landing />} />
-              <Route path="/login" element={<Login />} />
+              {/* Landing page removed: Login is directly at root */}
+              <Route path="/" element={<Login />} />
+              <Route path="/login" element={<Navigate to="/" replace />} />
               <Route element={<Layout />}>
                 <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/volunteers" element={<Volunteers />} />
                 <Route path="/voters" element={<Voters />} />
                 <Route path="/capture" element={<ResultCapture />} />
                 <Route path="/agents" element={<Agents />} />

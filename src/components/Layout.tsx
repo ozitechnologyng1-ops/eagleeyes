@@ -4,11 +4,13 @@ import { useApp } from '../context/AppContext';
 import { Menu } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Sidebar } from './Sidebar';
+import { getBrandConfig } from '../lib/branding';
 
 export default function Layout() {
   const { user } = useApp();
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const brand = getBrandConfig();
 
   // Close mobile/tablet menu automatically on route change
   useEffect(() => {
@@ -43,10 +45,16 @@ export default function Layout() {
           <Menu size={22} />
         </button>
         <div className="flex items-center gap-2.5 select-none">
-          <div className="w-8 h-8 bg-[#d4af37] rounded-lg flex items-center justify-center font-bold text-[#004d25] text-sm shadow-inner">
-            EE
-          </div>
-          <span className="font-bold text-base tracking-tight text-white">EagleEye 2027</span>
+          {brand.logoUrl ? (
+            <div className="bg-white px-2 py-0.5 rounded-lg flex items-center justify-center max-w-[100px] shadow-inner">
+              <img src={brand.logoUrl} alt={brand.appName} className="h-5 w-auto object-contain" />
+            </div>
+          ) : (
+            <div className="w-8 h-8 bg-[#d4af37] rounded-lg flex items-center justify-center font-bold text-[#004d25] text-sm shadow-inner">
+              {brand.shortCode}
+            </div>
+          )}
+          <span className="font-bold text-base tracking-tight text-white">{brand.appName}</span>
         </div>
       </header>
 

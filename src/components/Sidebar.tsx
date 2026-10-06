@@ -2,10 +2,12 @@ import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   X, LogOut, LayoutDashboard, Users, Camera, Map, ChevronRight, 
-  CreditCard, MessageSquare, Bot, User 
+  CreditCard, MessageSquare, Bot, User, UserCheck, UserPlus 
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { cn } from '../lib/utils';
+
+import { getBrandConfig } from '../lib/branding';
 
 interface SidebarProps {
   onClose?: () => void;
@@ -21,6 +23,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { user, logout, locations } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
+  const brand = getBrandConfig();
 
   if (!user) return null;
 
@@ -33,8 +36,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const navItems = [
     { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['national_admin', 'state_admin', 'lga_admin', 'ward_admin', 'pu_agent'] },
     { name: 'Agents', path: '/agents', icon: Users, roles: ['national_admin', 'state_admin', 'lga_admin', 'ward_admin'] },
+    { name: 'Volunteers', path: '/volunteers', icon: UserPlus, roles: ['national_admin', 'state_admin'] },
+    { name: 'Voters', path: '/voters', icon: UserCheck, roles: ['national_admin', 'state_admin', 'lga_admin', 'ward_admin', 'pu_agent'] },
     { name: 'Jurisdictions', path: '/locations', icon: Map, roles: ['national_admin', 'state_admin', 'lga_admin', 'ward_admin'] },
-    { name: 'Voters', path: '/voters', icon: Users, roles: ['ward_admin', 'pu_agent'] },
     { name: 'Result Capture', path: '/capture', icon: Camera, roles: ['ward_admin', 'pu_agent'] },
     { 
       name: ['pu_agent', 'ward_admin', 'lga_admin'].includes(user.role) ? 'Earnings' : 'Payment', 
@@ -57,10 +61,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Brand Header */}
       <div className="p-4 sm:p-5 flex items-center justify-between border-b border-[#006331] shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-[#d4af37] rounded-lg flex items-center justify-center font-bold text-[#004d25] text-base shadow-inner">
-            EE
-          </div>
-          <span className="font-bold text-lg tracking-tight">EagleEye 2027</span>
+          {brand.logoUrl ? (
+            <div className="bg-white px-2 py-1 rounded-lg flex items-center justify-center max-w-[120px] shadow-inner">
+              <img src={brand.logoUrl} alt={brand.appName} className="h-6 w-auto object-contain" />
+            </div>
+          ) : (
+            <div className="w-9 h-9 bg-[#d4af37] rounded-lg flex items-center justify-center font-bold text-[#004d25] text-base shadow-inner">
+              {brand.shortCode}
+            </div>
+          )}
+          <span className="font-bold text-lg tracking-tight truncate" title={brand.appName}>{brand.appName}</span>
         </div>
         {showCloseButton && (
           <button 

@@ -1,10 +1,25 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp, Voter, VoterNote } from '../context/AppContext';
-import { Search, Filter, X, Check, UserCircle, ChevronLeft, ChevronRight, MessageCircle, MessageSquare, Phone, Save, Loader2, ChevronDown, ChevronUp, MapPin, Send, Image as ImageIcon, Edit3, Sparkles, RotateCcw, AlertTriangle } from 'lucide-react';
+import { 
+  Search, Filter, X, Check, UserCircle, ChevronLeft, ChevronRight, MessageCircle, 
+  MessageSquare, Phone, Save, Loader2, ChevronDown, ChevronUp, MapPin, Send, 
+  Image as ImageIcon, Edit3, Sparkles, RotateCcw, AlertTriangle, Download, 
+  Maximize2, Eye, Clock, RefreshCw, Trash2 
+} from 'lucide-react';
 import { cn, getFriendlyErrorMessage } from '../lib/utils';
 import { supabase } from '../lib/supabase';
 import toast from 'react-hot-toast';
 import { greenApiService } from '../lib/greenApi';
+
+import { 
+  buildImageKitUrl, 
+  getCachedImage, 
+  setCachedImage, 
+  enhanceImageViaCanvas, 
+  getCachedOrFetchImage, 
+  cleanupExpiredImages,
+  clearAllImageCache
+} from '../lib/imageStorage';
 
 export default function Voters() {
   const { 
@@ -22,8 +37,8 @@ export default function Voters() {
 
   // Jurisdiction filter options
   const [lgas, setLgas] = useState<{ id: number; name: string }[]>([]);
-  const [wards, setWards] = useState<{ id: number; name: string }[]>([]);
-  const [pollingUnits, setPollingUnits] = useState<{ id: number; name: string; puId?: string }[]>([]);
+  const [wards, setWards] = useState<{ id: number; name: string; ward_number?: string }[]>([]);
+  const [pollingUnits, setPollingUnits] = useState<{ id: number; name: string; puId?: string; no?: string | number }[]>([]);
 
   // Selected filter values
   const [selectedLga, setSelectedLga] = useState<number | null>(() => {
@@ -38,6 +53,116 @@ export default function Voters() {
     if (user?.role === 'pu_agent') return user.puId || user.lagosPollingUnitId || null;
     return voterPuFilter;
   });
+
+  // AI Refined Photo viewer & caching state (480px x 640px)
+  const [photoViewerOpen, setPhotoViewerOpen] = useState(false);
+  const [viewingVoter, setViewingVoter] = useState<Voter | null>(null);
+  const [refinedPhoto, setRefinedPhoto] = useState<string | null>(null);
+  const [isRefiningPhoto, setIsRefiningPhoto] = useState(false);
+  const [showOriginalComparison, setShowOriginalComparison] = useState(false);
+
+  // Auto-cleanup expired cached photos on mount (5 days TTL)
+  useEffect(() => {
+    cleanupExpiredImages();
+  }, []);
+
+  // Ensure voters are fetched on mount if not already loaded or when jurisdiction filters change
+  useEffect(() => {
+    fetchVotersPage(1, { lgaId: selectedLga, wardId: selectedWard, puId: selectedPu });
+  }, [user?.id, user?.stateId]);
+
+  // Manual clear cache handler for development & testing
+  const handleClearAllPhotoCache = () => {
+    const removedCount = clearAllImageCache();
+    setRefinedPhoto(null);
+    toast.success(`Cleared ${removedCount} cached voter photos! Next click fetches fresh.`);
+  };
+
+  const handlePhotoClick = async (voter: Voter) => {
+    if (!voter.image) {
+      toast.error('No photo available for this voter.');
+      return;
+    }
+    setViewingVoter(voter);
+    setPhotoViewerOpen(true);
+    setShowOriginalComparison(false);
+
+    // 1. Check local cache (5 days)
+    const cached = getCachedImage(voter.id);
+    if (cached) {
+      console.log('⚡ [Image Cache Hit] Loaded voter image from localStorage cache (5-day TTL):', {
+        voterId: voter.id,
+        voterName: voter.name,
+      });
+      setRefinedPhoto(cached);
+      return;
+    }
+
+    // 2. Show original Supabase photo immediately
+    setRefinedPhoto(voter.image);
+    setIsRefiningPhoto(true);
+
+    // 3. Test ImageKit pipeline with diagnostic logging
+    const imageKitUrl = buildImageKitUrl(voter.image);
+    console.log('🖼️ [ImageKit Test Request]:', {
+      voterId: voter.id,
+      voterName: voter.name,
+      originalSupabaseUrl: voter.image,
+      generatedImageKitUrl: imageKitUrl,
+    });
+
+    let imageKitWorking = false;
+    try {
+      const probeRes = await fetch(imageKitUrl, { method: 'HEAD', mode: 'cors' });
+      if (probeRes.ok) {
+        imageKitWorking = true;
+        console.log(`✅ [ImageKit Success] ImageKit returned HTTP ${probeRes.status} for voter ${voter.id}`);
+      } else {
+        console.warn(`⚠️ [ImageKit Failed] HTTP ${probeRes.status}: ImageKit could not resolve this photo path.`, {
+          url: imageKitUrl,
+          status: probeRes.status
+        });
+        toast.error(`ImageKit unreachable (HTTP ${probeRes.status}). Using fallback scale.`);
+      }
+    } catch (probeErr) {
+      console.warn('⚠️ [ImageKit Network/CORS Error]:', probeErr);
+      toast.error('ImageKit failed. Using fallback scale.');
+    }
+
+    try {
+      if (imageKitWorking) {
+        // Use full AI resolution directly from ImageKit
+        setRefinedPhoto(imageKitUrl);
+        setCachedImage(voter.id, imageKitUrl, imageKitUrl);
+      } else {
+        // Fallback: local canvas rescale of original
+        const enhanced = await enhanceImageViaCanvas(voter.image, 480, 640);
+        setCachedImage(voter.id, enhanced, voter.image);
+        setRefinedPhoto(enhanced);
+      }
+    } catch (e: any) {
+      console.warn('Fallback error, showing original:', e);
+      setRefinedPhoto(voter.image);
+    } finally {
+      setIsRefiningPhoto(false);
+    }
+  };
+
+  const handleReEnhancePhoto = async () => {
+    if (!viewingVoter || !viewingVoter.image) return;
+    setIsRefiningPhoto(true);
+    try {
+      const enhanced = await enhanceImageViaCanvas(viewingVoter.image, 480, 640);
+      setCachedImage(viewingVoter.id, enhanced, viewingVoter.image);
+      setRefinedPhoto(enhanced);
+      toast.success('Photo re-enhanced & cached for 5 days!');
+    } catch (e: any) {
+      console.error('Re-enhance error:', e);
+      toast.error('Could not enhance photo.');
+    } finally {
+      setIsRefiningPhoto(false);
+    }
+  };
 
   // Name lookup cache for Ward and PU
   const [wardNames, setWardNames] = useState<Record<number, string>>({});
@@ -63,15 +188,20 @@ export default function Voters() {
     if (effectiveLga) {
       supabase
         .from('wards')
-        .select('id, name')
+        .select('id, name, ward_number')
         .eq('localgovernment_id', effectiveLga)
-        .order('name')
         .then(({ data }) => {
           if (data) {
-            setWards(data);
+            const sortedWards = [...data].sort((a: any, b: any) => {
+              const numA = parseInt(a.ward_number || '', 10);
+              const numB = parseInt(b.ward_number || '', 10);
+              if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+              return (a.name || '').localeCompare(b.name || '');
+            });
+            setWards(sortedWards);
             setWardNames(prev => {
               const updated = { ...prev };
-              data.forEach((w: any) => { updated[w.id] = w.name; });
+              sortedWards.forEach((w: any) => { updated[w.id] = w.name; });
               return updated;
             });
           }
@@ -89,15 +219,20 @@ export default function Voters() {
     if (effectiveWard) {
       supabase
         .from('polling_units')
-        .select('id, name, puId')
+        .select('id, name, puId, no')
         .eq('ward_id', effectiveWard)
-        .order('name')
         .then(({ data }) => {
           if (data) {
-            setPollingUnits(data);
+            const sortedPus = [...data].sort((a: any, b: any) => {
+              const noA = parseInt(a.no || (a.puId ? a.puId.split('-').pop() : '') || '', 10);
+              const noB = parseInt(b.no || (b.puId ? b.puId.split('-').pop() : '') || '', 10);
+              if (!isNaN(noA) && !isNaN(noB)) return noA - noB;
+              return (a.name || '').localeCompare(b.name || '');
+            });
+            setPollingUnits(sortedPus);
             setPuNames(prev => {
               const updated = { ...prev };
-              data.forEach((p: any) => { updated[p.id] = p.name; });
+              sortedPus.forEach((p: any) => { updated[p.id] = p.name; });
               return updated;
             });
           }
@@ -177,9 +312,10 @@ export default function Voters() {
 
   const handlePuChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value ? parseInt(e.target.value, 10) : null;
+    const puObj = pollingUnits.find(p => p.id === val);
     setSelectedPu(val);
     setVoterPuFilter(val);
-    fetchVotersPage(1, { lgaId: selectedLga, wardId: selectedWard, puId: val });
+    fetchVotersPage(1, { lgaId: selectedLga, wardId: selectedWard, puId: val, puid: puObj?.puId || null });
   };
 
   // Helper to format shortened PU (first 8 letters) before the phone number
@@ -683,21 +819,34 @@ export default function Voters() {
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Voter Register</h1>
           <p className="text-gray-500 dark:text-gray-400">Manage and update voter canvassing status</p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            setTempTemplate(customTemplate || stateTemplate || defaultTemplate);
-            setIsTemplateModalOpen(true);
-          }}
-          className="px-3.5 py-2 bg-white dark:bg-gray-800 border border-emerald-600/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-xs font-semibold rounded-lg flex items-center gap-2 shadow-xs transition self-start sm:self-auto cursor-pointer"
-          title="Customize your personal outreach message format"
-        >
-          <Edit3 size={15} className="text-emerald-600" />
-          <span>My Outreach Message</span>
-          {customTemplate && (
-            <span className="w-2 h-2 rounded-full bg-emerald-500" title="Personalized template active" />
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => {
+              setTempTemplate(customTemplate || stateTemplate || defaultTemplate);
+              setIsTemplateModalOpen(true);
+            }}
+            className="px-3.5 py-2 bg-white dark:bg-gray-800 border border-emerald-600/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-xs font-semibold rounded-lg flex items-center gap-2 shadow-xs transition self-start sm:self-auto cursor-pointer"
+            title="Customize your personal outreach message format"
+          >
+            <Edit3 size={15} className="text-emerald-600" />
+            <span>My Outreach Message</span>
+            {customTemplate && (
+              <span className="w-2 h-2 rounded-full bg-emerald-500" title="Personalized template active" />
+            )}
+          </button>
+          {import.meta.env.DEV && (
+            <button
+              type="button"
+              onClick={handleClearAllPhotoCache}
+              className="px-3.5 py-2 bg-white dark:bg-gray-800 border border-red-300 text-red-600 hover:bg-red-50 text-xs font-semibold rounded-lg flex items-center gap-2 shadow-xs transition cursor-pointer"
+              title="Clear all cached voter photos from localStorage (dev only)"
+            >
+              <Trash2 size={15} />
+              <span>Clear Cache</span>
+            </button>
           )}
-        </button>
+        </div>
       </div>
 
       {/* Jurisdiction Filters (LGA, Ward, PU) */}
@@ -756,9 +905,14 @@ export default function Voters() {
                   className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white focus:ring-2 focus:ring-[#004d25] focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
                 >
                   <option value="">All Wards</option>
-                  {wards.map(ward => (
-                    <option key={ward.id} value={ward.id}>{ward.name}</option>
-                  ))}
+                  {wards.map(ward => {
+                    const wardNo = ward.ward_number ? `${String(ward.ward_number).padStart(2, '0')} - ` : '';
+                    return (
+                      <option key={ward.id} value={ward.id}>
+                        {wardNo}{ward.name}
+                      </option>
+                    );
+                  })}
                 </select>
               )}
             </div>
@@ -775,11 +929,15 @@ export default function Voters() {
                 className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white focus:ring-2 focus:ring-[#004d25] focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
               >
                 <option value="">All Polling Units</option>
-                {pollingUnits.map(pu => (
-                  <option key={pu.id} value={pu.id}>
-                    {pu.name} {pu.puId ? `(${pu.puId})` : ''}
-                  </option>
-                ))}
+                {pollingUnits.map(pu => {
+                  const puNo = pu.no ? String(pu.no).padStart(3, '0') : (pu.puId ? pu.puId.split('-').pop() : '');
+                  const puLabel = puNo ? `${puNo} - ${pu.name}` : pu.name;
+                  return (
+                    <option key={pu.id} value={pu.id}>
+                      {puLabel}
+                    </option>
+                  );
+                })}
               </select>
             </div>
           </div>
@@ -828,7 +986,17 @@ export default function Voters() {
 
       <div className="flex-1 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
         <div className="overflow-y-auto flex-1">
-          {filteredVoters.length === 0 ? (
+          {isLoadingVoters ? (
+            <div className="flex flex-col items-center justify-center h-full min-h-[340px] text-center p-8">
+              <div className="w-14 h-14 bg-emerald-50 rounded-full flex items-center justify-center text-[#004d25] mb-4">
+                <Loader2 size={32} className="animate-spin text-[#004d25]" />
+              </div>
+              <h3 className="text-base font-semibold text-gray-900 mb-1">Loading Voter Records...</h3>
+              <p className="text-xs text-gray-500 max-w-sm">
+                Fetching voter data for your jurisdiction. Please wait a moment.
+              </p>
+            </div>
+          ) : filteredVoters.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center p-8">
               <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center text-gray-300 mb-4">
                 <UserCircle size={32} />
@@ -928,7 +1096,7 @@ export default function Voters() {
         </div>
         <div className="p-4 border-t border-gray-100 text-sm text-gray-500 bg-gray-50 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div>
-            Showing {filteredVoters.length} voters {isLoadingVoters && <span className="ml-2 text-xs text-[#004d25] italic font-medium animate-pulse">Loading...</span>}
+            Showing {filteredVoters.length} voters
           </div>
           <div className="flex items-center gap-3">
             <button 
@@ -966,13 +1134,46 @@ export default function Voters() {
             
             <div className="p-6 flex-1 overflow-y-auto">
               <div className="text-center mb-6">
-                <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center text-gray-400 mx-auto mb-3 overflow-hidden">
-                  {currentVoter.image ? (
-                    <img src={currentVoter.image} alt={currentVoter.name} className="w-full h-full object-cover" />
-                  ) : (
-                    <UserCircle size={48} />
-                  )}
-                </div>
+                {(() => {
+                  const cachedPhoto = currentVoter ? getCachedImage(currentVoter.id) : null;
+                  const displayImg = cachedPhoto || currentVoter.image;
+                  return (
+                    <div className="flex flex-col items-center">
+                      <div 
+                        onClick={() => handlePhotoClick(currentVoter)}
+                        className={cn(
+                          "relative group w-24 h-24 rounded-full mx-auto mb-2 overflow-hidden ring-4 transition shadow-md bg-gray-100 flex items-center justify-center",
+                          currentVoter.image 
+                            ? "cursor-pointer ring-emerald-500/25 hover:ring-emerald-600 hover:scale-105" 
+                            : "ring-gray-200"
+                        )}
+                        title={currentVoter.image ? "Click to view photo" : "No photo available"}
+                      >
+                        {displayImg ? (
+                          <img src={displayImg} alt={currentVoter.name} className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110" />
+                        ) : (
+                          <UserCircle size={56} className="text-gray-400" />
+                        )}
+                      </div>
+
+                      {currentVoter.image && (
+                        <button
+                          type="button"
+                          onClick={() => handlePhotoClick(currentVoter)}
+                          className={cn(
+                            "inline-flex items-center px-3 py-1 text-xs font-semibold rounded-full border transition cursor-pointer mb-2",
+                            cachedPhoto 
+                              ? "bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300" 
+                              : "bg-gray-50 hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 border-gray-200 hover:border-emerald-300"
+                          )}
+                          title="View photo"
+                        >
+                          <span>View Photo</span>
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
                 <h2 className="text-2xl font-bold text-gray-900">
                   {currentVoter.name}
                 </h2>
@@ -1487,6 +1688,97 @@ export default function Voters() {
                   </>
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 480px x 640px AI Refined Photo Viewer Modal */}
+      {photoViewerOpen && viewingVoter && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
+          <div className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl overflow-hidden border border-gray-100 dark:border-gray-800 flex flex-col">
+            {/* Header */}
+            <div className="px-4 py-2.5 flex items-center justify-end">
+              <button 
+                onClick={() => setPhotoViewerOpen(false)}
+                className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full text-gray-500 hover:text-gray-900 dark:hover:text-white transition cursor-pointer"
+                title="Close"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Photo Canvas Area (Fixed 480x640 portrait aspect ratio 3:4) */}
+            <div className="p-4 sm:p-6 flex flex-col items-center bg-gray-50 dark:bg-gray-950">
+              <div className="relative w-[270px] h-[360px] sm:w-[300px] sm:h-[400px] rounded-xl overflow-hidden shadow-xl border-2 border-emerald-500/30 bg-black flex items-center justify-center">
+                {isRefiningPhoto ? (
+                  <div className="flex flex-col items-center justify-center p-6 text-center text-white space-y-3">
+                    <Loader2 size={36} className="animate-spin text-emerald-400" />
+                    <p className="text-xs font-semibold text-emerald-100">Enhancing photo...</p>
+                  </div>
+                ) : (
+                  <>
+                    <img 
+                      src={showOriginalComparison ? viewingVoter.image : (refinedPhoto || viewingVoter.image)} 
+                      alt={viewingVoter.name} 
+                      className="w-full h-full object-cover transition duration-300"
+                    />
+                    {showOriginalComparison && (
+                      <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-[10px] font-bold shadow-sm backdrop-blur-md flex items-center gap-1 bg-black/60 text-white">
+                        <span>Original Low-Res</span>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* Voter metadata pill */}
+              <div className="mt-3 text-center">
+                <h4 className="font-bold text-sm text-gray-900 dark:text-white">{viewingVoter.name}</h4>
+                <p className="text-xs text-gray-500 font-mono mt-0.5">{viewingVoter.puId || viewingVoter.vin || 'INEC Voter'}</p>
+              </div>
+            </div>
+
+            {/* Actions Bar */}
+            <div className="px-5 py-3.5 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onMouseDown={() => setShowOriginalComparison(true)}
+                onMouseUp={() => setShowOriginalComparison(false)}
+                onTouchStart={() => setShowOriginalComparison(true)}
+                onTouchEnd={() => setShowOriginalComparison(false)}
+                disabled={isRefiningPhoto}
+                className="px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-200 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center gap-1.5 cursor-pointer select-none transition disabled:opacity-50"
+                title="Hold to preview original photo"
+              >
+                <Eye size={14} />
+                <span>Hold to Compare</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleReEnhancePhoto}
+                  disabled={isRefiningPhoto}
+                  className="px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 border border-emerald-300 rounded-lg flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
+                  title="Run enhancement pass again"
+                >
+                  <RefreshCw size={14} className={isRefiningPhoto ? "animate-spin" : ""} />
+                  <span>Re-Refine</span>
+                </button>
+
+                {refinedPhoto && (
+                  <a
+                    href={refinedPhoto}
+                    download={`voter_${(viewingVoter.name || 'photo').replace(/\s+/g, '_')}_480x640.jpg`}
+                    className="px-3.5 py-2 text-xs font-semibold text-white bg-[#004d25] hover:bg-[#006331] rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer transition"
+                    title="Download 480x640 portrait"
+                  >
+                    <Download size={14} />
+                    <span>Download</span>
+                  </a>
+                )}
+              </div>
             </div>
           </div>
         </div>
