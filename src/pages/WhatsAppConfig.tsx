@@ -9,7 +9,7 @@ import toast from 'react-hot-toast';
 import { useApp } from '../context/AppContext';
 import { greenApiService, WhatsAppStateConfig, WhatsAppInstance, KnowledgeEntry, GroupMonitor } from '../lib/greenApi';
 import { supabase } from '../lib/supabase';
-import { saveSmsConfig } from '../lib/smsService';
+import { getTwilioConfig, saveTwilioConfig, sendTwilioSms, TwilioStateConfig } from '../lib/smsService';
 
 export const WhatsAppConfig: React.FC = () => {
   const { user } = useApp();
@@ -145,15 +145,19 @@ export const WhatsAppConfig: React.FC = () => {
       ]);
 
       if (cfg) setConfig(cfg);
-      // Also load SMS fields (they may not be returned by greenApiService.getConfig)
-      const { data: smsCfg } = await supabase
-        .from('whatsapp_state_config')
-        .select('sms_api_key, sms_sender_id, sms_channel, sms_login_template')
-        .eq('state_id', stateId)
-        .maybeSingle();
-      if (smsCfg) {
-        setConfig(prev => ({ ...prev, ...smsCfg }));
-      }
+      
+      // Load Twilio config (per-state)
+      const twilioCfg = getTwilioConfig(stateId);
+      setConfig(prev => ({
+        ...prev,
+        twilio_account_sid: twilioCfg.account_sid,
+        twilio_auth_token: twilioCfg.auth_token,
+        twilio_api_key_sid: twilioCfg.api_key_sid,
+        twilio_api_secret: twilioCfg.api_secret,
+        twilio_from_number: twilioCfg.from_number,
+        sms_login_template: twilioCfg.sms_login_template,
+      }));
+
       setInstances(insts);
       setPoolStatus(pStatus);
       setKnowledgeList(kbs);
@@ -178,17 +182,50 @@ export const WhatsAppConfig: React.FC = () => {
     }
   };
 
+  const [testPhone, setTestPhone] = useState('');
+  const [testingSms, setTestingSms] = useState(false);
+  const [showTwilioToken, setShowTwilioToken] = useState(false);
+
+  const handleTestSms = async () => {
+    if (!testPhone) {
+      toast.error('Please enter a test phone number (e.g. 08012345678)');
+      return;
+    }
+    setTestingSms(true);
+    try {
+      await sendTwilioSms({
+        to: testPhone,
+        message: `EagleEye Twilio SMS Test: Configuration is active for State ID ${stateId}!`,
+        stateId,
+        config: {
+          account_sid: config.twilio_account_sid,
+          auth_token: config.twilio_auth_token,
+          api_key_sid: config.twilio_api_key_sid,
+          api_secret: config.twilio_api_secret,
+          from_number: config.twilio_from_number,
+        },
+      });
+      toast.success(`Test SMS sent to ${testPhone} via Twilio!`);
+    } catch (err: any) {
+      toast.error(err.message || 'Twilio test SMS failed');
+    } finally {
+      setTestingSms(false);
+    }
+  };
+
   const handleSaveConfig = async () => {
     setSaving(true);
     try {
       if (activeTab === 'sms') {
-        await saveSmsConfig(stateId, {
-          sms_api_key: config.sms_api_key,
-          sms_sender_id: config.sms_sender_id,
-          sms_channel: config.sms_channel,
+        saveTwilioConfig(stateId, {
+          account_sid: config.twilio_account_sid,
+          auth_token: config.twilio_auth_token,
+          api_key_sid: config.twilio_api_key_sid,
+          api_secret: config.twilio_api_secret,
+          from_number: config.twilio_from_number,
           sms_login_template: config.sms_login_template,
         });
-        toast.success('SMS configuration saved successfully');
+        toast.success('Twilio SMS configuration saved successfully');
       } else {
         const saved = await greenApiService.saveConfig(stateId, config);
         if (saved) {
@@ -591,59 +628,98 @@ export const WhatsAppConfig: React.FC = () => {
             <div>
               <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
                 <Phone className="h-5 w-5 text-[#004d25]" />
-                Termii SMS Credentials
+                Twilio SMS Credentials
               </h2>
               <p className="text-xs text-gray-500 mt-1">
-                Configure your Termii API key and sender ID for this state. Credentials are stored per-state and never shared across states.
+                Configure your Twilio credentials for this state. Whenever agents are registered, their login details (phone &amp; password) are sent automatically via Twilio.
               </p>
             </div>
 
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 mb-1">
-                API Key
+                Twilio Account SID
               </label>
               <input
-                type="password"
-                value={config.sms_api_key || ''}
-                onChange={e => setConfig({ ...config, sms_api_key: e.target.value })}
-                placeholder="Your Termii API key"
+                type="text"
+                value={config.twilio_account_sid || ''}
+                onChange={e => setConfig({ ...config, twilio_account_sid: e.target.value })}
+                placeholder="AC... (your Twilio Account SID)"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 font-mono focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
+              />
+              <p className="text-[11px] text-gray-400 mt-1">Found in your Twilio Console Account Info.</p>
+            </div>
+
+            <div>
+              <div className="flex justify-between items-center mb-1">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700">
+                  Twilio Auth Token
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowTwilioToken(!showTwilioToken)}
+                  className="text-xs text-[#004d25] hover:underline cursor-pointer"
+                >
+                  {showTwilioToken ? 'Hide Token' : 'Show Token'}
+                </button>
+              </div>
+              <input
+                type={showTwilioToken ? 'text' : 'password'}
+                value={config.twilio_auth_token || ''}
+                onChange={e => setConfig({ ...config, twilio_auth_token: e.target.value })}
+                placeholder="Twilio Auth Token"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 font-mono focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
               />
             </div>
 
-            <div>
+            <div className="pt-2 border-t border-gray-100">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Optional: API Key &amp; Secret (Builder Tools)</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 mb-1">
+                  API Key SID (SK...)
+                </label>
+                <input
+                  type="text"
+                  value={config.twilio_api_key_sid || ''}
+                  onChange={e => setConfig({ ...config, twilio_api_key_sid: e.target.value })}
+                  placeholder="SK... (your API Key SID)"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 font-mono focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 mb-1">
+                  API Secret
+                </label>
+                <input
+                  type="password"
+                  value={config.twilio_api_secret || ''}
+                  onChange={e => setConfig({ ...config, twilio_api_secret: e.target.value })}
+                  placeholder="API Secret"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 font-mono focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-gray-100">
               <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 mb-1">
-                Sender ID
+                Sender ID / From Number
               </label>
               <input
                 type="text"
-                value={config.sms_sender_id || ''}
-                onChange={e => setConfig({ ...config, sms_sender_id: e.target.value })}
-                placeholder="e.g. EagleEye (3–11 chars)"
-                maxLength={11}
+                value={config.twilio_from_number || ''}
+                onChange={e => setConfig({ ...config, twilio_from_number: e.target.value })}
+                placeholder="e.g. EagleEye or +13802573907"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
               />
-              <p className="text-xs text-gray-400 mt-1">Alphanumeric, 3–11 characters.</p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 mb-1">
-                Channel / Route
-              </label>
-              <select
-                value={config.sms_channel || 'dnd'}
-                onChange={e => setConfig({ ...config, sms_channel: e.target.value as any })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
-              >
-                <option value="dnd">DND — Transactional (bypasses Do-Not-Disturb, recommended)</option>
-                <option value="generic">Generic — Promotional</option>
-                <option value="whatsapp">WhatsApp</option>
-                <option value="voice">Voice (text-to-speech call)</option>
-              </select>
-              <p className="text-xs text-gray-400 mt-1">Use <strong>DND</strong> for login credentials to guarantee delivery to all numbers.</p>
+              <p className="text-xs text-gray-400 mt-1">
+                Enter an Alphanumeric Sender ID (e.g. <strong>EagleEye</strong> or <strong>OgunADC</strong>), a Twilio phone number, or a Messaging Service SID (MG...).
+              </p>
             </div>
           </div>
 
+          {/* Template Configuration */}
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-4">
             <div>
               <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
@@ -651,7 +727,7 @@ export const WhatsAppConfig: React.FC = () => {
                 Login Credentials SMS Template
               </h2>
               <p className="text-xs text-gray-500 mt-1">
-                This message is sent automatically when an agent is registered, and can be re-sent manually from the Agents page.
+                Sent automatically when an agent is registered, and can be re-sent manually by state, LGA, or ward admins from the Agents page.
               </p>
             </div>
 
@@ -666,11 +742,11 @@ export const WhatsAppConfig: React.FC = () => {
                   {tag}
                 </span>
               ))}
-              <span className="text-gray-400 italic">Click a tag to insert it into the template</span>
+              <span className="text-gray-400 italic">Click a tag to insert into template</span>
             </div>
 
             <textarea
-              rows={5}
+              rows={4}
               value={config.sms_login_template || ''}
               onChange={e => setConfig({ ...config, sms_login_template: e.target.value })}
               placeholder="Hello {{firstname}}, your EagleEye login credentials: Phone: {{phone}}, Password: {{password}}. Keep this safe and do not share."
@@ -679,7 +755,7 @@ export const WhatsAppConfig: React.FC = () => {
 
             <div className="bg-gray-50 border border-dashed border-gray-200 rounded-lg p-3 text-xs text-gray-500 space-y-1">
               <p className="font-semibold text-gray-700">Preview</p>
-              <p className="break-words">
+              <p className="break-words font-mono text-gray-800">
                 {(config.sms_login_template || 'Hello {{firstname}}, your login: Phone: {{phone}}, Password: {{password}}.')
                   .replace(/\{\{firstname\}\}/gi, 'Adeola')
                   .replace(/\{\{phone\}\}/gi, '08012345678')
@@ -688,8 +764,40 @@ export const WhatsAppConfig: React.FC = () => {
             </div>
 
             <p className="text-xs text-gray-400">
-              Character count: {(config.sms_login_template || '').length} / 160 per page
+              Character count: {(config.sms_login_template || '').length} / 160 per SMS segment
             </p>
+          </div>
+
+          {/* Test SMS tool */}
+          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-4">
+            <div>
+              <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                <Send className="h-4 w-4 text-[#004d25]" />
+                Test Twilio SMS
+              </h2>
+              <p className="text-xs text-gray-500 mt-1">
+                Send a quick test message to verify that your Twilio credentials and sender ID are working properly.
+              </p>
+            </div>
+
+            <div className="flex gap-2">
+              <input
+                type="tel"
+                value={testPhone}
+                onChange={e => setTestPhone(e.target.value)}
+                placeholder="Test phone (e.g. 08012345678)"
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
+              />
+              <button
+                type="button"
+                onClick={handleTestSms}
+                disabled={testingSms || !testPhone}
+                className="px-4 py-2 bg-[#d4af37] hover:bg-[#c4a030] text-[#004d25] font-semibold text-sm rounded-lg transition disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+              >
+                {testingSms ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                Send Test
+              </button>
+            </div>
           </div>
 
           <button
@@ -698,7 +806,7 @@ export const WhatsAppConfig: React.FC = () => {
             className="w-full px-4 py-2.5 bg-[#004d25] hover:bg-[#00381b] text-white rounded-lg font-medium flex items-center justify-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
           >
             {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-            Save SMS Settings
+            Save Twilio SMS Settings
           </button>
         </div>
       )}

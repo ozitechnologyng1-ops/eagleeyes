@@ -18,10 +18,12 @@ export interface WhatsAppStateConfig {
   ai_model: string;
   ai_api_key?: string;
   group_ai_system_prompt: string;
-  // Termii SMS
-  sms_api_key?: string;
-  sms_sender_id?: string;
-  sms_channel?: 'dnd' | 'generic' | 'whatsapp' | 'voice';
+  // Twilio SMS
+  twilio_account_sid?: string;
+  twilio_auth_token?: string;
+  twilio_api_key_sid?: string;
+  twilio_api_secret?: string;
+  twilio_from_number?: string;
   sms_login_template?: string;
 }
 

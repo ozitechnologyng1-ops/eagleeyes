@@ -348,7 +348,7 @@ export default function Voters() {
   const [showNotesList, setShowNotesList] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  // International phone formatter: 234... instead of 080.../070...
+  // International phone formatter: 234... instead of 080.../070... (for WhatsApp & APIs)
   const formatPhone = (phone?: string) => {
     if (!phone) return 'N/A';
     let clean = String(phone).replace(/\D/g, '');
@@ -358,6 +358,31 @@ export default function Voters() {
       return '234' + clean;
     }
     return clean || phone;
+  };
+
+  // Domestic phone formatter: convert 2348... to 08... for standard Nigerian phone calls
+  const formatCallPhone = (phone?: string) => {
+    if (!phone) return '';
+    let clean = String(phone).replace(/\D/g, '');
+    if (clean.startsWith('234') && clean.length >= 12) {
+      return '0' + clean.slice(3);
+    }
+    if (clean.startsWith('0')) {
+      return clean;
+    }
+    if (clean.length === 10) {
+      return '0' + clean;
+    }
+    return clean;
+  };
+
+  // High-visibility formatted phone: e.g. 0816 024 8732
+  const formatDisplayPhone = (phone?: string) => {
+    const local = formatCallPhone(phone);
+    if (local.length === 11) {
+      return `${local.slice(0, 4)} ${local.slice(4, 7)} ${local.slice(7)}`;
+    }
+    return local || phone || '';
   };
 
   const getFirstName = (fullName?: string) => {
@@ -603,14 +628,15 @@ export default function Voters() {
   const handleCallVoter = async (voter: Voter, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     if (!voter.phone) return;
-    const cleanPhone = formatPhone(voter.phone);
+    const dialPhone = formatCallPhone(voter.phone);
+    const intlPhone = formatPhone(voter.phone);
     const earnAmount = Number(stateConfig?.earning_per_call ?? 20);
 
     logVoterContact(voter.id, 'call');
     markVoterCanvassed(voter.id, voter.phone);
 
-    // Trigger phone dialer
-    window.location.href = `tel:${cleanPhone}`;
+    // Trigger phone dialer using domestic Nigerian format: 081...
+    window.location.href = `tel:${dialPhone}`;
 
     if (user?.id) {
       try {
@@ -620,7 +646,7 @@ export default function Voters() {
             agentId: user.id,
             type: 'call',
             voterId: voter.id,
-            voterPhone: cleanPhone,
+            voterPhone: dialPhone,
             voterName: voter.name
           }
         });
@@ -1177,133 +1203,71 @@ export default function Voters() {
                 <h2 className="text-2xl font-bold text-gray-900">
                   {currentVoter.name}
                 </h2>
-                <p className="text-xs text-emerald-800 font-medium mt-1">
-                  {wardNames[currentVoter.wardId || 0] ? `${wardNames[currentVoter.wardId || 0]} • ` : ''}
-                  {puNames[currentVoter.puNumberId || 0] || currentVoter.puId || currentVoter.vin}
-                </p>
+                {currentVoter.phone ? (
+                  <div className="mt-2.5 inline-flex items-center justify-center gap-2 px-4 py-1.5 bg-emerald-50 border border-emerald-200 rounded-full shadow-xs">
+                    <Phone size={16} className="text-emerald-700 shrink-0" />
+                    <span className="text-lg sm:text-xl font-extrabold text-[#004d25] tracking-wider font-mono">
+                      {formatDisplayPhone(currentVoter.phone)}
+                    </span>
+                    {isVoterNotOnWa(currentVoter) && (
+                      <span className="text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                        No WA
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-400 italic mt-1">No phone number</p>
+                )}
               </div>
 
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    <span className="text-gray-500 text-xs block mb-1">Ward</span>
-                    <span className="font-semibold text-gray-900 text-xs block break-words" title={wardNames[currentVoter.wardId || 0] || 'Ward'}>
-                      {wardNames[currentVoter.wardId || 0] || (currentVoter.wardId ? `Ward ${currentVoter.wardId}` : 'N/A')}
-                    </span>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    <span className="text-gray-500 text-xs block mb-1">Polling Unit (PU)</span>
-                    <span className="font-semibold text-gray-900 text-xs block break-words" title={puNames[currentVoter.puNumberId || 0] || currentVoter.puId || 'PU'}>
-                      {puNames[currentVoter.puNumberId || 0] || currentVoter.puId || 'N/A'}
-                    </span>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    <span className="text-gray-500 text-xs block mb-1">PU Code / VIN</span>
-                    <span className="font-semibold text-gray-900 text-xs block">
-                      {currentVoter.puId || currentVoter.vin || 'N/A'}
-                    </span>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    <span className="text-gray-500 text-xs block mb-1">Phone Number</span>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-semibold text-gray-900 text-xs block font-mono">
-                        {formatPhone(currentVoter.phone)}
-                      </span>
-                      {isVoterNotOnWa(currentVoter) && (
-                        <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1 rounded">
-                          Not on WhatsApp
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    <span className="text-gray-500 text-xs block mb-1">Date of Birth</span>
-                    <span className="font-semibold text-gray-900 text-xs block">
-                      {currentVoter.dob || 'N/A'}
-                    </span>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    <span className="text-gray-500 text-xs block mb-1">Location ID</span>
-                    <span className="font-semibold text-gray-900 text-xs block">
-                      {currentVoter.locationId || 'N/A'}
-                    </span>
-                  </div>
-                </div>
-
                 {/* Official Campaign Outreach Box */}
                 {currentVoter.phone && (
                   <div className={cn(
-                    "p-3.5 border rounded-xl space-y-2.5",
+                    "p-4 border rounded-2xl space-y-3",
                     isVoterNotOnWa(currentVoter)
                       ? "bg-amber-50/70 border-amber-200 text-amber-900"
-                      : "bg-emerald-50 border-emerald-200 text-emerald-900"
+                      : "bg-emerald-50/70 border-emerald-200 text-emerald-900"
                   )}>
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
-                        {hasWaInstance && isVoterNotOnWa(currentVoter) ? (
-                          <>
-                            <Phone size={14} className="text-amber-700" />
-                            Direct Phone Outreach
-                          </>
-                        ) : (
-                          <>
-                            <MessageSquare size={14} className={isVoterNotOnWa(currentVoter) ? "text-amber-700" : "text-emerald-700"} />
-                            {hasWaInstance ? "WhatsApp Campaign Flyer" : "Direct WhatsApp (wa.me)"}
-                          </>
-                        )}
+                        <MessageSquare size={14} className={isVoterNotOnWa(currentVoter) ? "text-amber-700" : "text-emerald-700"} />
+                        Campaign Outreach
                       </span>
-                      <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
-                        +₦{hasWaInstance && isVoterNotOnWa(currentVoter) 
-                          ? (stateConfig?.earning_per_call || 20) 
-                          : hasWaInstance 
+                      <span className="text-[11px] bg-emerald-100 text-emerald-800 font-bold px-2.5 py-0.5 rounded-full">
+                        +₦{hasWaInstance 
                           ? (stateConfig?.earning_per_chat || 50) 
                           : (stateConfig?.earning_per_manual_wa || 15)} Earned
                       </span>
                     </div>
-                    <p className="text-xs text-emerald-800">
-                      {hasWaInstance && isVoterNotOnWa(currentVoter)
-                        ? "This voter is verified not on WhatsApp. Call the voter directly from your phone to canvass and earn your outreach reward."
-                        : hasWaInstance
-                        ? "Dispatches your state candidate flyer with personalized voter message directly from your phone."
-                        : "Opens WhatsApp directly on your phone via wa.me link with your custom outreach message prefilled."}
-                    </p>
-                    
-                    {hasWaInstance && isVoterNotOnWa(currentVoter) ? (
+
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      <button
+                        type="button"
+                        disabled={sendingVoterId === currentVoter.id}
+                        onClick={() => handleOpenWaModal(currentVoter)}
+                        className={cn(
+                          "w-full py-3.5 px-4 text-white text-sm sm:text-base font-bold rounded-xl shadow-md flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-98 disabled:opacity-60",
+                          isVoterNotOnWa(currentVoter)
+                            ? "bg-amber-600 hover:bg-amber-700"
+                            : "bg-[#25D366] hover:bg-[#20ba59] shadow-emerald-500/20"
+                        )}
+                        title="WhatsApp chat with voter"
+                      >
+                        <MessageCircle size={20} className="shrink-0" />
+                        <span>WhatsApp</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => handleCallVoter(currentVoter)}
-                        className="w-full py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg shadow-sm flex items-center justify-center gap-2 transition cursor-pointer"
+                        className="w-full py-3.5 px-4 bg-[#004d25] hover:bg-[#006331] text-white text-sm sm:text-base font-bold rounded-xl shadow-md flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-98 shadow-green-950/20"
+                        title={`Call ${formatDisplayPhone(currentVoter.phone)} directly`}
                       >
-                        <Phone size={14} />
-                        <span>Call Voter Directly (+₦{stateConfig?.earning_per_call || 20})</span>
+                        <Phone size={20} className="shrink-0" />
+                        <span>Call</span>
                       </button>
-                    ) : (
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          disabled={sendingVoterId === currentVoter.id}
-                          onClick={() => handleOpenWaModal(currentVoter)}
-                          className={cn(
-                            "flex-1 py-2.5 text-white text-xs font-semibold rounded-lg shadow-sm flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-60",
-                            isVoterNotOnWa(currentVoter)
-                              ? "bg-amber-600 hover:bg-amber-700"
-                              : "bg-[#004d25] hover:bg-[#006331]"
-                          )}
-                        >
-                          {hasWaInstance ? <Send size={14} /> : <MessageCircle size={14} />}
-                          <span>{hasWaInstance ? "WhatsApp Outreach" : "Open in WhatsApp"}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleCallVoter(currentVoter)}
-                          className="px-3 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-semibold rounded-lg flex items-center justify-center gap-1 transition cursor-pointer"
-                          title="Call voter directly"
-                        >
-                          <Phone size={14} />
-                          <span>Call</span>
-                        </button>
-                      </div>
-                    )}
+                    </div>
                   </div>
                 )}
 
@@ -1683,7 +1647,7 @@ export default function Voters() {
                     <span>
                       {hasWaInstance 
                         ? `Send Flyer (+₦${stateConfig?.earning_per_chat || 50})`
-                        : `Open WhatsApp (+₦${stateConfig?.earning_per_manual_wa || 15})`}
+                        : `WhatsApp (+₦${stateConfig?.earning_per_manual_wa || 15})`}
                     </span>
                   </>
                 )}

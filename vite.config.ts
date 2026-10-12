@@ -6,7 +6,19 @@ import {defineConfig, loadEnv} from 'vite';
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      react(), 
+      tailwindcss(),
+      {
+        name: 'twilio-dev-api',
+        configureServer(server) {
+          server.middlewares.use('/api/send-sms', async (req, res) => {
+            const { default: handler } = await import('./api/send-sms.ts');
+            await handler(req, res);
+          });
+        }
+      }
+    ],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
     },

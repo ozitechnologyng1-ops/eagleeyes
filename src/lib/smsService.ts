@@ -1,45 +1,97 @@
-import { supabase } from './supabase';
-
-export interface SmsStateConfig {
-  sms_api_key: string;
-  sms_sender_id: string;
-  sms_channel: 'dnd' | 'generic' | 'whatsapp' | 'voice';
+export interface TwilioStateConfig {
+  account_sid: string;
+  auth_token: string;
+  api_key_sid?: string;
+  api_secret?: string;
+  from_number: string;
   sms_login_template: string;
 }
 
 export interface SendSmsParams {
   to: string;
   message: string;
-  apiKey: string;
-  senderId: string;
-  channel: string;
+  stateId?: number;
+  config?: Partial<TwilioStateConfig>;
 }
 
-const TERMII_BASE = 'https://v3.api.termii.com';
+export const DEFAULT_TWILIO_CONFIG: TwilioStateConfig = {
+  account_sid: import.meta.env.VITE_TWILIO_ACCOUNT_SID || '',
+  auth_token: import.meta.env.VITE_TWILIO_AUTH_TOKEN || '',
+  api_key_sid: import.meta.env.VITE_TWILIO_API_KEY_SID || '',
+  api_secret: import.meta.env.VITE_TWILIO_API_SECRET || '',
+  from_number: 'EagleEye',
+  sms_login_template: 'Hello {{firstname}}, your EagleEye login credentials: Phone: {{phone}}, Password: {{password}}. Keep this safe.',
+};
 
-export async function sendSms({ to, message, apiKey, senderId, channel }: SendSmsParams): Promise<void> {
-  // Normalise Nigerian number to international format
-  let phone = to.replace(/\D/g, '');
-  if (phone.startsWith('0')) phone = '234' + phone.slice(1);
-  if (!phone.startsWith('234')) phone = '234' + phone;
+/** Get Twilio configuration for a specific state */
+export function getTwilioConfig(stateId: number = 27): TwilioStateConfig {
+  try {
+    const raw = localStorage.getItem(`eagleeye_twilio_config_${stateId}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        ...DEFAULT_TWILIO_CONFIG,
+        ...parsed,
+      };
+    }
+  } catch (e) {
+    console.warn('Failed to read Twilio config from localStorage:', e);
+  }
+  return { ...DEFAULT_TWILIO_CONFIG };
+}
 
-  const res = await fetch(`${TERMII_BASE}/api/sms/send`, {
+/** Save Twilio configuration for a specific state */
+export function saveTwilioConfig(stateId: number = 27, config: Partial<TwilioStateConfig>): TwilioStateConfig {
+  const current = getTwilioConfig(stateId);
+  const updated: TwilioStateConfig = {
+    ...current,
+    ...config,
+  };
+  try {
+    localStorage.setItem(`eagleeye_twilio_config_${stateId}`, JSON.stringify(updated));
+  } catch (e) {
+    console.error('Failed to save Twilio config to localStorage:', e);
+  }
+  return updated;
+}
+
+/** Send SMS via the Twilio serverless relay */
+export async function sendTwilioSms({ to, message, stateId = 27, config }: SendSmsParams): Promise<{ success: boolean; messageId?: string }> {
+  const activeConfig = config ? { ...getTwilioConfig(stateId), ...config } : getTwilioConfig(stateId);
+
+  const res = await fetch('/api/send-sms', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({
-      api_key: apiKey,
-      to: phone,
-      from: senderId,
-      sms: message,
-      type: 'plain',
-      channel,
+      to,
+      message,
+      accountSid: activeConfig.account_sid,
+      authToken: activeConfig.auth_token,
+      apiKeySid: activeConfig.api_key_sid,
+      apiSecret: activeConfig.api_secret,
+      fromNumber: activeConfig.from_number,
     }),
   });
 
-  const json = await res.json();
-  if (!res.ok || (json.code && json.code !== 'ok')) {
-    throw new Error(json.message || `SMS send failed (HTTP ${res.status})`);
+  const data = await res.json().catch(() => ({}));
+
+  console.log('[Twilio API Response Status]:', res.status, res.statusText);
+  console.log('[Twilio Full Response Body]:', data);
+
+  if (!res.ok || !data.success) {
+    console.error('[Twilio SMS Error]:', {
+      error: data.error,
+      code: data.code,
+      moreInfo: data.moreInfo,
+      raw: data.twilioRaw
+    });
+    const errorMsg = data.error || (data.code ? `Twilio Error (${data.code})` : `Failed to send SMS (HTTP ${res.status})`);
+    throw new Error(errorMsg);
   }
+
+  return { success: true, messageId: data.messageId };
 }
 
 /** Interpolate template variables: {{firstname}}, {{phone}}, {{password}} */
@@ -48,27 +100,7 @@ export function buildLoginSms(
   vars: { firstname: string; phone: string; password: string }
 ): string {
   return template
-    .replace(/\{\{firstname\}\}/gi, vars.firstname)
-    .replace(/\{\{phone\}\}/gi, vars.phone)
-    .replace(/\{\{password\}\}/gi, vars.password);
-}
-
-/** Fetch SMS config for a given state from whatsapp_state_config */
-export async function getSmsConfig(stateId: number): Promise<SmsStateConfig | null> {
-  const { data, error } = await supabase
-    .from('whatsapp_state_config')
-    .select('sms_api_key, sms_sender_id, sms_channel, sms_login_template')
-    .eq('state_id', stateId)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data as SmsStateConfig | null;
-}
-
-/** Upsert SMS config fields directly into whatsapp_state_config */
-export async function saveSmsConfig(stateId: number, cfg: Partial<SmsStateConfig>): Promise<void> {
-  const { error } = await supabase
-    .from('whatsapp_state_config')
-    .upsert({ state_id: stateId, ...cfg }, { onConflict: 'state_id' });
-  if (error) throw error;
+    .replace(/\{\{firstname\}\}/gi, vars.firstname || '')
+    .replace(/\{\{phone\}\}/gi, vars.phone || '')
+    .replace(/\{\{password\}\}/gi, vars.password || '');
 }

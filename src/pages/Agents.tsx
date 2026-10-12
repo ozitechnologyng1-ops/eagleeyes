@@ -1,11 +1,11 @@
 import React, { useState, useCallback } from 'react';
 import { useApp, Role, Location, Agent, roleHierarchy } from '../context/AppContext';
-import { Users, Plus, Search, ShieldAlert, CheckCircle, XCircle, Loader2, SendHorizonal } from 'lucide-react';
+import { Users, Plus, Search, ShieldAlert, CheckCircle, XCircle, Loader2, SendHorizonal, KeyRound, RefreshCw, X, Send } from 'lucide-react';
 import { cn, getFriendlyErrorMessage } from '../lib/utils';
 import AgentModal from '../components/AgentModal';
 import { supabase } from '../lib/supabase';
 import toast from 'react-hot-toast';
-import { sendSms, buildLoginSms, getSmsConfig } from '../lib/smsService';
+import { sendTwilioSms, buildLoginSms, getTwilioConfig } from '../lib/smsService';
 
 const JurisdictionCell = ({ id, locations }: { id: string, locations: Location[] }) => {
   const existing = locations.find(l => l.id === id);
@@ -87,38 +87,58 @@ export default function Agents() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editAgent, setEditAgent] = useState<Agent | null>(null);
-  const [resendingId, setResendingId] = useState<string | null>(null);
+  const [smsModalAgent, setSmsModalAgent] = useState<Agent | null>(null);
+  const [smsPassword, setSmsPassword] = useState('');
+  const [syncPasswordToDb, setSyncPasswordToDb] = useState(true);
+  const [sendingSms, setSendingSms] = useState(false);
 
-  const handleResendSms = async (agent: Agent, e: React.MouseEvent) => {
+  const generateTempPassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let rand = '';
+    for (let i = 0; i < 4; i++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
+    return `ADC@${rand}`;
+  };
+
+  const handleOpenSmsModal = (agent: Agent, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!agent.stateId) { toast.error('No state associated with this agent'); return; }
-    setResendingId(agent.id);
+    setSmsModalAgent(agent);
+    setSmsPassword(generateTempPassword());
+    setSyncPasswordToDb(true);
+  };
+
+  const handleSendSms = async () => {
+    if (!smsModalAgent) return;
+    setSendingSms(true);
     try {
-      const smsConfig = await getSmsConfig(agent.stateId);
-      if (!smsConfig?.sms_api_key || !smsConfig?.sms_sender_id) {
-        toast.error('SMS not configured for this state. Set it up in Message Hub.');
-        return;
-      }
-      const template = smsConfig.sms_login_template ||
-        'Hello {{firstname}}, your EagleEye login: Phone: {{phone}}. Contact your admin for your password.';
-      // We don't store the plain password after creation — remind admin
+      const targetState = smsModalAgent.stateId || user?.stateId || 27;
+      const twilioConfig = getTwilioConfig(targetState);
+      const template = twilioConfig.sms_login_template ||
+        'Hello {{firstname}}, your EagleEye login credentials: Phone: {{phone}}, Password: {{password}}. Keep this safe.';
+
       const message = buildLoginSms(template, {
-        firstname: agent.firstName || agent.name.split(' ')[0] || '',
-        phone: agent.phone,
-        password: '(contact your admin)',
+        firstname: smsModalAgent.firstName || smsModalAgent.name.split(' ')[0] || '',
+        phone: smsModalAgent.phone,
+        password: smsPassword || '(as registered)',
       });
-      await sendSms({
-        to: agent.phone,
+
+      // Update password hash in database if synced
+      if (syncPasswordToDb && smsPassword) {
+        await updateAgent(smsModalAgent.id, { password: smsPassword });
+      }
+
+      await sendTwilioSms({
+        to: smsModalAgent.phone,
         message,
-        apiKey: smsConfig.sms_api_key,
-        senderId: smsConfig.sms_sender_id,
-        channel: smsConfig.sms_channel || 'dnd',
+        stateId: targetState,
+        config: twilioConfig,
       });
-      toast.success(`SMS sent to ${agent.name}`);
+
+      toast.success(`Login credentials SMS sent to ${smsModalAgent.name} via Twilio!`);
+      setSmsModalAgent(null);
     } catch (err: any) {
       toast.error(err.message || 'Failed to send SMS');
     } finally {
-      setResendingId(null);
+      setSendingSms(false);
     }
   };
 
@@ -345,14 +365,11 @@ export default function Agents() {
                     </td>
                     <td className="px-6 py-4 text-right space-x-2" onClick={(e) => e.stopPropagation()}>
                       <button
-                        onClick={(e) => handleResendSms(agent, e)}
-                        disabled={resendingId === agent.id}
-                        className="text-blue-600 hover:text-blue-800 font-medium text-xs disabled:opacity-50 inline-flex items-center gap-1"
-                        title="Resend login SMS"
+                        onClick={(e) => handleOpenSmsModal(agent, e)}
+                        className="text-blue-600 hover:text-blue-800 font-medium text-xs inline-flex items-center gap-1 cursor-pointer"
+                        title="Send login credentials SMS via Twilio"
                       >
-                        {resendingId === agent.id
-                          ? <Loader2 size={12} className="animate-spin" />
-                          : <SendHorizonal size={12} />}
+                        <SendHorizonal size={12} />
                         SMS
                       </button>
                       {agent.status !== 'active' && (
@@ -407,6 +424,103 @@ export default function Agents() {
         fixedLocation={undefined}
         userRole={user.role}
       />
+
+      {/* Resend Login Credentials SMS Modal */}
+      {smsModalAgent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setSmsModalAgent(null)} />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-4 border-b border-gray-100 bg-[#004d25] text-white flex justify-between items-center">
+              <div>
+                <h3 className="font-bold text-base flex items-center gap-2">
+                  <SendHorizonal size={18} />
+                  Send Credentials via Twilio
+                </h3>
+                <p className="text-xs text-green-100">
+                  Recipient: {smsModalAgent.name} ({smsModalAgent.phone})
+                </p>
+              </div>
+              <button 
+                onClick={() => setSmsModalAgent(null)} 
+                className="text-green-100 hover:text-white cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700">
+                    Password to Send in SMS
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setSmsPassword(generateTempPassword())}
+                    className="text-xs text-[#004d25] hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                  >
+                    <RefreshCw size={11} /> Generate New
+                  </button>
+                </div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={smsPassword}
+                    onChange={(e) => setSmsPassword(e.target.value)}
+                    placeholder="Enter password..."
+                    className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 font-mono focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
+                  />
+                  <KeyRound size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 bg-green-50 p-3 rounded-lg border border-green-200 text-xs text-green-900">
+                <input
+                  id="sync-pwd-checkbox"
+                  type="checkbox"
+                  checked={syncPasswordToDb}
+                  onChange={(e) => setSyncPasswordToDb(e.target.checked)}
+                  className="rounded text-[#004d25] focus:ring-[#004d25] cursor-pointer"
+                />
+                <label htmlFor="sync-pwd-checkbox" className="cursor-pointer select-none">
+                  Update agent password in database so they can log in with this password
+                </label>
+              </div>
+
+              <div className="bg-gray-50 border border-dashed border-gray-200 rounded-lg p-3 text-xs space-y-1">
+                <span className="font-semibold text-gray-700 block">SMS Message Preview:</span>
+                <p className="font-mono text-gray-800 break-words">
+                  {(getTwilioConfig(smsModalAgent.stateId || user.stateId || 27).sms_login_template ||
+                    'Hello {{firstname}}, your EagleEye login credentials: Phone: {{phone}}, Password: {{password}}. Keep this safe.')
+                    .replace(/\{\{firstname\}\}/gi, smsModalAgent.firstName || smsModalAgent.name.split(' ')[0] || '')
+                    .replace(/\{\{phone\}\}/gi, smsModalAgent.phone)
+                    .replace(/\{\{password\}\}/gi, smsPassword || '(as registered)')}
+                </p>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSmsModalAgent(null)}
+                  disabled={sendingSms}
+                  className="flex-1 py-2 px-3 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSendSms}
+                  disabled={sendingSms || !smsPassword}
+                  className="flex-1 py-2 px-3 bg-[#004d25] hover:bg-[#00381b] text-white rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50"
+                >
+                  {sendingSms ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                  Send via Twilio
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
