@@ -11,6 +11,7 @@ pnpm-debug.log*
 
 # Environment and secrets
 .env*
+env.*
 
 
 # IDE & Editor files
@@ -35,13 +36,19 @@ metadata.json
 
 playwright/.auth/
 env.text.local
+env.test.local
 testvite+.md
 
 # Local documentation & scratch files
+green-api-doc.txt
+docs/
+vite-check-report.txt
 documentation.md
 PolicyFlow.txt
 fetch*.js
 *.sql
+!supabase/security/*.sql
+!tests/security/fixtures/*.sql
 
 # Data dumps
 *.csv
