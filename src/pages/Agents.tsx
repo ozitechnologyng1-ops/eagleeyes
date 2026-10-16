@@ -172,6 +172,7 @@ export default function Agents() {
         to: smsModalAgent.phone,
         message,
         stateId: targetState,
+        config: twilioConfig,
       });
 
       toast.success(`Login credentials SMS sent to ${smsModalAgent.name} via Twilio!`);

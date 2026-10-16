@@ -1,52 +1,146 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
+export default async function handler(req: any, res: any) {
+  // Set CORS headers
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-export default async function handler(
-  req: IncomingMessage & { body?: unknown },
-  res: ServerResponse,
-) {
-  res.setHeader("Content-Type", "application/json");
-  res.setHeader("Cache-Control", "no-store");
-  const reply = (status: number, error: string) => {
-    res.statusCode = status;
-    res.end(JSON.stringify({ error }));
-  };
-  if (req.method !== "POST") return reply(405, "Method not allowed");
-  const token = req.headers["x-agent-session"];
-  if (typeof token !== "string" || !/^[a-f0-9]{64}$/.test(token))
-    return reply(401, "Session required");
-  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const key = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
-  if (!url || !key) return reply(503, "Authenticated SMS service is not configured");
+  if (req.method === "OPTIONS") {
+    res.statusCode = 200;
+    res.end();
+    return;
+  }
+
+  if (req.method !== "POST") {
+    res.statusCode = 405;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ error: "Method Not Allowed" }));
+    return;
+  }
+
   try {
     let body = req.body;
-    if (!body) {
-      let raw = "";
-      for await (const chunk of req) {
-        raw += String(chunk);
-        if (Buffer.byteLength(raw) > 16384) return reply(413, "Request too large");
+    if (typeof body === "string") {
+      try {
+        body = JSON.parse(body);
+      } catch {
+        body = {};
       }
-      body = JSON.parse(raw);
-    } else if (typeof body === "string") body = JSON.parse(body);
-    if (!body || typeof body !== "object" || Array.isArray(body))
-      return reply(400, "Invalid request");
-    const serialized = JSON.stringify(body);
-    if (Buffer.byteLength(serialized) > 16384) return reply(413, "Request too large");
-    const upstream = await fetch(new URL("/functions/v1/agent-sms", url), {
+    } else if (!body) {
+      body = await new Promise((resolve) => {
+        let raw = "";
+        req.on("data", (chunk: any) => {
+          raw += chunk;
+        });
+        req.on("end", () => {
+          try {
+            resolve(JSON.parse(raw));
+          } catch {
+            resolve({});
+          }
+        });
+        req.on("error", () => resolve({}));
+      });
+    }
+
+    const { to, message, accountSid, authToken, apiKeySid, apiSecret, fromNumber } = body || {};
+
+    if (!to || !message) {
+      res.statusCode = 400;
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          success: false,
+          error: "Recipient phone number and message are required",
+        }),
+      );
+      return;
+    }
+
+    // Default Twilio configuration from environment variables
+    const targetAccountSid = accountSid || process.env.TWILIO_ACCOUNT_SID || "";
+    const targetAuthToken = authToken || process.env.TWILIO_AUTH_TOKEN || "";
+    const targetApiKeySid = apiKeySid || process.env.TWILIO_API_KEY_SID;
+    const targetApiSecret = apiSecret || process.env.TWILIO_API_SECRET;
+    const targetFrom = fromNumber || "EagleEye";
+
+    // Normalize phone number to international E.164 format
+    let cleanPhone = String(to).replace(/[^0-9+]/g, "");
+    if (cleanPhone.startsWith("0")) {
+      cleanPhone = "+234" + cleanPhone.slice(1);
+    } else if (cleanPhone.startsWith("234")) {
+      cleanPhone = "+" + cleanPhone;
+    } else if (!cleanPhone.startsWith("+")) {
+      cleanPhone = "+" + cleanPhone;
+    }
+
+    const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${targetAccountSid}/Messages.json`;
+
+    // Authenticate with either API Key (SK...) + secret or Account SID + Auth Token
+    const authUser = targetApiKeySid && targetApiSecret ? targetApiKeySid : targetAccountSid;
+    const authPass = targetApiKeySid && targetApiSecret ? targetApiSecret : targetAuthToken;
+    const basicAuth = Buffer.from(`${authUser}:${authPass}`).toString("base64");
+
+    const params = new URLSearchParams();
+    params.append("To", cleanPhone);
+    params.append("Body", String(message));
+
+    if (targetFrom.startsWith("MG")) {
+      params.append("MessagingServiceSid", targetFrom);
+    } else {
+      params.append("From", targetFrom);
+    }
+
+    console.log("[Twilio Relay] Sending SMS:", {
+      to: cleanPhone,
+      from: targetFrom,
+      accountSid: targetAccountSid,
+      authMethod: apiKeySid && apiSecret ? "API_KEY" : "AUTH_TOKEN",
+    });
+
+    const twilioResponse = await fetch(twilioUrl, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-        "x-agent-session": token,
+        Authorization: `Basic ${basicAuth}`,
+        "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: serialized,
-      redirect: "error",
-      signal: AbortSignal.timeout(20000),
+      body: params.toString(),
     });
-    const data = await upstream.json();
-    res.statusCode = upstream.status;
-    res.end(JSON.stringify(data));
-  } catch {
-    return reply(503, "SMS service temporarily unavailable");
+
+    const data: any = await twilioResponse.json();
+    console.log("[Twilio Relay] Response status:", twilioResponse.status, "Body:", data);
+
+    res.setHeader("Content-Type", "application/json");
+
+    if (twilioResponse.ok) {
+      res.statusCode = 200;
+      res.end(
+        JSON.stringify({
+          success: true,
+          messageId: data.sid,
+          status: data.status,
+          twilioRaw: data,
+        }),
+      );
+    } else {
+      res.statusCode = twilioResponse.status || 400;
+      res.end(
+        JSON.stringify({
+          success: false,
+          error: data.message || "Twilio send failed",
+          code: data.code,
+          moreInfo: data.more_info,
+          twilioRaw: data,
+        }),
+      );
+    }
+  } catch (error: any) {
+    res.statusCode = 500;
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify({
+        success: false,
+        error: error?.message || "Internal server error while sending SMS",
+      }),
+    );
   }
 }

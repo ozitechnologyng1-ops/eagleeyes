@@ -16,7 +16,7 @@ const patches = [
   "05-agent-sessions",
   "06-verified-agent-authorization",
   "07-scoped-rpcs",
-  "09-private-operations",
+  "09-agent-action-limits",
 ];
 const sql = (name: string, direction = "forward") =>
   readFileSync(
@@ -351,15 +351,18 @@ describe("custom-agent authorization against synthetic PostgreSQL data", () => {
     [4, 5, { role: "state_admin" }],
     [2, 4, { state_id: 27, local_governments_id: 271 }],
     [6, 5, { name: "Higher role change" }],
-  ])("rejects privilege escalation and scope changes (%s → %s)", async (caller, target, values) => {
-    await expect(
-      pg.query("SELECT public.agent_write_secure($1,$2,$3)", [
-        await sha256(token(caller)),
-        id(target),
-        values,
-      ]),
-    ).rejects.toMatchObject({ code: "42501" });
-  });
+  ])(
+    "rejects privilege escalation and scope changes (%s â†’ %s)",
+    async (caller, target, values) => {
+      await expect(
+        pg.query("SELECT public.agent_write_secure($1,$2,$3)", [
+          await sha256(token(caller)),
+          id(target),
+          values,
+        ]),
+      ).rejects.toMatchObject({ code: "42501" });
+    },
+  );
 
   it("permits profile edits without allowing credentials or earnings to be supplied", async () => {
     const result = await pg.query<{ agent: { first_name: string } }>(
@@ -415,52 +418,37 @@ describe("custom-agent authorization against synthetic PostgreSQL data", () => {
     ).rejects.toMatchObject({ code: "23505" });
   });
 
-  it("stores SMS configuration privately and keeps state administration isolated", async () => {
-    await pg.query("SELECT public.agent_sms_config($1,24,$2)", [
-      await sha256(token(2)),
-      { auth_token: "synthetic-private-token" },
-    ]);
-    expect(
-      (
-        await pg.query<{ config: unknown }>(
-          "SELECT public.agent_sms_delivery_config($1,24) config",
-          [await sha256(token(4))],
-        )
-      ).rows[0].config,
-    ).toEqual({ auth_token: "synthetic-private-token" });
-    expect(
-      (
-        await pg.query<{ config: unknown }>(
-          "SELECT public.agent_sms_delivery_config($1,24) config",
-          [await sha256(token(3))],
-        )
-      ).rows[0].config,
-    ).toBeNull();
-    await expect(
-      pg.query("SELECT public.agent_sms_config($1,27,$2)", [
-        await sha256(token(2)),
-        { auth_token: "cross-state" },
-      ]),
-    ).rejects.toMatchObject({ code: "42501" });
-  });
+  it.each(["agent_write_secure(text,uuid,jsonb)", "agent_action_attempt(text,text)"])(
+    "restricts privileged operation %s to server calls",
+    async (signature) => {
+      expect(
+        (await pg.query("SELECT has_function_privilege('anon',$1,'execute') allowed", [signature]))
+          .rows,
+      ).toEqual([{ allowed: false }]);
+      expect(
+        (
+          await pg.query("SELECT has_function_privilege('service_role',$1,'execute') allowed", [
+            signature,
+          ])
+        ).rows,
+      ).toEqual([{ allowed: true }]);
+    },
+  );
 
-  it.each([
-    "agent_write_secure(text,uuid,jsonb)",
-    "agent_sms_config(text,integer,jsonb)",
-    "agent_sms_delivery_config(text,integer)",
-    "agent_action_attempt(text,text)",
-  ])("restricts privileged operation %s to server calls", async (signature) => {
-    expect(
-      (await pg.query("SELECT has_function_privilege('anon',$1,'execute') allowed", [signature]))
-        .rows,
-    ).toEqual([{ allowed: false }]);
-    expect(
+  it("enforces per-agent limits and rejects unknown or unauthenticated actions", async () => {
+    const attempt = async (hash: string, action: string) =>
       (
-        await pg.query("SELECT has_function_privilege('service_role',$1,'execute') allowed", [
-          signature,
+        await pg.query<{ allowed: boolean }>("SELECT public.agent_action_attempt($1,$2) allowed", [
+          hash,
+          action,
         ])
-      ).rows,
-    ).toEqual([{ allowed: true }]);
+      ).rows[0].allowed;
+    const hash = await sha256(token(2));
+    expect(await attempt("invalid", "agent-admin")).toBe(false);
+    expect(await attempt(hash, "unknown-action")).toBe(false);
+    for (let n = 0; n < 10; n++) expect(await attempt(hash, "agent-admin")).toBe(true);
+    expect(await attempt(hash, "agent-admin")).toBe(false);
+    expect(await attempt(await sha256(token(3)), "agent-admin")).toBe(true);
   });
 
   it("retains authorized WhatsApp reads with the new shared identity", async () => {

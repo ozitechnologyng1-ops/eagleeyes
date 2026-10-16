@@ -113,14 +113,6 @@ export function canManageAgent(caller: AgentIdentity, target: AgentIdentity): bo
   );
 }
 
-export function mayAdministerState(caller: AgentIdentity, stateId: number): boolean {
-  return (
-    isActiveAgent(caller) &&
-    (caller.role === "national_admin" ||
-      (caller.role === "state_admin" && caller.state_id === stateId))
-  );
-}
-
 export function readSessionToken(headers: Headers): string | null {
   const token = headers.get("x-agent-session");
   return token && sessionTokenPattern.test(token) ? token : null;

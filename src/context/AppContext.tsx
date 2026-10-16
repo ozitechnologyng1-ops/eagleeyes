@@ -1513,6 +1513,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             to: agent.phone,
             message,
             stateId: targetState,
+            config: twilioConfig,
           })
             .then(() => toast.success(`Login credentials sent to ${agent.phone} via Twilio`))
             .catch((err: any) => {

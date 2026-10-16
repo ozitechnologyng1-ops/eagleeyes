@@ -12,7 +12,7 @@ it("restores baseline security definitions and permissions without changing fixt
     "05-agent-sessions",
     "06-verified-agent-authorization",
     "07-scoped-rpcs",
-    "09-private-operations",
+    "09-agent-action-limits",
   ];
   try {
     await pg.exec(fixtureSchema + whatsappSchema);
@@ -64,7 +64,7 @@ it("restores baseline security definitions and permissions without changing fixt
     expect(
       (
         await pg.query(
-          "SELECT has_function_privilege('service_role','public.agent_sms_config(text,integer,jsonb)','EXECUTE') allowed",
+          "SELECT has_function_privilege('service_role','public.agent_action_attempt(text,text)','EXECUTE') allowed",
         )
       ).rows,
     ).toEqual([{ allowed: false }]);

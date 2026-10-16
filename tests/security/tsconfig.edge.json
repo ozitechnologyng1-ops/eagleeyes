@@ -15,7 +15,6 @@
     "../../supabase/functions/_shared/*.ts",
     "../../supabase/functions/agent-auth/*.ts",
     "../../supabase/functions/agent-admin/*.ts",
-    "../../supabase/functions/agent-sms/*.ts",
     "../../supabase/functions/analyze-result/*.ts",
     "../../supabase/functions/paystack/*.ts"
   ]
