@@ -1,3 +1,4 @@
+import { AGENT_PUBLIC_COLUMNS } from "../lib/agentAuth";
 import React, { useState, useEffect, useCallback } from "react";
 import { useApp, Location, LocationType, Agent, Role, roleHierarchy } from "../context/AppContext";
 import { Map, ChevronRight, ChevronDown, UserPlus, User, Shield, Loader2 } from "lucide-react";
@@ -98,7 +99,7 @@ const TreeNode: React.FC<NodeProps> = ({
       if (agentsLoaded && !force) return;
       try {
         const rawId = numId(location.id);
-        let query = supabase.from("agents").select("*");
+        let query = supabase.from("agents").select(AGENT_PUBLIC_COLUMNS);
         if (location.type === "pu") {
           query = query.or(`jurisdiction_id.eq.${location.id},polling_units_id.eq.${rawId}`);
         } else if (location.type === "ward") {

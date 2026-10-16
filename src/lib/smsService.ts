@@ -1,3 +1,5 @@
+import { supabase } from "./supabase";
+
 export interface TwilioStateConfig {
   account_sid: string;
   auth_token: string;
@@ -5,115 +7,98 @@ export interface TwilioStateConfig {
   api_secret?: string;
   from_number: string;
   sms_login_template: string;
+  configured?: boolean;
 }
-
 export interface SendSmsParams {
   to: string;
   message: string;
   stateId?: number;
   config?: Partial<TwilioStateConfig>;
 }
-
 export const DEFAULT_TWILIO_CONFIG: TwilioStateConfig = {
-  account_sid: import.meta.env.VITE_TWILIO_ACCOUNT_SID || "",
-  auth_token: import.meta.env.VITE_TWILIO_AUTH_TOKEN || "",
-  api_key_sid: import.meta.env.VITE_TWILIO_API_KEY_SID || "",
-  api_secret: import.meta.env.VITE_TWILIO_API_SECRET || "",
+  account_sid: "",
+  auth_token: "",
+  api_key_sid: "",
+  api_secret: "",
   from_number: "EagleEye",
   sms_login_template:
     "Hello {{firstname}}, your EagleEye login credentials: Phone: {{phone}}, Password: {{password}}. Keep this safe.",
 };
-
-/** Get Twilio configuration for a specific state */
-export function getTwilioConfig(stateId: number = 27): TwilioStateConfig {
-  try {
-    const raw = localStorage.getItem(`eagleeye_twilio_config_${stateId}`);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return {
-        ...DEFAULT_TWILIO_CONFIG,
-        ...parsed,
-      };
-    }
-  } catch (e) {
-    console.warn("Failed to read Twilio config from localStorage:", e);
-  }
-  return { ...DEFAULT_TWILIO_CONFIG };
-}
-
-/** Save Twilio configuration for a specific state */
-export function saveTwilioConfig(
-  stateId: number = 27,
-  config: Partial<TwilioStateConfig>,
-): TwilioStateConfig {
-  const current = getTwilioConfig(stateId);
-  const updated: TwilioStateConfig = {
-    ...current,
-    ...config,
+function safeConfig(value: Partial<TwilioStateConfig> = {}): TwilioStateConfig {
+  return {
+    ...DEFAULT_TWILIO_CONFIG,
+    account_sid: value.account_sid || "",
+    api_key_sid: value.api_key_sid || "",
+    from_number: value.from_number || DEFAULT_TWILIO_CONFIG.from_number,
+    sms_login_template: value.sms_login_template || DEFAULT_TWILIO_CONFIG.sms_login_template,
+    configured: value.configured === true,
+    auth_token: "",
+    api_secret: "",
   };
-  try {
-    localStorage.setItem(`eagleeye_twilio_config_${stateId}`, JSON.stringify(updated));
-  } catch (e) {
-    console.error("Failed to save Twilio config to localStorage:", e);
-  }
-  return updated;
 }
-
-/** Send SMS via the Twilio serverless relay */
+export function getTwilioConfig(stateId = 27): TwilioStateConfig {
+  try {
+    return safeConfig(
+      JSON.parse(localStorage.getItem(`eagleeye_twilio_config_${stateId}`) || "{}"),
+    );
+  } catch {
+    return { ...DEFAULT_TWILIO_CONFIG };
+  }
+}
+async function callSms(body: Record<string, unknown>) {
+  const { data, error } = await supabase.functions.invoke("agent-sms", { body });
+  if (error || data?.error)
+    throw new Error(
+      data?.error || "SMS service unavailable; check your permission and server configuration.",
+    );
+  if (!data) throw new Error("Invalid SMS response");
+  return data;
+}
+export async function loadTwilioConfig(stateId = 27): Promise<TwilioStateConfig> {
+  const data = await callSms({ action: "getConfig", stateId });
+  const config = safeConfig(data.config);
+  // Show existing locally stored settings only to allow the admin to explicitly save them on the server.
+  try {
+    const legacy = JSON.parse(localStorage.getItem(`eagleeye_twilio_config_${stateId}`) || "{}");
+    if (legacy.auth_token || legacy.api_secret) return { ...config, ...legacy };
+  } catch {
+    /* Malformed legacy settings are ignored. */
+  }
+  localStorage.setItem(`eagleeye_twilio_config_${stateId}`, JSON.stringify(config));
+  return config;
+}
+export async function saveTwilioConfig(
+  stateId = 27,
+  config: Partial<TwilioStateConfig>,
+): Promise<TwilioStateConfig> {
+  const { configured: _configured, ...values } = config;
+  const data = await callSms({ action: "saveConfig", stateId, config: values });
+  const saved = safeConfig(data.config);
+  localStorage.setItem(`eagleeye_twilio_config_${stateId}`, JSON.stringify(saved));
+  return saved;
+}
 export async function sendTwilioSms({
   to,
   message,
   stateId = 27,
   config,
 }: SendSmsParams): Promise<{ success: boolean; messageId?: string }> {
-  const activeConfig = config
-    ? { ...getTwilioConfig(stateId), ...config }
-    : getTwilioConfig(stateId);
-
-  const res = await fetch("/api/send-sms", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      to,
-      message,
-      accountSid: activeConfig.account_sid,
-      authToken: activeConfig.auth_token,
-      apiKeySid: activeConfig.api_key_sid,
-      apiSecret: activeConfig.api_secret,
-      fromNumber: activeConfig.from_number,
-    }),
+  const data = await callSms({
+    action: config ? "test" : "send",
+    to,
+    message,
+    stateId,
+    ...(config ? { config } : {}),
   });
-
-  const data = await res.json().catch(() => ({}));
-
-  console.log("[Twilio API Response Status]:", res.status, res.statusText);
-  console.log("[Twilio Full Response Body]:", data);
-
-  if (!res.ok || !data.success) {
-    console.error("[Twilio SMS Error]:", {
-      error: data.error,
-      code: data.code,
-      moreInfo: data.moreInfo,
-      raw: data.twilioRaw,
-    });
-    const errorMsg =
-      data.error ||
-      (data.code ? `Twilio Error (${data.code})` : `Failed to send SMS (HTTP ${res.status})`);
-    throw new Error(errorMsg);
-  }
-
+  if (data.success !== true) throw new Error("SMS was not sent");
   return { success: true, messageId: data.messageId };
 }
-
-/** Interpolate template variables: {{firstname}}, {{phone}}, {{password}} */
 export function buildLoginSms(
   template: string,
   vars: { firstname: string; phone: string; password: string },
 ): string {
   return template
-    .replace(/\{\{firstname\}\}/gi, vars.firstname || "")
-    .replace(/\{\{phone\}\}/gi, vars.phone || "")
-    .replace(/\{\{password\}\}/gi, vars.password || "");
+    .replace(/\{\{firstname\}\}/gi, () => vars.firstname || "")
+    .replace(/\{\{phone\}\}/gi, () => vars.phone || "")
+    .replace(/\{\{password\}\}/gi, () => vars.password || "");
 }

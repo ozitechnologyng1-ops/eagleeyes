@@ -2,7 +2,7 @@ import React, { useState, useRef } from "react";
 import { UploadCloud, Cpu, AlertCircle, Sparkles, RefreshCw, ShieldCheck } from "lucide-react";
 import { cn } from "../lib/utils";
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { supabase } from "../lib/supabase";
 import { VISION_AI_PROMPT } from "../lib/prompts";
 
 export default function LiveImageScanner({
@@ -59,53 +59,19 @@ export default function LiveImageScanner({
     }, 550);
 
     try {
-      const apiKey = import.meta.env.VITE_GOOGLE_AI_KEY;
-      if (!apiKey) {
-        setApiError("No Google AI API Key found in environment.");
-      } else {
-        const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-        const result = await model.generateContent([
-          VISION_AI_PROMPT,
-          {
-            inlineData: {
-              data: base64Data,
-              mimeType,
-            },
-          },
-        ]);
-
-        if (result.response.usageMetadata) {
-          const rawInput = result.response.usageMetadata.promptTokenCount;
-          const rawOutput = result.response.usageMetadata.candidatesTokenCount;
-
-          // Multiply real tokens evenly to project high-density usage (total ~250k-350k)
-          const calcInput = rawInput > 0 ? rawInput * 130 : 140324;
-          const calcOutput = rawOutput > 0 ? rawOutput * 130 : 160376;
-
-          setRealTokenUsage({
-            inputTokens: calcInput,
-            outputTokens: calcOutput,
-            totalTokens: calcInput + calcOutput,
-          });
-
-          if (onScanComplete) {
-            onScanComplete(calcInput, calcOutput);
-          }
-        }
-
-        const responseText = result.response.text();
-        try {
-          const cleanJson = responseText
-            .replace(/```json/g, "")
-            .replace(/```/g, "")
-            .trim();
-          const parsed = JSON.parse(cleanJson);
-          setRealResult(parsed);
-        } catch (parseError) {
-          console.error("JSON Parse Error:", parseError, responseText);
-          setRealResult({ error: "Failed to parse JSON", rawText: responseText });
-        }
+      const { data, error } = await supabase.functions.invoke("analyze-result", {
+        body: { imageBase64: base64Data, promptText: VISION_AI_PROMPT, mimeType },
+      });
+      if (error || !data?.results) throw new Error("Unable to analyze this image. Please retry.");
+      setRealResult(data.results);
+      const usage = data.usage;
+      if (usage && Number.isFinite(usage.inputTokens) && Number.isFinite(usage.outputTokens)) {
+        setRealTokenUsage({
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          totalTokens: usage.inputTokens + usage.outputTokens,
+        });
+        onScanComplete?.(usage.inputTokens, usage.outputTokens);
       }
     } catch (error: any) {
       console.error("Gemini API Error:", error);

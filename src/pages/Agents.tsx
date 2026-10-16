@@ -1,3 +1,4 @@
+import { AGENT_PUBLIC_COLUMNS } from "../lib/agentAuth";
 import React, { useState, useCallback } from "react";
 import { useApp, Role, Location, Agent, roleHierarchy } from "../context/AppContext";
 import {
@@ -136,10 +137,7 @@ export default function Agents() {
   const [sendingSms, setSendingSms] = useState(false);
 
   const generateTempPassword = () => {
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    let rand = "";
-    for (let i = 0; i < 4; i++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
-    return `ADC@${rand}`;
+    return `ADC@${Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
   };
 
   const handleOpenSmsModal = (agent: Agent, e: React.MouseEvent) => {
@@ -174,7 +172,6 @@ export default function Agents() {
         to: smsModalAgent.phone,
         message,
         stateId: targetState,
-        config: twilioConfig,
       });
 
       toast.success(`Login credentials SMS sent to ${smsModalAgent.name} via Twilio!`);
@@ -190,7 +187,7 @@ export default function Agents() {
     if (!user) return;
     setLoading(true);
     try {
-      let query = supabase.from("agents").select("*");
+      let query = supabase.from("agents").select(AGENT_PUBLIC_COLUMNS);
 
       // Jurisdiction Filtering
       if (user.role === "state_admin" && user.stateId) {

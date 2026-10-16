@@ -3,22 +3,24 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // Fix VS Code TS error showing "Cannot find name 'Deno'"
 declare const Deno: any;
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
+import { authorizeAgentRequest } from "../_shared/agent-session.ts";
 Deno.serve(async (req: Request) => {
-  // Handle CORS preflight request
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-
+  const access = await authorizeAgentRequest(req, "analyze-result", 12000000);
+  if (access instanceof Response) return access;
+  const { headers: corsHeaders, body } = access;
   try {
-    const { imageBase64, promptText, mimeType = "image/jpeg" } = await req.json();
+    const { imageBase64, promptText, mimeType = "image/jpeg" } = body;
 
-    if (!imageBase64 || !promptText) {
-      throw new Error("Missing imageBase64  ");
+    if (
+      typeof imageBase64 !== "string" ||
+      imageBase64.length > 10000000 ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(imageBase64) ||
+      typeof promptText !== "string" ||
+      !promptText.trim() ||
+      promptText.length > 20000 ||
+      !["image/jpeg", "image/png", "image/webp"].includes(String(mimeType))
+    ) {
+      throw new Error("Invalid image request");
     }
 
     const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
@@ -148,8 +150,8 @@ Deno.serve(async (req: Request) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error: any) {
-    console.error("Edge Function Error:", error);
-    return new Response(JSON.stringify({ error: error?.message || "Unknown error" }), {
+    console.error("Image analysis request failed");
+    return new Response(JSON.stringify({ error: "Image analysis unavailable; please retry" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 400,
     });

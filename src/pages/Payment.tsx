@@ -1,3 +1,4 @@
+import { AGENT_PUBLIC_COLUMNS } from "../lib/agentAuth";
 import React, { useState, useEffect } from "react";
 import { useApp } from "../context/AppContext";
 import { supabase } from "../lib/supabase";
@@ -141,7 +142,7 @@ export default function Payment() {
 
       setLoadingAgents(true);
       try {
-        let query = supabase.from("agents").select("*").limit(1000);
+        let query = supabase.from("agents").select(AGENT_PUBLIC_COLUMNS).limit(1000);
 
         // Jurisdiction Filtering for fetching all sub-agents to calculate nested eligibility
         if (user.stateId && user.role !== "national_admin") {
@@ -228,8 +229,9 @@ export default function Payment() {
           accountNumber: a.account_number,
           uploadedCount: agentResults[a.id]?.length || 0,
           results: agentResults[a.id] || [],
-          paymentStatus: a.payment_status || "pending",
-          withdrawalRequested: a.withdrawal_requested || false,
+          // The current agents schema does not store payment/withdrawal status.
+          paymentStatus: "pending",
+          withdrawalRequested: false,
           isEligible: !!eligibilityMap[a.id],
         }));
 

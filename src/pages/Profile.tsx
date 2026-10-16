@@ -1,3 +1,4 @@
+import { writeAgent } from "../lib/agentAuth";
 import React, { useState, useEffect } from "react";
 import { useApp } from "../context/AppContext";
 import {
@@ -72,10 +73,7 @@ export default function Profile() {
     const currentAgentId = user?.id || agents.find((a) => a.phone === user?.phone)?.id;
     if (currentAgentId) {
       try {
-        await supabase
-          .from("agents")
-          .update({ supporting_documents: files })
-          .eq("id", currentAgentId);
+        await writeAgent(currentAgentId, { supporting_documents: files });
         toast.success("Supporting documents saved");
       } catch (err: any) {
         toast.error("Failed to save documents: " + err.message);

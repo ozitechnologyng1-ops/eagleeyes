@@ -1,3 +1,4 @@
+import { writeAgent } from "./agentAuth";
 import { supabase } from "./supabase";
 
 export interface WhatsAppStateConfig {
@@ -326,11 +327,7 @@ export const greenApiService = {
   },
 
   async setAgentTarget(agentId: string, target: number) {
-    const { error } = await supabase
-      .from("agents")
-      .update({ daily_outreach_target: target })
-      .eq("id", agentId);
-    if (error) throw error;
+    await writeAgent(agentId, { daily_outreach_target: target });
   },
 
   // 5. Candidate Knowledge Base

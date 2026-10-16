@@ -2,9 +2,10 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { supabase } from "../lib/supabase";
 import { VISION_AI_PROMPT } from "../lib/prompts";
 import toast from "react-hot-toast";
-import { getFriendlyErrorMessage } from "../lib/utils";
 import { sendTwilioSms, buildLoginSms, getTwilioConfig } from "../lib/smsService";
 import { getVoterScope } from "../lib/voterScope";
+import { loginAgent, logoutAgent, restoreAgent, writeAgent } from "../lib/agentAuth";
+import { readAgentSession, SESSION_CHANGED_EVENT, SESSION_KEY } from "../lib/agentSession";
 
 export type Role = "national_admin" | "state_admin" | "lga_admin" | "ward_admin" | "pu_agent";
 
@@ -194,17 +195,9 @@ interface AppState {
 const AppContext = createContext<AppState | undefined>(undefined);
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem("eagleeye_user");
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error("Failed to parse cached user", e);
-      }
-    }
-    return null;
-  });
+  const [user, setUser] = useState<User | null>(null);
+  const [isRestoringSession, setIsRestoringSession] = useState(true);
+  const [sessionRestoreFailed, setSessionRestoreFailed] = useState(false);
 
   const [totalVotersCount, setTotalVotersCount] = useState<number>(0);
   const [votersPage, setVotersPage] = useState<number>(1);
@@ -454,7 +447,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const countPromises = roles.map(async (role) => {
         let query = supabase
           .from("agents")
-          .select("*", { count: "exact", head: true })
+          .select("id", { count: "exact", head: true })
           .eq("role", role);
 
         if (user) {
@@ -639,7 +632,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [user]);
 
-  // Syncing with user headers is now fully handled in the custom fetch client configuration in supabase.ts
+  // Requests carry the server-issued agent session through the Supabase client.
 
   useEffect(() => {
     Promise.resolve(refreshElectionStats()).catch((error: unknown) =>
@@ -934,60 +927,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const endAllMockElections = () => setIsMockMode(false);
 
   /** SHA-256 hex of a string using the Web Crypto API */
-  const sha256Hex = async (text: string): Promise<string> => {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(text);
-    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-    return Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-  };
-
-  const login = async (phone: string, password: string) => {
-    // TODO: re-enable when enforcing password
-    // const meetsRules =
-    //   password.length >= 8 &&
-    //   /[A-Z]/.test(password) &&
-    //   /[a-z]/.test(password) &&
-    //   /\d/.test(password);
-    // if (!meetsRules) {
-    //   throw new Error('Password must be at least 8 characters with uppercase, lowercase, and a number.');
-    // }
-
-    // Temporarily set phone header in sessionStorage for initial query to pass RLS policy before login is finalized
-    sessionStorage.setItem("temp_login_phone", phone);
-
-    let agentData: any = null;
-    let error: any = null;
-    try {
-      const res = await supabase.from("agents").select("*").eq("phone", phone).single();
-      agentData = res.data;
-      error = res.error;
-    } finally {
-      sessionStorage.removeItem("temp_login_phone");
-    }
-
-    if (error || !agentData) {
-      console.error("Login database error details:", error);
-      throw new Error("Agent not found. Check your phone number.");
-    }
-
-    // Password check: if the agent has a stored hash, verify it. Old accounts without a hash bypass this check.
-    if (agentData.password_hash) {
-      const hash = await sha256Hex(password);
-      if (hash !== agentData.password_hash) {
-        throw new Error("Incorrect password. Please try again.");
-      }
-    }
-
-    // TODO: re-enable status checks
-    // if (agentData.status && agentData.status.toLowerCase() === 'suspended') {
-    //   throw new Error('Your account has been suspended. Contact your administrator.');
-    // }
-    // if (agentData.status && agentData.status.toLowerCase() === 'revoked') {
-    //   throw new Error('Your account has been revoked. Contact your administrator.');
-    // }
-
+  const applyAgentProfile = async (agentData: any, expectedToken: string) => {
     // Build locationId from the most specific jurisdiction available
     let locationId = "nat1";
     let locationName = "Nigeria";
@@ -1058,6 +998,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       paymentStatus: agentData.payment_status || undefined,
     };
 
+    if (readAgentSession()?.token !== expectedToken) return;
     setUser(loggedInUser);
     localStorage.setItem("eagleeye_user", JSON.stringify(loggedInUser));
     const nowStr = Date.now().toString();
@@ -1065,41 +1006,48 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("eagleeye_last_active", nowStr);
   };
 
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem("eagleeye_user");
-    localStorage.removeItem("eagleeye_login_time");
-    localStorage.removeItem("eagleeye_last_active");
+  const login = async (phone: string, password: string) => {
+    const agent = await loginAgent(phone, password);
+    await applyAgentProfile(agent, readAgentSession()!.token);
   };
 
-  // Rolling session inactivity watcher disabled per user request
-  // useEffect(() => {
-  //   if (!user) return;
-  //   let lastUpdate = Date.now();
-  //   const handleUserActivity = () => {
-  //     const now = Date.now();
-  //     if (now - lastUpdate > 15000) {
-  //       lastUpdate = now;
-  //       localStorage.setItem('eagleeye_last_active', now.toString());
-  //     }
-  //   };
-  //   const activityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart'];
-  //   activityEvents.forEach(evt => window.addEventListener(evt, handleUserActivity, { passive: true }));
-  //   const timer = setInterval(() => {
-  //     const activeTimestamp = localStorage.getItem('eagleeye_last_active') || localStorage.getItem('eagleeye_login_time');
-  //     if (activeTimestamp) {
-  //       const idleDuration = Date.now() - parseInt(activeTimestamp, 10);
-  //       if (idleDuration >= SESSION_DURATION_MS) {
-  //         logout();
-  //         toast.error('Session expired due to inactivity. Please log in again.', { id: 'session-timeout' });
-  //       }
-  //     }
-  //   }, 10000);
-  //   return () => {
-  //     activityEvents.forEach(evt => window.removeEventListener(evt, handleUserActivity));
-  //     clearInterval(timer);
-  //   };
-  // }, [user]);
+  const logout = () => {
+    setUser(null);
+    void logoutAgent().catch(() =>
+      toast.error("Signed out locally; server session could not be revoked."),
+    );
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const initialToken = readAgentSession()?.token;
+    const restore = async () => {
+      try {
+        const agent = await restoreAgent();
+        if (!cancelled && agent && initialToken && readAgentSession()?.token === initialToken)
+          await applyAgentProfile(agent, initialToken);
+      } catch {
+        if (!cancelled && initialToken && readAgentSession()?.token === initialToken)
+          setSessionRestoreFailed(true);
+      } finally {
+        if (!cancelled) setIsRestoringSession(false);
+      }
+    };
+    void restore();
+    const onSessionChange = () => {
+      if (!readAgentSession()) setUser(null);
+    };
+    const onStorageChange = (event: StorageEvent) => {
+      if (event.key === SESSION_KEY || event.key === null) window.location.reload();
+    };
+    window.addEventListener(SESSION_CHANGED_EVENT, onSessionChange);
+    window.addEventListener("storage", onStorageChange);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(SESSION_CHANGED_EVENT, onSessionChange);
+      window.removeEventListener("storage", onStorageChange);
+    };
+  }, []);
 
   const updateUser = async (updates: Partial<User>) => {
     if (user) {
@@ -1107,19 +1055,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setUser(newUser);
       localStorage.setItem("eagleeye_user", JSON.stringify(newUser));
       try {
-        const { error } = await supabase
-          .from("agents")
-          .update({
-            first_name: updates.firstName,
-            last_name: updates.lastName,
-            phone: updates.phone,
-            profile_picture_url: updates.picture,
-            bank_name: updates.bankName,
-            account_name: updates.accountName,
-            account_number: updates.accountNumber,
-          })
-          .eq("id", user.id);
-        if (error) throw error;
+        await writeAgent(user.id, {
+          first_name: updates.firstName,
+          last_name: updates.lastName,
+          phone: updates.phone,
+          profile_picture_url: updates.picture,
+          bank_name: updates.bankName,
+          account_name: updates.accountName,
+          account_number: updates.accountNumber,
+        });
       } catch (err) {
         console.error("Failed to update agent profile in db", err);
         setUser(user);
@@ -1528,12 +1472,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
 
     if (agent.password) {
-      dbRecord.password_hash = await sha256Hex(agent.password);
+      dbRecord.password = agent.password;
     }
 
     try {
-      const { data, error } = await supabase.from("agents").insert([dbRecord]).select().single();
-      if (error) throw new Error(getFriendlyErrorMessage(error));
+      const data = await writeAgent(null, dbRecord);
 
       await refreshDeploymentStats();
 
@@ -1542,6 +1485,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ...prev,
         {
           ...agent,
+          password: undefined,
           id: data.id,
           status: "active",
           locationId: locId,
@@ -1569,7 +1513,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
             to: agent.phone,
             message,
             stateId: targetState,
-            config: twilioConfig,
           })
             .then(() => toast.success(`Login credentials sent to ${agent.phone} via Twilio`))
             .catch((err: any) => {
@@ -1587,7 +1530,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const updateAgent = async (id: string, updates: Partial<Agent>) => {
-    setAgents((prev) => prev.map((a) => (a.id === id ? { ...a, ...updates } : a)));
     try {
       const payload: any = {};
       if (updates.name !== undefined) payload.name = updates.name;
@@ -1619,12 +1561,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 : "national";
       }
       if (updates.password) {
-        payload.password_hash = await sha256Hex(updates.password);
+        payload.password = updates.password;
       }
 
       if (Object.keys(payload).length > 0) {
-        const { error } = await supabase.from("agents").update(payload).eq("id", id);
-        if (error) throw new Error(getFriendlyErrorMessage(error));
+        await writeAgent(id, payload);
+        setAgents((prev) =>
+          prev.map((a) => (a.id === id ? { ...a, ...updates, password: undefined } : a)),
+        );
         await refreshDeploymentStats();
         await refreshAgentStats();
       }
@@ -1635,11 +1579,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const updateAgentStatus = async (id: string, status: Agent["status"]) => {
-    setAgents((prev) => prev.map((a) => (a.id === id ? { ...a, status } : a)));
     try {
       const dbStatus = status.charAt(0).toUpperCase() + status.slice(1);
-      const { error } = await supabase.from("agents").update({ status: dbStatus }).eq("id", id);
-      if (error) throw error;
+      await writeAgent(id, { status: dbStatus });
+      setAgents((prev) => prev.map((a) => (a.id === id ? { ...a, status } : a)));
       await refreshDeploymentStats();
       await refreshAgentStats();
     } catch (err) {
@@ -1675,6 +1618,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     return result;
   };
+
+  if (isRestoringSession)
+    return (
+      <main className="min-h-screen flex items-center justify-center" role="status">
+        Checking your session…
+      </main>
+    );
+  if (sessionRestoreFailed)
+    return (
+      <main className="min-h-screen flex flex-col items-center justify-center gap-4">
+        <p role="alert">Unable to reconnect. Your sign-in has been saved.</p>
+        <button type="button" onClick={() => window.location.reload()}>
+          Try again
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setSessionRestoreFailed(false);
+            logout();
+          }}
+        >
+          Sign out
+        </button>
+      </main>
+    );
 
   return (
     <AppContext.Provider

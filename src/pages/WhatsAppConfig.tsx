@@ -34,7 +34,7 @@ import {
   GroupMonitor,
 } from "../lib/greenApi";
 import { supabase } from "../lib/supabase";
-import { getTwilioConfig, saveTwilioConfig, sendTwilioSms } from "../lib/smsService";
+import { loadTwilioConfig, saveTwilioConfig, sendTwilioSms } from "../lib/smsService";
 
 export const WhatsAppConfig: React.FC = () => {
   const { user } = useApp();
@@ -226,7 +226,7 @@ export const WhatsAppConfig: React.FC = () => {
       if (cfg) setConfig(cfg);
 
       // Load Twilio config (per-state)
-      const twilioCfg = getTwilioConfig(stateId);
+      const twilioCfg = await loadTwilioConfig(stateId);
       setConfig((prev) => ({
         ...prev,
         twilio_account_sid: twilioCfg.account_sid,
@@ -298,7 +298,7 @@ export const WhatsAppConfig: React.FC = () => {
     setSaving(true);
     try {
       if (activeTab === "sms") {
-        saveTwilioConfig(stateId, {
+        await saveTwilioConfig(stateId, {
           account_sid: config.twilio_account_sid,
           auth_token: config.twilio_auth_token,
           api_key_sid: config.twilio_api_key_sid,

@@ -1,3 +1,4 @@
+import { AGENT_PUBLIC_COLUMNS } from "../lib/agentAuth";
 import React, { useState, useEffect } from "react";
 import { useApp, roleHierarchy, Agent, Location, Role } from "../context/AppContext";
 import {
@@ -1984,7 +1985,7 @@ function JurisdictionDeploymentSummary({
         }
 
         // 2. Exact assigned agents from Postgres
-        let agentsQ = supabase.from("agents").select("*").eq("role", targetRole);
+        let agentsQ = supabase.from("agents").select(AGENT_PUBLIC_COLUMNS).eq("role", targetRole);
         if (effectiveWard) {
           agentsQ = agentsQ.eq("wards_id", effectiveWard);
         } else if (effectiveLga) {
