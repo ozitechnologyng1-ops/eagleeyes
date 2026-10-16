@@ -4,14 +4,14 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 declare const Deno: any;
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 Deno.serve(async (req: Request) => {
   // Handle CORS preflight request
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
   }
 
   try {
@@ -21,8 +21,8 @@ Deno.serve(async (req: Request) => {
       throw new Error("Missing imageBase64  ");
     }
 
-    const GROQ_API_KEY = Deno.env.get('GROQ_API_KEY');
-    const GEMINI_API_KEY = Deno.env.get('VITE_GOOGLE_AI_KEY') || Deno.env.get('GEMINI_API_KEY');
+    const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
+    const GEMINI_API_KEY = Deno.env.get("VITE_GOOGLE_AI_KEY") || Deno.env.get("GEMINI_API_KEY");
 
     // Fetch configuration with 45-second timeout to allow huge images without dropping connection
     const fetchWithTimeout = async (url: string, options: any, timeoutMs = 45000) => {
@@ -34,7 +34,7 @@ Deno.serve(async (req: Request) => {
         return response;
       } catch (err: any) {
         clearTimeout(id);
-        throw new Error(err.name === 'AbortError' ? 'API Request Timed Out' : err.message);
+        throw new Error(err.name === "AbortError" ? "API Request Timed Out" : err.message);
       }
     };
 
@@ -44,29 +44,31 @@ Deno.serve(async (req: Request) => {
       const groqUrl = "https://api.groq.com/openai/v1/chat/completions";
       const groqBody = {
         model: modelName,
-        messages: [{
-          role: "user",
-          content: [
-            { type: "text", text: promptText },
-            { type: "image_url", image_url: { url: `data:${mimeType};base64,${imageBase64}` } }
-          ]
-        }],
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: promptText },
+              { type: "image_url", image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
+            ],
+          },
+        ],
         temperature: 0.1,
-        response_format: { type: "json_object" }
+        response_format: { type: "json_object" },
       };
 
       const groqRes = await fetchWithTimeout(groqUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
-        body: JSON.stringify(groqBody)
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${GROQ_API_KEY}` },
+        body: JSON.stringify(groqBody),
       });
 
       if (!groqRes.ok) throw new Error(`Status ${groqRes.status}: ${await groqRes.text()}`);
-      
+
       const groqData = await groqRes.json();
       const textResponse = groqData.choices?.[0]?.message?.content;
       if (!textResponse) throw new Error("Groq returned empty content.");
-      
+
       return JSON.parse(textResponse);
     }
 
@@ -75,27 +77,32 @@ Deno.serve(async (req: Request) => {
       console.log(`Attempting Gemini parsing with ${modelName}...`);
       const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`;
       const geminiBody = {
-        contents: [{
-          parts: [
-            { text: promptText },
-            { inline_data: { mime_type: mimeType, data: imageBase64 } }
-          ]
-        }],
-        generationConfig: { temperature: 0.1, responseMimeType: "application/json" }
+        contents: [
+          {
+            parts: [
+              { text: promptText },
+              { inline_data: { mime_type: mimeType, data: imageBase64 } },
+            ],
+          },
+        ],
+        generationConfig: { temperature: 0.1, responseMimeType: "application/json" },
       };
 
       const geminiRes = await fetchWithTimeout(geminiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(geminiBody)
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(geminiBody),
       });
 
-      if (!geminiRes.ok) throw new Error(`Status ${geminiRes.ok ? 200 : geminiRes.status}: ${await geminiRes.text()}`);
-      
+      if (!geminiRes.ok)
+        throw new Error(
+          `Status ${geminiRes.ok ? 200 : geminiRes.status}: ${await geminiRes.text()}`,
+        );
+
       const geminiData = await geminiRes.json();
       const textResponse = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!textResponse) throw new Error("Gemini returned empty candidates.");
-      
+
       return JSON.parse(textResponse);
     }
 
@@ -137,15 +144,14 @@ Deno.serve(async (req: Request) => {
       throw new Error(`Vision models failed across the board. Exact trace: ${errors.join(" || ")}`);
     }
 
-    return new Response(
-      JSON.stringify({ results: resultJson, ai_used: aiUsed }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    )
+    return new Response(JSON.stringify({ results: resultJson, ai_used: aiUsed }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   } catch (error: any) {
     console.error("Edge Function Error:", error);
-    return new Response(
-      JSON.stringify({ error: error?.message || "Unknown error" }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 },
-    )
+    return new Response(JSON.stringify({ error: error?.message || "Unknown error" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 400,
+    });
   }
-})
+});

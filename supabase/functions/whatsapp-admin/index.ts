@@ -3,7 +3,8 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-agent-id, x-agent-phone",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-agent-id, x-agent-phone",
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
 };
 
@@ -67,7 +68,11 @@ function chunkText(text: string, maxChunkSize = 750, overlap = 150): string[] {
 }
 
 // Helper: Generate 768-dim vector embedding with Gemini or OpenAI
-async function generateEmbedding(text: string, provider: string, apiKey: string): Promise<number[] | null> {
+async function generateEmbedding(
+  text: string,
+  provider: string,
+  apiKey: string,
+): Promise<number[] | null> {
   if (!apiKey || !text) return null;
   try {
     if (provider === "openai") {
@@ -75,13 +80,13 @@ async function generateEmbedding(text: string, provider: string, apiKey: string)
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
           model: "text-embedding-3-small",
           input: text.slice(0, 8000),
-          dimensions: 768
-        })
+          dimensions: 768,
+        }),
       });
       if (embRes.ok) {
         const embData = await embRes.json();
@@ -91,15 +96,18 @@ async function generateEmbedding(text: string, provider: string, apiKey: string)
       console.warn("OpenAI embedding error:", err);
     } else {
       // Default to Gemini gemini-embedding-001 (768 dimensions)
-      const embRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "models/gemini-embedding-2",
-          content: { parts: [{ text: text.slice(0, 8000) }] },
-          outputDimensionality: 768
-        })
-      });
+      const embRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "models/gemini-embedding-2",
+            content: { parts: [{ text: text.slice(0, 8000) }] },
+            outputDimensionality: 768,
+          }),
+        },
+      );
       if (embRes.ok) {
         const embData = await embRes.json();
         return embData.embedding?.values || null;
@@ -125,7 +133,7 @@ async function vectorizeAndStoreEntry(
   docUrl?: string,
   docName?: string,
   provider = "gemini",
-  apiKey = ""
+  apiKey = "",
 ) {
   // 1. Create parent entry or chunk
   const chunks = chunkText(content);
@@ -138,7 +146,7 @@ async function vectorizeAndStoreEntry(
     .insert({
       state_id: stateId,
       title,
-      content,  // Store full original content on root for UI display
+      content, // Store full original content on root for UI display
       content_type: contentType,
       image_url: imageUrl || null,
       image_caption: imageCaption || null,
@@ -146,7 +154,7 @@ async function vectorizeAndStoreEntry(
       doc_name: docName || null,
       embedding: firstEmbedding ?? null,
       chunk_index: 0,
-      source_doc_id: null
+      source_doc_id: null,
     })
     .select()
     .single();
@@ -157,7 +165,11 @@ async function vectorizeAndStoreEntry(
   if (chunks.length > 1) {
     for (let i = 1; i < chunks.length; i++) {
       const chunkTextContent = chunks[i];
-      const chunkEmb = await generateEmbedding(`${title} (Part ${i + 1})\n${chunkTextContent}`, provider, apiKey);
+      const chunkEmb = await generateEmbedding(
+        `${title} (Part ${i + 1})\n${chunkTextContent}`,
+        provider,
+        apiKey,
+      );
       await supabase.from("whatsapp_knowledge_base").insert({
         state_id: stateId,
         title: `${title} (Part ${i + 1})`,
@@ -169,7 +181,7 @@ async function vectorizeAndStoreEntry(
         doc_name: docName || null,
         embedding: chunkEmb ?? null,
         chunk_index: i,
-        source_doc_id: parentEntry.id
+        source_doc_id: parentEntry.id,
       });
     }
   }
@@ -196,7 +208,7 @@ Deno.serve(async (req: Request) => {
 
         const updatePayload: Record<string, any> = {
           state_id: targetStateId,
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         };
 
         const greenToken = config.green_api_partner_token ?? config.greenApiPartnerToken;
@@ -262,12 +274,18 @@ Deno.serve(async (req: Request) => {
         if (error) throw error;
 
         // If an API key is now active, check for unvectorized knowledge entries and auto-embed them in the background
-        const finalApiKey = data.ai_api_key || Deno.env.get("VITE_GOOGLE_AI_KEY") || Deno.env.get("GEMINI_API_KEY") || "";
+        const finalApiKey =
+          data.ai_api_key ||
+          Deno.env.get("VITE_GOOGLE_AI_KEY") ||
+          Deno.env.get("GEMINI_API_KEY") ||
+          "";
         if (finalApiKey) {
           try {
             const { data: unEmbedded } = await supabase
               .from("whatsapp_knowledge_base")
-              .select("id, title, content, content_type, image_url, image_caption, doc_url, doc_name")
+              .select(
+                "id, title, content, content_type, image_url, image_caption, doc_url, doc_name",
+              )
               .eq("state_id", targetStateId)
               .is("embedding", null)
               .is("source_doc_id", null);
@@ -278,18 +296,26 @@ Deno.serve(async (req: Request) => {
                 for (const item of unEmbedded) {
                   try {
                     const chunks = chunkText(item.content);
-                    const rootEmb = await generateEmbedding(`${item.title}\n${chunks[0]}`, data.ai_provider || "gemini", finalApiKey);
+                    const rootEmb = await generateEmbedding(
+                      `${item.title}\n${chunks[0]}`,
+                      data.ai_provider || "gemini",
+                      finalApiKey,
+                    );
                     await supabase
                       .from("whatsapp_knowledge_base")
                       .update({
                         embedding: rootEmb ?? null,
-                        chunk_index: 0
+                        chunk_index: 0,
                       })
                       .eq("id", item.id);
 
                     if (chunks.length > 1) {
                       for (let i = 1; i < chunks.length; i++) {
-                        const cEmb = await generateEmbedding(`${item.title} (Part ${i + 1})\n${chunks[i]}`, data.ai_provider || "gemini", finalApiKey);
+                        const cEmb = await generateEmbedding(
+                          `${item.title} (Part ${i + 1})\n${chunks[i]}`,
+                          data.ai_provider || "gemini",
+                          finalApiKey,
+                        );
                         await supabase.from("whatsapp_knowledge_base").insert({
                           state_id: targetStateId,
                           title: `${item.title} (Part ${i + 1})`,
@@ -301,7 +327,7 @@ Deno.serve(async (req: Request) => {
                           doc_name: item.doc_name || null,
                           embedding: cEmb ?? null,
                           chunk_index: i,
-                          source_doc_id: item.id
+                          source_doc_id: item.id,
                         });
                       }
                     }
@@ -317,7 +343,7 @@ Deno.serve(async (req: Request) => {
         }
 
         return new Response(JSON.stringify({ success: true, data }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
@@ -334,7 +360,7 @@ Deno.serve(async (req: Request) => {
 
         if (error) throw error;
         return new Response(JSON.stringify({ success: true, data }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
@@ -354,27 +380,33 @@ Deno.serve(async (req: Request) => {
         }
 
         const partnerToken = config.green_api_partner_token.trim();
-        const webhookUrl = type === "group_monitor"
-          ? `${supabaseUrl}/functions/v1/whatsapp-group-webhook`
-          : `${supabaseUrl}/functions/v1/whatsapp-webhook`;
+        const webhookUrl =
+          type === "group_monitor"
+            ? `${supabaseUrl}/functions/v1/whatsapp-group-webhook`
+            : `${supabaseUrl}/functions/v1/whatsapp-webhook`;
 
-        const instanceName = name || `State_${stateId}_${type === "group_monitor" ? "GroupMon" : "Agent"}_${Date.now().toString().slice(-4)}`;
+        const instanceName =
+          name ||
+          `State_${stateId}_${type === "group_monitor" ? "GroupMon" : "Agent"}_${Date.now().toString().slice(-4)}`;
 
-        const createRes = await fetch(`https://api.green-api.com/partner/createInstance/${partnerToken}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: instanceName,
-            webhookUrl,
-            delaySendMessagesMilliseconds: 3000,
-            markIncomingMessagesReaded: "no",
-            incomingWebhook: "yes",
-            outgoingWebhook: "yes",
-            outgoingMessageWebhook: "yes",
-            outgoingAPIMessageWebhook: "yes",
-            stateWebhook: "yes"
-          })
-        });
+        const createRes = await fetch(
+          `https://api.green-api.com/partner/createInstance/${partnerToken}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: instanceName,
+              webhookUrl,
+              delaySendMessagesMilliseconds: 3000,
+              markIncomingMessagesReaded: "no",
+              incomingWebhook: "yes",
+              outgoingWebhook: "yes",
+              outgoingMessageWebhook: "yes",
+              outgoingAPIMessageWebhook: "yes",
+              stateWebhook: "yes",
+            }),
+          },
+        );
 
         if (!createRes.ok) {
           const errText = await createRes.text();
@@ -397,7 +429,7 @@ Deno.serve(async (req: Request) => {
             pool_status: type === "group_monitor" ? "assigned" : "standby",
             wa_state: "notAuthorized",
             name: instanceName,
-            webhook_type: type === "group_monitor" ? "group" : "agent"
+            webhook_type: type === "group_monitor" ? "group" : "agent",
           })
           .select()
           .single();
@@ -405,7 +437,7 @@ Deno.serve(async (req: Request) => {
         if (insErr) throw insErr;
 
         return new Response(JSON.stringify({ success: true, instance: inserted }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
@@ -422,11 +454,13 @@ Deno.serve(async (req: Request) => {
 
         if (!inst) throw new Error("Instance not found");
 
-        const qrRes = await fetch(`${inst.api_url}waInstance${inst.id_instance}/qr/${inst.api_token_instance}`);
+        const qrRes = await fetch(
+          `${inst.api_url}waInstance${inst.id_instance}/qr/${inst.api_token_instance}`,
+        );
         const qrData = await qrRes.json();
 
         return new Response(JSON.stringify({ success: true, qr: qrData }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
@@ -451,15 +485,18 @@ Deno.serve(async (req: Request) => {
           cleanPhone = "234" + cleanPhone;
         }
 
-        const codeRes = await fetch(`${inst.api_url}waInstance${inst.id_instance}/getAuthorizationCode/${inst.api_token_instance}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ phoneNumber: parseInt(cleanPhone, 10) })
-        });
+        const codeRes = await fetch(
+          `${inst.api_url}waInstance${inst.id_instance}/getAuthorizationCode/${inst.api_token_instance}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ phoneNumber: parseInt(cleanPhone, 10) }),
+          },
+        );
 
         const codeData = await codeRes.json();
         return new Response(JSON.stringify({ success: true, data: codeData }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
@@ -476,7 +513,9 @@ Deno.serve(async (req: Request) => {
 
         if (!inst) throw new Error("Instance not found");
 
-        const stateRes = await fetch(`${inst.api_url}waInstance${inst.id_instance}/getStateInstance/${inst.api_token_instance}`);
+        const stateRes = await fetch(
+          `${inst.api_url}waInstance${inst.id_instance}/getStateInstance/${inst.api_token_instance}`,
+        );
         const stateData = await stateRes.json();
         const waState = stateData.stateInstance || "notAuthorized";
 
@@ -484,7 +523,9 @@ Deno.serve(async (req: Request) => {
 
         if (waState === "authorized" && !phoneNumber) {
           // Fetch linked phone number
-          const settingsRes = await fetch(`${inst.api_url}waInstance${inst.id_instance}/getWaSettings/${inst.api_token_instance}`);
+          const settingsRes = await fetch(
+            `${inst.api_url}waInstance${inst.id_instance}/getWaSettings/${inst.api_token_instance}`,
+          );
           if (settingsRes.ok) {
             const waSet = await settingsRes.json();
             phoneNumber = waSet.phone || waSet.wid?.split("@")[0] || null;
@@ -496,12 +537,12 @@ Deno.serve(async (req: Request) => {
           .update({
             wa_state: waState,
             phone_number: phoneNumber,
-            updated_at: new Date().toISOString()
+            updated_at: new Date().toISOString(),
           })
           .eq("id", instanceId);
 
         return new Response(JSON.stringify({ success: true, waState, phoneNumber }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
@@ -515,7 +556,7 @@ Deno.serve(async (req: Request) => {
           .update({
             assigned_agent_id: agentId,
             pool_status: "assigned",
-            updated_at: new Date().toISOString()
+            updated_at: new Date().toISOString(),
           })
           .eq("id", instanceId)
           .select()
@@ -547,21 +588,24 @@ Deno.serve(async (req: Request) => {
               const webhookUrl = `${supabaseUrl}/functions/v1/whatsapp-webhook`;
               const instanceName = `State_${stateId}_Agent_${Date.now().toString().slice(-4)}`;
 
-              const createRes = await fetch(`https://api.green-api.com/partner/createInstance/${partnerToken}`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  name: instanceName,
-                  webhookUrl,
-                  delaySendMessagesMilliseconds: 3000,
-                  markIncomingMessagesReaded: "no",
-                  incomingWebhook: "yes",
-                  outgoingWebhook: "yes",
-                  outgoingMessageWebhook: "yes",
-                  outgoingAPIMessageWebhook: "yes",
-                  stateWebhook: "yes"
-                })
-              });
+              const createRes = await fetch(
+                `https://api.green-api.com/partner/createInstance/${partnerToken}`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    name: instanceName,
+                    webhookUrl,
+                    delaySendMessagesMilliseconds: 3000,
+                    markIncomingMessagesReaded: "no",
+                    incomingWebhook: "yes",
+                    outgoingWebhook: "yes",
+                    outgoingMessageWebhook: "yes",
+                    outgoingAPIMessageWebhook: "yes",
+                    stateWebhook: "yes",
+                  }),
+                },
+              );
 
               if (createRes.ok) {
                 const resData = await createRes.json();
@@ -576,7 +620,7 @@ Deno.serve(async (req: Request) => {
                     pool_status: "standby",
                     wa_state: "notAuthorized",
                     name: instanceName,
-                    webhook_type: "agent"
+                    webhook_type: "agent",
                   })
                   .select()
                   .single();
@@ -588,15 +632,18 @@ Deno.serve(async (req: Request) => {
           }
         }
 
-        return new Response(JSON.stringify({
-          success: true,
-          instance: updated,
-          standbyCount: autoCreatedInstance ? 1 : (count ?? 0),
-          autoCreatedInstance,
-          needsReplenishment: (count ?? 0) < 2
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
-        });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            instance: updated,
+            standbyCount: autoCreatedInstance ? 1 : (count ?? 0),
+            autoCreatedInstance,
+            needsReplenishment: (count ?? 0) < 2,
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
       }
 
       // 8. Logout / Disconnect Instance from Green API & DB
@@ -621,7 +668,7 @@ Deno.serve(async (req: Request) => {
 
           try {
             const logoutRes = await fetch(logoutUrl, {
-              method: "GET"
+              method: "GET",
             });
             if (logoutRes.ok) {
               logoutData = await logoutRes.json().catch(() => ({}));
@@ -643,7 +690,7 @@ Deno.serve(async (req: Request) => {
             pool_status: "standby",
             wa_state: "notAuthorized",
             phone_number: null,
-            updated_at: new Date().toISOString()
+            updated_at: new Date().toISOString(),
           })
           .eq("id", instanceId)
           .select()
@@ -651,14 +698,17 @@ Deno.serve(async (req: Request) => {
 
         if (updateErr) throw updateErr;
 
-        return new Response(JSON.stringify({
-          success: true,
-          isLogout: logoutSuccess,
-          logoutData,
-          instance: updated
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
-        });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            isLogout: logoutSuccess,
+            logoutData,
+            instance: updated,
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
       }
 
       // 9. Send Flyer to Voter (Manual or Immediate)
@@ -696,11 +746,14 @@ Deno.serve(async (req: Request) => {
         let isNotOnWa = false;
         try {
           const baseUrl = (inst.api_url || "https://api.green-api.com").replace(/\/+$/, "");
-          const checkRes = await fetch(`${baseUrl}/waInstance${inst.id_instance}/checkWhatsapp/${inst.api_token_instance}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ phoneNumber: parseInt(cleanPhone, 10) })
-          });
+          const checkRes = await fetch(
+            `${baseUrl}/waInstance${inst.id_instance}/checkWhatsapp/${inst.api_token_instance}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ phoneNumber: parseInt(cleanPhone, 10) }),
+            },
+          );
           if (checkRes.ok) {
             const checkData = await checkRes.json().catch(() => null);
             // Strictly check if Green API explicitly told us the number is NOT on WhatsApp
@@ -723,7 +776,9 @@ Deno.serve(async (req: Request) => {
           if (!prevConv) {
             // Log not on WhatsApp safely
             try {
-              const numericVoterId = voterId ? parseInt(String(voterId).replace(/\D/g, ''), 10) : null;
+              const numericVoterId = voterId
+                ? parseInt(String(voterId).replace(/\D/g, ""), 10)
+                : null;
               await supabase.from("whatsapp_outreach_queue").insert({
                 agent_id: agentId,
                 instance_id: inst.id,
@@ -733,24 +788,31 @@ Deno.serve(async (req: Request) => {
                 scheduled_at: new Date().toISOString(),
                 sent_at: new Date().toISOString(),
                 status: "not_on_whatsapp",
-                is_manual: true
+                is_manual: true,
               });
             } catch (queueErr) {
               console.warn("Outreach queue insert error:", queueErr);
             }
 
-            return new Response(JSON.stringify({
-              success: false,
-              notOnWhatsapp: true,
-              message: "Phone number is not registered on WhatsApp"
-            }), {
-              headers: { ...corsHeaders, "Content-Type": "application/json" }
-            });
+            return new Response(
+              JSON.stringify({
+                success: false,
+                notOnWhatsapp: true,
+                message: "Phone number is not registered on WhatsApp",
+              }),
+              {
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
           }
         }
 
         // 5. Build personalized message caption
-        const { data: agent } = await supabase.from("agents").select("name, phone, wards_id").eq("id", agentId).single();
+        const { data: agent } = await supabase
+          .from("agents")
+          .select("name, phone, wards_id")
+          .eq("id", agentId)
+          .single();
         let caption = customMessage;
         if (!caption && config?.default_message_template) {
           caption = config.default_message_template
@@ -767,26 +829,33 @@ Deno.serve(async (req: Request) => {
 
         if (config?.default_flyer_url) {
           // Send Media (Image or Video) with caption via sendFileByUrl
-          const fileName = config.default_flyer_type === "video" ? "adc_flyer.mp4" : "adc_flyer.jpg";
-          const mediaRes = await fetch(`${baseUrl}/waInstance${inst.id_instance}/sendFileByUrl/${inst.api_token_instance}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chatId,
-              urlFile: config.default_flyer_url,
-              fileName,
-              caption
-            })
-          });
+          const fileName =
+            config.default_flyer_type === "video" ? "adc_flyer.mp4" : "adc_flyer.jpg";
+          const mediaRes = await fetch(
+            `${baseUrl}/waInstance${inst.id_instance}/sendFileByUrl/${inst.api_token_instance}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chatId,
+                urlFile: config.default_flyer_url,
+                fileName,
+                caption,
+              }),
+            },
+          );
           sendResult = await mediaRes.json();
           messageId = sendResult.idMessage || "";
         } else {
           // Send plain text
-          const textRes = await fetch(`${baseUrl}/waInstance${inst.id_instance}/sendMessage/${inst.api_token_instance}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chatId, message: caption })
-          });
+          const textRes = await fetch(
+            `${baseUrl}/waInstance${inst.id_instance}/sendMessage/${inst.api_token_instance}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ chatId, message: caption }),
+            },
+          );
           sendResult = await textRes.json();
           messageId = sendResult.idMessage || "";
         }
@@ -794,15 +863,18 @@ Deno.serve(async (req: Request) => {
         // 6. Record Conversation & Message in DB
         const { data: conv } = await supabase
           .from("whatsapp_conversations")
-          .upsert({
-            agent_id: agentId,
-            instance_id: inst.id,
-            voter_phone: cleanPhone,
-            voter_name: voterName,
-            voter_id: voterId ? (parseInt(String(voterId).replace(/\D/g, ''), 10) || null) : null,
-            chat_id: chatId,
-            last_message_at: new Date().toISOString()
-          }, { onConflict: "agent_id,chat_id" })
+          .upsert(
+            {
+              agent_id: agentId,
+              instance_id: inst.id,
+              voter_phone: cleanPhone,
+              voter_name: voterName,
+              voter_id: voterId ? parseInt(String(voterId).replace(/\D/g, ""), 10) || null : null,
+              chat_id: chatId,
+              last_message_at: new Date().toISOString(),
+            },
+            { onConflict: "agent_id,chat_id" },
+          )
           .select()
           .single();
 
@@ -817,7 +889,7 @@ Deno.serve(async (req: Request) => {
             message_text: caption,
             media_url: config?.default_flyer_url || null,
             green_api_message_id: messageId,
-            delivery_status: "sent"
+            delivery_status: "sent",
           });
         }
 
@@ -825,9 +897,16 @@ Deno.serve(async (req: Request) => {
         const earningAmount = Number(config?.earning_per_chat || 50);
         if (earningAmount > 0) {
           try {
-            const { data: ag } = await supabase.from("agents").select("whatsapp_earnings_balance").eq("id", agentId).single();
+            const { data: ag } = await supabase
+              .from("agents")
+              .select("whatsapp_earnings_balance")
+              .eq("id", agentId)
+              .single();
             const newBal = Number(ag?.whatsapp_earnings_balance || 0) + earningAmount;
-            await supabase.from("agents").update({ whatsapp_earnings_balance: newBal }).eq("id", agentId);
+            await supabase
+              .from("agents")
+              .update({ whatsapp_earnings_balance: newBal })
+              .eq("id", agentId);
           } catch (earnErr) {
             console.error("Agent earning update error:", earnErr);
           }
@@ -835,7 +914,7 @@ Deno.serve(async (req: Request) => {
 
         // 8. Log outreach queue
         try {
-          const numericVoterId = voterId ? parseInt(String(voterId).replace(/\D/g, ''), 10) : null;
+          const numericVoterId = voterId ? parseInt(String(voterId).replace(/\D/g, ""), 10) : null;
           await supabase.from("whatsapp_outreach_queue").insert({
             agent_id: agentId,
             instance_id: inst.id,
@@ -846,26 +925,39 @@ Deno.serve(async (req: Request) => {
             sent_at: new Date().toISOString(),
             status: "sent",
             message_id: messageId,
-            is_manual: true
+            is_manual: true,
           });
         } catch (queueErr) {
           console.error("Log outreach queue error:", queueErr);
         }
 
-        return new Response(JSON.stringify({
-          success: true,
-          messageId,
-          earned: earningAmount,
-          sendResult
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
-        });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            messageId,
+            earned: earningAmount,
+            sendResult,
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
       }
 
       // 9. Knowledge Base Upload with Intelligent Background Chunking & Dual Vectorization
       case "uploadKnowledge": {
-        const { stateId, title, content, contentType = "manifesto", imageUrl, imageCaption, docUrl, docName } = body;
-        if (!stateId || !title || !content) throw new Error("stateId, title, and content are required");
+        const {
+          stateId,
+          title,
+          content,
+          contentType = "manifesto",
+          imageUrl,
+          imageCaption,
+          docUrl,
+          docName,
+        } = body;
+        if (!stateId || !title || !content)
+          throw new Error("stateId, title, and content are required");
 
         // Retrieve AI config
         const { data: config } = await supabase
@@ -875,7 +967,11 @@ Deno.serve(async (req: Request) => {
           .single();
 
         const provider = config?.ai_provider || "gemini";
-        const apiKey = config?.ai_api_key || Deno.env.get("VITE_GOOGLE_AI_KEY") || Deno.env.get("GEMINI_API_KEY") || "";
+        const apiKey =
+          config?.ai_api_key ||
+          Deno.env.get("VITE_GOOGLE_AI_KEY") ||
+          Deno.env.get("GEMINI_API_KEY") ||
+          "";
 
         const rootItem = await vectorizeAndStoreEntry(
           supabase,
@@ -888,23 +984,37 @@ Deno.serve(async (req: Request) => {
           docUrl,
           docName,
           provider,
-          apiKey
+          apiKey,
         );
 
         return new Response(JSON.stringify({ success: true, item: rootItem }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
       // 9b. Update Knowledge Entry & Re-chunk/Re-embed
       case "updateKnowledge": {
-        const { id, stateId, title, content, contentType = "manifesto", imageUrl, imageCaption, docUrl, docName } = body;
+        const {
+          id,
+          stateId,
+          title,
+          content,
+          contentType = "manifesto",
+          imageUrl,
+          imageCaption,
+          docUrl,
+          docName,
+        } = body;
         if (!id || !title || !content) throw new Error("id, title, and content are required");
 
         // First find stateId if not supplied
         let targetStateId = stateId;
         if (!targetStateId) {
-          const { data: existing } = await supabase.from("whatsapp_knowledge_base").select("state_id").eq("id", id).single();
+          const { data: existing } = await supabase
+            .from("whatsapp_knowledge_base")
+            .select("state_id")
+            .eq("id", id)
+            .single();
           targetStateId = existing?.state_id;
         }
 
@@ -919,7 +1029,11 @@ Deno.serve(async (req: Request) => {
           .single();
 
         const provider = config?.ai_provider || "gemini";
-        const apiKey = config?.ai_api_key || Deno.env.get("VITE_GOOGLE_AI_KEY") || Deno.env.get("GEMINI_API_KEY") || "";
+        const apiKey =
+          config?.ai_api_key ||
+          Deno.env.get("VITE_GOOGLE_AI_KEY") ||
+          Deno.env.get("GEMINI_API_KEY") ||
+          "";
 
         // Re-chunk new content
         const chunks = chunkText(content);
@@ -930,14 +1044,14 @@ Deno.serve(async (req: Request) => {
           .from("whatsapp_knowledge_base")
           .update({
             title,
-            content,  // Store full original content on root for UI display
+            content, // Store full original content on root for UI display
             content_type: contentType,
             image_url: imageUrl || null,
             image_caption: imageCaption || null,
             doc_url: docUrl || null,
             doc_name: docName || null,
             embedding: rootEmbedding ?? null,
-            chunk_index: 0
+            chunk_index: 0,
           })
           .eq("id", id)
           .select()
@@ -949,7 +1063,11 @@ Deno.serve(async (req: Request) => {
         if (chunks.length > 1) {
           for (let i = 1; i < chunks.length; i++) {
             const chunkContent = chunks[i];
-            const chunkEmb = await generateEmbedding(`${title} (Part ${i + 1})\n${chunkContent}`, provider, apiKey);
+            const chunkEmb = await generateEmbedding(
+              `${title} (Part ${i + 1})\n${chunkContent}`,
+              provider,
+              apiKey,
+            );
             await supabase.from("whatsapp_knowledge_base").insert({
               state_id: targetStateId,
               title: `${title} (Part ${i + 1})`,
@@ -961,13 +1079,13 @@ Deno.serve(async (req: Request) => {
               doc_name: docName || null,
               embedding: chunkEmb ?? null,
               chunk_index: i,
-              source_doc_id: id
+              source_doc_id: id,
             });
           }
         }
 
         return new Response(JSON.stringify({ success: true, item: updatedRoot }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
@@ -979,11 +1097,14 @@ Deno.serve(async (req: Request) => {
         // Delete all child chunks first
         await supabase.from("whatsapp_knowledge_base").delete().eq("source_doc_id", id);
         // Delete root
-        const { error: dErr } = await supabase.from("whatsapp_knowledge_base").delete().eq("id", id);
+        const { error: dErr } = await supabase
+          .from("whatsapp_knowledge_base")
+          .delete()
+          .eq("id", id);
         if (dErr) throw dErr;
 
         return new Response(JSON.stringify({ success: true }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
@@ -999,7 +1120,11 @@ Deno.serve(async (req: Request) => {
           .single();
 
         const provider = config?.ai_provider || "gemini";
-        const apiKey = config?.ai_api_key || Deno.env.get("VITE_GOOGLE_AI_KEY") || Deno.env.get("GEMINI_API_KEY") || "";
+        const apiKey =
+          config?.ai_api_key ||
+          Deno.env.get("VITE_GOOGLE_AI_KEY") ||
+          Deno.env.get("GEMINI_API_KEY") ||
+          "";
 
         if (!apiKey) {
           throw new Error("No AI API key found for this state. Please save an API key first.");
@@ -1027,7 +1152,7 @@ Deno.serve(async (req: Request) => {
             .from("whatsapp_knowledge_base")
             .update({
               embedding: rootEmb ?? null,
-              chunk_index: 0
+              chunk_index: 0,
             })
             .eq("id", entry.id);
 
@@ -1040,7 +1165,11 @@ Deno.serve(async (req: Request) => {
           if (chunks.length > 1) {
             for (let i = 1; i < chunks.length; i++) {
               const chunkContent = chunks[i];
-              const cEmb = await generateEmbedding(`${entry.title} (Part ${i + 1})\n${chunkContent}`, provider, apiKey);
+              const cEmb = await generateEmbedding(
+                `${entry.title} (Part ${i + 1})\n${chunkContent}`,
+                provider,
+                apiKey,
+              );
               await supabase.from("whatsapp_knowledge_base").insert({
                 state_id: stateId,
                 title: `${entry.title} (Part ${i + 1})`,
@@ -1052,21 +1181,24 @@ Deno.serve(async (req: Request) => {
                 doc_name: entry.doc_name || null,
                 embedding: cEmb ?? null,
                 chunk_index: i,
-                source_doc_id: entry.id
+                source_doc_id: entry.id,
               });
               createdChunksCount++;
             }
           }
         }
 
-        return new Response(JSON.stringify({
-          success: true,
-          vectorizedCount,
-          createdChunksCount,
-          totalProcessed: (entries || []).length
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
-        });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            vectorizedCount,
+            createdChunksCount,
+            totalProcessed: (entries || []).length,
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
       }
 
       // 10. Pool Replenishment check
@@ -1083,7 +1215,7 @@ Deno.serve(async (req: Request) => {
 
         const needed = Math.max(0, 2 - (count ?? 0));
         return new Response(JSON.stringify({ success: true, currentStandby: count, needed }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
@@ -1092,18 +1224,25 @@ Deno.serve(async (req: Request) => {
         const { instanceId, groupId } = body;
         if (!instanceId || !groupId) throw new Error("instanceId and groupId required");
 
-        const { data: inst } = await supabase.from("whatsapp_instances").select("*").eq("id", instanceId).single();
+        const { data: inst } = await supabase
+          .from("whatsapp_instances")
+          .select("*")
+          .eq("id", instanceId)
+          .single();
         if (!inst) throw new Error("Instance not found");
 
-        const grpRes = await fetch(`${inst.api_url}waInstance${inst.id_instance}/getGroupData/${inst.api_token_instance}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ groupId })
-        });
+        const grpRes = await fetch(
+          `${inst.api_url}waInstance${inst.id_instance}/getGroupData/${inst.api_token_instance}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ groupId }),
+          },
+        );
         const grpData = await grpRes.json();
 
         return new Response(JSON.stringify({ success: true, groupData: grpData }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
@@ -1112,18 +1251,30 @@ Deno.serve(async (req: Request) => {
         const { agentId, type, voterId, voterPhone, voterName } = body;
         if (!agentId) throw new Error("agentId is required");
 
-        const { data: agent } = await supabase.from("agents").select("state_id, whatsapp_earnings_balance").eq("id", agentId).single();
+        const { data: agent } = await supabase
+          .from("agents")
+          .select("state_id, whatsapp_earnings_balance")
+          .eq("id", agentId)
+          .single();
         const stateId = agent?.state_id || 24;
 
-        const { data: config } = await supabase.from("whatsapp_state_config").select("*").eq("state_id", stateId).single();
+        const { data: config } = await supabase
+          .from("whatsapp_state_config")
+          .select("*")
+          .eq("state_id", stateId)
+          .single();
 
-        const amount = type === "call" 
-          ? Number(config?.earning_per_call ?? 20)
-          : Number(config?.earning_per_manual_wa ?? 15);
+        const amount =
+          type === "call"
+            ? Number(config?.earning_per_call ?? 20)
+            : Number(config?.earning_per_manual_wa ?? 15);
 
         if (amount > 0) {
           const newBal = Number(agent?.whatsapp_earnings_balance || 0) + amount;
-          await supabase.from("agents").update({ whatsapp_earnings_balance: newBal }).eq("id", agentId);
+          await supabase
+            .from("agents")
+            .update({ whatsapp_earnings_balance: newBal })
+            .eq("id", agentId);
         }
 
         if (voterPhone) {
@@ -1135,12 +1286,12 @@ Deno.serve(async (req: Request) => {
             scheduled_at: new Date().toISOString(),
             sent_at: new Date().toISOString(),
             status: type === "call" ? "called" : "wa_link_opened",
-            is_manual: true
+            is_manual: true,
           });
         }
 
         return new Response(JSON.stringify({ success: true, earned: amount }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
@@ -1156,7 +1307,7 @@ Deno.serve(async (req: Request) => {
           .single();
         if (error) throw error;
         return new Response(JSON.stringify({ success: true, data }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
@@ -1172,21 +1323,20 @@ Deno.serve(async (req: Request) => {
         const { error } = await query;
         if (error) throw error;
         return new Response(JSON.stringify({ success: true }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
       default:
         return new Response(JSON.stringify({ error: `Unknown action: ${action}` }), {
           status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
     }
   } catch (err: any) {
     return new Response(JSON.stringify({ error: err.message || "Internal server error" }), {
       status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" }
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
-

@@ -1,28 +1,16 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { useApp } from '../context/AppContext';
-import { Shield, Phone, Lock, ChevronRight, ArrowLeft, Eye, EyeOff, CheckCircle2, XCircle } from 'lucide-react';
-import toast from 'react-hot-toast';
-import { getFriendlyErrorMessage } from '../lib/utils';
+import React, { useState, useEffect } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import { useApp } from "../context/AppContext";
+import { Shield, Phone, Lock, ChevronRight, Eye, EyeOff } from "lucide-react";
+import toast from "react-hot-toast";
+import { getFriendlyErrorMessage } from "../lib/utils";
 import Rvtech from "../assets/RVCTECH.png";
-import { getBrandConfig } from '../lib/branding';
-
-interface PasswordRule {
-  label: string;
-  test: (pw: string) => boolean;
-}
-
-const PASSWORD_RULES: PasswordRule[] = [
-  { label: 'At least 8 characters',    test: (pw) => pw.length >= 8 },
-  { label: 'One uppercase letter (A–Z)', test: (pw) => /[A-Z]/.test(pw) },
-  { label: 'One lowercase letter (a–z)', test: (pw) => /[a-z]/.test(pw) },
-  { label: 'One number (0–9)',           test: (pw) => /\d/.test(pw) },
-];
+import { getBrandConfig } from "../lib/branding";
 
 export default function Login() {
   const brand = getBrandConfig();
-  const [phone, setPhone] = useState('');
-  const [password, setPassword] = useState('');
+  const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [passwordTouched, setPasswordTouched] = useState(false);
@@ -32,8 +20,10 @@ export default function Login() {
 
   useEffect(() => {
     if (user) {
-      const destination = (location.state as any)?.from || '/dashboard';
-      navigate(destination, { replace: true });
+      const destination = (location.state as any)?.from || "/dashboard";
+      Promise.resolve(navigate(destination, { replace: true })).catch((error: unknown) =>
+        console.error("Async operation failed in Login", error),
+      );
     }
   }, [user, navigate, location.state]);
 
@@ -43,9 +33,11 @@ export default function Login() {
     setIsLoading(true);
     try {
       await login(phone, password);
-      toast.success('Login successful!');
-      const destination = (location.state as any)?.from || '/dashboard';
-      navigate(destination, { replace: true });
+      toast.success("Login successful!");
+      const destination = (location.state as any)?.from || "/dashboard";
+      Promise.resolve(navigate(destination, { replace: true })).catch((error: unknown) =>
+        console.error("Async operation failed in Login", error),
+      );
     } catch (err: any) {
       toast.error(getFriendlyErrorMessage(err));
       setIsLoading(false);
@@ -66,7 +58,7 @@ export default function Login() {
                 src={brand.logoUrl}
                 alt={brand.appName}
                 className="h-16 sm:h-20 w-auto object-contain"
-                style={{ filter: 'brightness(0) invert(1)', maxWidth: '180px' }}
+                style={{ filter: "brightness(0) invert(1)", maxWidth: "180px" }}
               />
             ) : (
               <div className="w-18 h-18 sm:w-20 sm:h-20 bg-[#d4af37] rounded-2xl flex items-center justify-center shadow-xl transform rotate-12">
@@ -87,83 +79,84 @@ export default function Login() {
         <div className="mt-6 sm:mt-8 mx-4 sm:mx-auto sm:w-full sm:max-w-md">
           <div className="bg-white py-8 px-6 sm:px-10 shadow-xl rounded-2xl border border-gray-100">
             <form className="space-y-6" onSubmit={handleLogin}>
-
-            {/* Phone */}
-            <div>
-              <label htmlFor="phone" className="block text-sm font-medium text-gray-700">
-                Phone Number
-              </label>
-              <div className="mt-1 relative rounded-md shadow-sm">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Phone className="h-5 w-5 text-gray-400" />
+              {/* Phone */}
+              <div>
+                <label htmlFor="phone" className="block text-sm font-medium text-gray-700">
+                  Phone Number
+                </label>
+                <div className="mt-1 relative rounded-md shadow-sm">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Phone className="h-5 w-5 text-gray-400" />
+                  </div>
+                  <input
+                    id="phone"
+                    name="phone"
+                    type="tel"
+                    autoComplete="tel"
+                    required
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    className="focus:ring-[#004d25] focus:border-[#004d25] block w-full pl-10 sm:text-sm border-gray-300 rounded-md py-3 border"
+                    placeholder="0801 234 5678"
+                  />
                 </div>
-                <input
-                  id="phone"
-                  name="phone"
-                  type="tel"
-                  required
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="focus:ring-[#004d25] focus:border-[#004d25] block w-full pl-10 sm:text-sm border-gray-300 rounded-md py-3 border"
-                  placeholder="0801 234 5678"
-                />
               </div>
-            </div>
 
-            {/* Password */}
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                Password
-              </label>
-              <div className="mt-1 relative rounded-md shadow-sm">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock className="h-5 w-5 text-gray-400" />
+              {/* Password */}
+              <div>
+                <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+                  Password
+                </label>
+                <div className="mt-1 relative rounded-md shadow-sm">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Lock className="h-5 w-5 text-gray-400" />
+                  </div>
+                  <input
+                    id="password"
+                    name="password"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
+                    required
+                    value={password}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      if (!passwordTouched) setPasswordTouched(true);
+                    }}
+                    className="focus:ring-[#004d25] focus:border-[#004d25] block w-full pl-10 pr-10 sm:text-sm border-gray-300 rounded-md py-3 border"
+                    placeholder="••••••••"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 cursor-pointer"
+                    tabIndex={-1}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  </button>
                 </div>
-                <input
-                  id="password"
-                  name="password"
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value);
-                    if (!passwordTouched) setPasswordTouched(true);
-                  }}
-                  className="focus:ring-[#004d25] focus:border-[#004d25] block w-full pl-10 pr-10 sm:text-sm border-gray-300 rounded-md py-3 border"
-                  placeholder="••••••••"
-                />
+              </div>
+
+              {/* Submit */}
+              <div>
                 <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 cursor-pointer"
-                  tabIndex={-1}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  id="login-submit-btn"
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-[#004d25] bg-[#d4af37] hover:bg-[#c4a030] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#d4af37] transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer active:scale-98"
                 >
-                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  {isLoading ? (
+                    <div className="w-5 h-5 border-2 border-[#004d25] border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      Secure Login <ChevronRight className="ml-2 h-4 w-4" />
+                    </>
+                  )}
                 </button>
               </div>
-            </div>
-
-            {/* Submit */}
-            <div>
-              <button
-                id="login-submit-btn"
-                type="submit"
-                disabled={isLoading}
-                className="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-[#004d25] bg-[#d4af37] hover:bg-[#c4a030] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#d4af37] transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer active:scale-98"
-              >
-                {isLoading ? (
-                  <div className="w-5 h-5 border-2 border-[#004d25] border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <>
-                    Secure Login <ChevronRight className="ml-2 h-4 w-4" />
-                  </>
-                )}
-              </button>
-            </div>
-          </form>
+            </form>
+          </div>
         </div>
-      </div>
       </div>
 
       {/* Footer from mainpage */}

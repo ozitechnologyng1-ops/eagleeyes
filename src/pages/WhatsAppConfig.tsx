@@ -1,36 +1,66 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  MessageSquare, Settings, Database, DollarSign, Server, Users, 
-  Upload, QrCode, Phone, CheckCircle2, AlertCircle, RefreshCw, 
-  Trash2, Plus, ExternalLink, Shield, Send, Image, Video, Eye,
-  Copy, Check, FileText, Pencil, X
-} from 'lucide-react';
-import toast from 'react-hot-toast';
-import { useApp } from '../context/AppContext';
-import { greenApiService, WhatsAppStateConfig, WhatsAppInstance, KnowledgeEntry, GroupMonitor } from '../lib/greenApi';
-import { supabase } from '../lib/supabase';
-import { getTwilioConfig, saveTwilioConfig, sendTwilioSms, TwilioStateConfig } from '../lib/smsService';
+import React, { useState, useEffect } from "react";
+import {
+  MessageSquare,
+  Settings,
+  Database,
+  DollarSign,
+  Server,
+  Users,
+  Upload,
+  QrCode,
+  Phone,
+  CheckCircle2,
+  RefreshCw,
+  Trash2,
+  Plus,
+  ExternalLink,
+  Shield,
+  Send,
+  Image,
+  Eye,
+  Copy,
+  Check,
+  FileText,
+  Pencil,
+  X,
+} from "lucide-react";
+import toast from "react-hot-toast";
+import { useApp } from "../context/AppContext";
+import {
+  greenApiService,
+  WhatsAppStateConfig,
+  WhatsAppInstance,
+  KnowledgeEntry,
+  GroupMonitor,
+} from "../lib/greenApi";
+import { supabase } from "../lib/supabase";
+import { getTwilioConfig, saveTwilioConfig, sendTwilioSms } from "../lib/smsService";
 
 export const WhatsAppConfig: React.FC = () => {
   const { user } = useApp();
   const stateId = user?.stateId || 24; // Default to Lagos (24) or user's assigned state
 
-  const [activeTab, setActiveTab] = useState<'settings' | 'sms' | 'ai' | 'earnings' | 'pool' | 'groups'>('settings');
+  const [activeTab, setActiveTab] = useState<
+    "settings" | "sms" | "ai" | "earnings" | "pool" | "groups"
+  >("settings");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   // State config
-  const [config, setConfig] = useState<Partial<WhatsAppStateConfig> & {
-    default_message_format?: 'image_and_text' | 'text_only';
-    earning_per_manual_wa?: number;
-    earning_per_call?: number;
-  }>({
+  const [config, setConfig] = useState<
+    Partial<WhatsAppStateConfig> & {
+      default_message_format?: "image_and_text" | "text_only";
+      earning_per_manual_wa?: number;
+      earning_per_call?: number;
+    }
+  >({
     state_id: stateId,
-    green_api_partner_token: '',
-    default_flyer_url: '',
-    default_flyer_type: 'image',
-    default_message_format: 'image_and_text',
-    default_message_template: 'Hello {{voter_name}}, this is {{agent_name}} from the ADC EagleEye team in {{ward_name}}. We would love to hear your thoughts and feedback!',
+    green_api_partner_token: "",
+    default_flyer_url: "",
+    default_flyer_type: "image",
+    default_message_format: "image_and_text",
+    default_message_template:
+      "Hello {{voter_name}}, this is {{agent_name}} from the ADC EagleEye team in {{ward_name}}. We would love to hear your thoughts and feedback!",
     daily_outreach_max: 10,
     auto_outreach_enabled: true,
     message_interval_minutes: 180,
@@ -40,54 +70,95 @@ export const WhatsAppConfig: React.FC = () => {
     earning_per_conversion: 200,
     earning_per_group_add: 100,
     group_ai_response_frequency: 3,
-    ai_provider: 'gemini',
-    ai_model: 'gemini-3.8-flash',
-    ai_api_key: '',
-    group_ai_system_prompt: 'You are a respectful, knowledgeable, and articulate community representative for the ADC candidate. Defend candidate policies factually using verified manifesto data, correct misconceptions, maintain a peaceful tone, and avoid hostile or aggressive debates.'
+    ai_provider: "gemini",
+    ai_model: "gemini-3.8-flash",
+    ai_api_key: "",
+    group_ai_system_prompt:
+      "You are a respectful, knowledgeable, and articulate community representative for the ADC candidate. Defend candidate policies factually using verified manifesto data, correct misconceptions, maintain a peaceful tone, and avoid hostile or aggressive debates.",
   });
 
   const PROVIDER_MODELS: Record<string, { id: string; name: string; category?: string }[]> = {
     gemini: [
-      { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Latest Workhorse Flagship - Recommended)', category: 'General-Use Frontier' },
-      { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview (Advanced Reasoning & Multi-step)', category: 'General-Use Frontier' },
-      { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite (Cost-Efficient & High-Volume)', category: 'General-Use Frontier' },
-      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', category: 'Standard Models' },
-      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', category: 'Standard Models' },
-      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', category: 'Standard Models' },
-      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', category: 'Standard Models' },
-      { id: 'gemini-3.1-flash-image', name: 'Gemini 3.1 Flash Image / Nano Banana 2', category: 'Vision & Multimodal' },
-      { id: 'gemini-3-pro-image', name: 'Gemini 3 Pro Image / Nano Banana Pro', category: 'Vision & Multimodal' },
-      { id: 'gemini-omni-flash', name: 'Gemini Omni Flash', category: 'Vision & Multimodal' },
+      {
+        id: "gemini-3.8-flash",
+        name: "Gemini 3.8 Flash (Latest Workhorse Flagship - Recommended)",
+        category: "General-Use Frontier",
+      },
+      {
+        id: "gemini-3.1-pro-preview",
+        name: "Gemini 3.1 Pro Preview (Advanced Reasoning & Multi-step)",
+        category: "General-Use Frontier",
+      },
+      {
+        id: "gemini-3.5-flash-lite",
+        name: "Gemini 3.5 Flash-Lite (Cost-Efficient & High-Volume)",
+        category: "General-Use Frontier",
+      },
+      { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", category: "Standard Models" },
+      { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash", category: "Standard Models" },
+      { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", category: "Standard Models" },
+      { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", category: "Standard Models" },
+      {
+        id: "gemini-3.1-flash-image",
+        name: "Gemini 3.1 Flash Image / Nano Banana 2",
+        category: "Vision & Multimodal",
+      },
+      {
+        id: "gemini-3-pro-image",
+        name: "Gemini 3 Pro Image / Nano Banana Pro",
+        category: "Vision & Multimodal",
+      },
+      { id: "gemini-omni-flash", name: "Gemini Omni Flash", category: "Vision & Multimodal" },
     ],
     openai: [
-      { id: 'gpt-4o', name: 'GPT-4o (Omni Flagship)', category: 'OpenAI GPT' },
-      { id: 'gpt-4o-mini', name: 'GPT-4o Mini (Fast & Lightweight)', category: 'OpenAI GPT' },
-      { id: 'o1', name: 'o1 (Deep Reasoning)', category: 'OpenAI Reasoning' },
-      { id: 'o3-mini', name: 'o3-mini (Reasoning & Speed)', category: 'OpenAI Reasoning' },
-      { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', category: 'OpenAI GPT' },
+      { id: "gpt-4o", name: "GPT-4o (Omni Flagship)", category: "OpenAI GPT" },
+      { id: "gpt-4o-mini", name: "GPT-4o Mini (Fast & Lightweight)", category: "OpenAI GPT" },
+      { id: "o1", name: "o1 (Deep Reasoning)", category: "OpenAI Reasoning" },
+      { id: "o3-mini", name: "o3-mini (Reasoning & Speed)", category: "OpenAI Reasoning" },
+      { id: "gpt-4-turbo", name: "GPT-4 Turbo", category: "OpenAI GPT" },
     ],
     groq: [
-      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile (Ultra-fast)', category: 'Meta Llama' },
-      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant (Instant Response)', category: 'Meta Llama' },
-      { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B (32k Context)', category: 'Mistral' },
-      { id: 'deepseek-r1-distill-llama-70b', name: 'DeepSeek R1 Distill Llama 70B', category: 'Reasoning' },
-    ]
+      {
+        id: "llama-3.3-70b-versatile",
+        name: "Llama 3.3 70B Versatile (Ultra-fast)",
+        category: "Meta Llama",
+      },
+      {
+        id: "llama-3.1-8b-instant",
+        name: "Llama 3.1 8B Instant (Instant Response)",
+        category: "Meta Llama",
+      },
+      { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B (32k Context)", category: "Mistral" },
+      {
+        id: "deepseek-r1-distill-llama-70b",
+        name: "DeepSeek R1 Distill Llama 70B",
+        category: "Reasoning",
+      },
+    ],
   };
 
   // Instances & Pool
   const [instances, setInstances] = useState<WhatsAppInstance[]>([]);
-  const [poolStatus, setPoolStatus] = useState({ standby: 0, assigned: 0, groupMonitors: 0, total: 0, needsReplenish: true });
-  const [agentsMap, setAgentsMap] = useState<Record<string, { name: string; phone?: string; ward?: string }>>({});
+  const [poolStatus, setPoolStatus] = useState({
+    standby: 0,
+    assigned: 0,
+    groupMonitors: 0,
+    total: 0,
+    needsReplenish: true,
+  });
+  const [agentsMap, setAgentsMap] = useState<
+    Record<string, { name: string; phone?: string; ward?: string }>
+  >({});
 
   // Knowledge base
   const [knowledgeList, setKnowledgeList] = useState<KnowledgeEntry[]>([]);
-  const [kbTitle, setKbTitle] = useState('');
-  const [kbContent, setKbContent] = useState('');
-  const [kbType, setKbType] = useState('policy');
-  const [kbImage, setKbImage] = useState('');
-  const [kbDocUrl, setKbDocUrl] = useState('');
-  const [kbDocName, setKbDocName] = useState('');
-  const [kbCaption, setKbCaption] = useState('');
+  const [kbTitle, setKbTitle] = useState("");
+  const [kbContent, setKbContent] = useState("");
+  const [kbType, setKbType] = useState("policy");
+  const [kbImage, setKbImage] = useState("");
+  const [kbDocUrl, setKbDocUrl] = useState("");
+  const [kbDocName, setKbDocName] = useState("");
+  const [kbCaption, setKbCaption] = useState("");
   const [uploadingKb, setUploadingKb] = useState(false);
   const [uploadingKbImage, setUploadingKbImage] = useState(false);
   const [uploadingKbDoc, setUploadingKbDoc] = useState(false);
@@ -105,10 +176,14 @@ export const WhatsAppConfig: React.FC = () => {
     setTogglingGroupId(groupId);
     try {
       await greenApiService.toggleGroupAi(groupId, !current);
-      toast.success(!current ? 'AI Defense activated for group' : 'AI Defense turned OFF for group');
-      setMonitors(prev => prev.map(m => m.id === groupId ? { ...m, ai_enabled: !current } : m));
-    } catch (err: any) {
-      toast.error('Failed to toggle AI state');
+      toast.success(
+        !current ? "AI Defense activated for group" : "AI Defense turned OFF for group",
+      );
+      setMonitors((prev) =>
+        prev.map((m) => (m.id === groupId ? { ...m, ai_enabled: !current } : m)),
+      );
+    } catch {
+      toast.error("Failed to toggle AI state");
     } finally {
       setTogglingGroupId(null);
     }
@@ -118,19 +193,23 @@ export const WhatsAppConfig: React.FC = () => {
   const [connectingInstance, setConnectingInstance] = useState<WhatsAppInstance | null>(null);
   const [qrCodeData, setQrCodeData] = useState<string | null>(null);
   const [authCode, setAuthCode] = useState<string | null>(null);
-  const [pairingPhone, setPairingPhone] = useState('');
-  const [connectMethod, setConnectMethod] = useState<'qr' | 'phone'>('qr');
+  const [pairingPhone, setPairingPhone] = useState("");
+  const [connectMethod, setConnectMethod] = useState<"qr" | "phone">("qr");
   const [copiedCode, setCopiedCode] = useState(false);
 
   const handleCopyCode = (code: string) => {
-    navigator.clipboard.writeText(code);
+    Promise.resolve(navigator.clipboard.writeText(code)).catch((error: unknown) =>
+      console.error("Async operation failed in WhatsAppConfig", error),
+    );
     setCopiedCode(true);
-    toast.success('Pairing code copied to clipboard!');
+    toast.success("Pairing code copied to clipboard!");
     setTimeout(() => setCopiedCode(false), 2000);
   };
 
   useEffect(() => {
-    loadData();
+    Promise.resolve(loadData()).catch((error: unknown) =>
+      console.error("Async operation failed in WhatsAppConfig", error),
+    );
   }, [stateId]);
 
   const loadData = async () => {
@@ -141,14 +220,14 @@ export const WhatsAppConfig: React.FC = () => {
         greenApiService.getInstances(stateId),
         greenApiService.getPoolStatus(stateId),
         greenApiService.getKnowledgeEntries(stateId),
-        greenApiService.getGroupMonitors(stateId)
+        greenApiService.getGroupMonitors(stateId),
       ]);
 
       if (cfg) setConfig(cfg);
-      
+
       // Load Twilio config (per-state)
       const twilioCfg = getTwilioConfig(stateId);
-      setConfig(prev => ({
+      setConfig((prev) => ({
         ...prev,
         twilio_account_sid: twilioCfg.account_sid,
         twilio_auth_token: twilioCfg.auth_token,
@@ -164,31 +243,33 @@ export const WhatsAppConfig: React.FC = () => {
       setMonitors(grps);
 
       // Fetch agent profiles for assigned instances
-      const { data: ags } = await supabase
-        .from('agents')
-        .select('id, name, phone, wards_id');
+      const { data: ags } = await supabase.from("agents").select("id, name, phone, wards_id");
       if (ags) {
         const map: Record<string, { name: string; phone?: string; ward?: string }> = {};
         ags.forEach((a: any) => {
-          map[a.id] = { name: a.name, phone: a.phone, ward: a.wards_id ? `Ward ${a.wards_id}` : undefined };
+          map[a.id] = {
+            name: a.name,
+            phone: a.phone,
+            ward: a.wards_id ? `Ward ${a.wards_id}` : undefined,
+          };
         });
         setAgentsMap(map);
       }
     } catch (err: any) {
-      console.error('Error loading WhatsApp configuration:', err);
-      toast.error('Failed to load WhatsApp configuration');
+      console.error("Error loading WhatsApp configuration:", err);
+      toast.error("Failed to load WhatsApp configuration");
     } finally {
       setLoading(false);
     }
   };
 
-  const [testPhone, setTestPhone] = useState('');
+  const [testPhone, setTestPhone] = useState("");
   const [testingSms, setTestingSms] = useState(false);
   const [showTwilioToken, setShowTwilioToken] = useState(false);
 
   const handleTestSms = async () => {
     if (!testPhone) {
-      toast.error('Please enter a test phone number (e.g. 08012345678)');
+      toast.error("Please enter a test phone number (e.g. 08012345678)");
       return;
     }
     setTestingSms(true);
@@ -207,7 +288,7 @@ export const WhatsAppConfig: React.FC = () => {
       });
       toast.success(`Test SMS sent to ${testPhone} via Twilio!`);
     } catch (err: any) {
-      toast.error(err.message || 'Twilio test SMS failed');
+      toast.error(err.message || "Twilio test SMS failed");
     } finally {
       setTestingSms(false);
     }
@@ -216,7 +297,7 @@ export const WhatsAppConfig: React.FC = () => {
   const handleSaveConfig = async () => {
     setSaving(true);
     try {
-      if (activeTab === 'sms') {
+      if (activeTab === "sms") {
         saveTwilioConfig(stateId, {
           account_sid: config.twilio_account_sid,
           auth_token: config.twilio_auth_token,
@@ -225,16 +306,16 @@ export const WhatsAppConfig: React.FC = () => {
           from_number: config.twilio_from_number,
           sms_login_template: config.sms_login_template,
         });
-        toast.success('Twilio SMS configuration saved successfully');
+        toast.success("Twilio SMS configuration saved successfully");
       } else {
         const saved = await greenApiService.saveConfig(stateId, config);
         if (saved) {
-          setConfig(prev => ({ ...prev, ...saved }));
+          setConfig((prev) => ({ ...prev, ...saved }));
         }
-        toast.success('WhatsApp state configuration saved successfully');
+        toast.success("WhatsApp state configuration saved successfully");
       }
     } catch (err: any) {
-      toast.error(err.message || 'Failed to save configuration');
+      toast.error(err.message || "Failed to save configuration");
     } finally {
       setSaving(false);
     }
@@ -245,48 +326,54 @@ export const WhatsAppConfig: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const isVideo = file.type.startsWith('video');
-    const toastId = toast.loading('Uploading flyer asset...');
+    const isVideo = file.type.startsWith("video");
+    const toastId = toast.loading("Uploading flyer asset...");
 
     try {
-      const fileExt = file.name.split('.').pop();
+      const fileExt = file.name.split(".").pop();
       const fileName = `state_${stateId}_flyer_${Date.now()}.${fileExt}`;
       const filePath = `flyers/${fileName}`;
 
-      const { data: uploadData, error: uploadErr } = await supabase.storage
-        .from('election-results')
+      const { error: uploadErr } = await supabase.storage
+        .from("election-results")
         .upload(filePath, file, { upsert: true });
 
       if (uploadErr) throw uploadErr;
 
       const { data: publicUrlData } = supabase.storage
-        .from('election-results')
+        .from("election-results")
         .getPublicUrl(filePath);
 
-      setConfig(prev => ({
+      setConfig((prev) => ({
         ...prev,
         default_flyer_url: publicUrlData.publicUrl,
-        default_flyer_type: isVideo ? 'video' : 'image'
+        default_flyer_type: isVideo ? "video" : "image",
       }));
 
-      toast.success('Flyer uploaded and linked!', { id: toastId });
+      toast.success("Flyer uploaded and linked!", { id: toastId });
     } catch (err: any) {
       toast.error(`Upload failed: ${err.message}`, { id: toastId });
     }
   };
 
   // Create Instance
-  const handleCreateInstance = async (type: 'agent' | 'group_monitor') => {
-    const toastId = toast.loading(`Creating ${type === 'group_monitor' ? 'Group Monitor' : 'Agent'} instance...`);
+  const handleCreateInstance = async (type: "agent" | "group_monitor") => {
+    const toastId = toast.loading(
+      `Creating ${type === "group_monitor" ? "Group Monitor" : "Agent"} instance...`,
+    );
     try {
       const newInst = await greenApiService.createInstance(stateId, type);
-      toast.success('Instance created in standby pool!', { id: toastId });
-      loadData();
-      if (type === 'group_monitor') {
-        openConnectModal(newInst);
+      toast.success("Instance created in standby pool!", { id: toastId });
+      Promise.resolve(loadData()).catch((error: unknown) =>
+        console.error("Async operation failed in WhatsAppConfig", error),
+      );
+      if (type === "group_monitor") {
+        Promise.resolve(openConnectModal(newInst)).catch((error: unknown) =>
+          console.error("Async operation failed in WhatsAppConfig", error),
+        );
       }
     } catch (err: any) {
-      toast.error(err.message || 'Instance creation failed', { id: toastId });
+      toast.error(err.message || "Instance creation failed", { id: toastId });
     }
   };
 
@@ -295,7 +382,7 @@ export const WhatsAppConfig: React.FC = () => {
     setConnectingInstance(inst);
     setQrCodeData(null);
     setAuthCode(null);
-    setConnectMethod('qr');
+    setConnectMethod("qr");
 
     try {
       const qrRes = await greenApiService.getQRCode(inst.id);
@@ -303,40 +390,44 @@ export const WhatsAppConfig: React.FC = () => {
         setQrCodeData(qrRes.message);
       }
     } catch (e) {
-      console.error('Failed to get QR:', e);
+      console.error("Failed to get QR:", e);
     }
   };
 
   const handleGetAuthCode = async () => {
     if (!connectingInstance || !pairingPhone) {
-      toast.error('Please enter a WhatsApp phone number');
+      toast.error("Please enter a WhatsApp phone number");
       return;
     }
-    const toastId = toast.loading('Requesting pairing code from WhatsApp...');
+    const toastId = toast.loading("Requesting pairing code from WhatsApp...");
     try {
       const res = await greenApiService.getAuthCode(connectingInstance.id, pairingPhone);
       if (res?.code) {
         setAuthCode(res.code);
-        toast.success('Code generated! Enter this code in WhatsApp.', { id: toastId });
+        toast.success("Code generated! Enter this code in WhatsApp.", { id: toastId });
       } else {
-        toast.error('Could not generate pairing code', { id: toastId });
+        toast.error("Could not generate pairing code", { id: toastId });
       }
     } catch (err: any) {
-      toast.error(err.message || 'Pairing code error', { id: toastId });
+      toast.error(err.message || "Pairing code error", { id: toastId });
     }
   };
 
   const handleCheckAuthStatus = async () => {
     if (!connectingInstance) return;
-    const toastId = toast.loading('Checking authorization status...');
+    const toastId = toast.loading("Checking authorization status...");
     try {
       const res = await greenApiService.checkInstanceState(connectingInstance.id);
-      if (res.waState === 'authorized') {
-        toast.success(`WhatsApp successfully connected! (${res.phoneNumber || 'Authorized'})`, { id: toastId });
+      if (res.waState === "authorized") {
+        toast.success(`WhatsApp successfully connected! (${res.phoneNumber || "Authorized"})`, {
+          id: toastId,
+        });
         setConnectingInstance(null);
-        loadData();
+        Promise.resolve(loadData()).catch((error: unknown) =>
+          console.error("Async operation failed in WhatsAppConfig", error),
+        );
       } else {
-        toast('Status is currently: ' + res.waState, { icon: 'ℹ️', id: toastId });
+        toast("Status is currently: " + res.waState, { icon: "ℹ️", id: toastId });
       }
     } catch (err: any) {
       toast.error(err.message, { id: toastId });
@@ -347,8 +438,8 @@ export const WhatsAppConfig: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith('image/')) {
-      toast.error('Please upload an image file (PNG, JPG, WEBP, etc.)');
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please upload an image file (PNG, JPG, WEBP, etc.)");
       return;
     }
 
@@ -356,18 +447,18 @@ export const WhatsAppConfig: React.FC = () => {
     const toastId = toast.loading(`Uploading image ${file.name}...`);
 
     try {
-      const fileExt = file.name.split('.').pop();
+      const fileExt = file.name.split(".").pop();
       const fileName = `kb_img_${stateId}_${Date.now()}.${fileExt}`;
       const filePath = `knowledge/${fileName}`;
 
       const { error: uploadErr } = await supabase.storage
-        .from('election-results')
+        .from("election-results")
         .upload(filePath, file, { upsert: true });
 
       if (uploadErr) throw uploadErr;
 
       const { data: publicUrlData } = supabase.storage
-        .from('election-results')
+        .from("election-results")
         .getPublicUrl(filePath);
 
       setKbImage(publicUrlData.publicUrl);
@@ -393,18 +484,18 @@ export const WhatsAppConfig: React.FC = () => {
     const toastId = toast.loading(`Uploading document ${file.name}...`);
 
     try {
-      const fileExt = file.name.split('.').pop();
+      const fileExt = file.name.split(".").pop();
       const fileName = `kb_doc_${stateId}_${Date.now()}.${fileExt}`;
       const filePath = `knowledge/${fileName}`;
 
       const { error: uploadErr } = await supabase.storage
-        .from('election-results')
+        .from("election-results")
         .upload(filePath, file, { upsert: true });
 
       if (uploadErr) throw uploadErr;
 
       const { data: publicUrlData } = supabase.storage
-        .from('election-results')
+        .from("election-results")
         .getPublicUrl(filePath);
 
       setKbDocUrl(publicUrlData.publicUrl);
@@ -421,32 +512,55 @@ export const WhatsAppConfig: React.FC = () => {
   const handleAddKnowledge = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!kbTitle || !kbContent) {
-      toast.error('Please provide a title and content');
+      toast.error("Please provide a title and content");
       return;
     }
 
     setUploadingKb(true);
-    const toastId = toast.loading(editingEntryId ? 'Updating knowledge entry...' : 'Vectorizing and storing knowledge chunk...');
+    const toastId = toast.loading(
+      editingEntryId ? "Updating knowledge entry..." : "Vectorizing and storing knowledge chunk...",
+    );
     try {
       if (editingEntryId) {
-        await greenApiService.updateKnowledgeEntry(editingEntryId, kbTitle, kbContent, kbType, kbImage, kbCaption, kbDocUrl, kbDocName, stateId);
-        toast.success('Knowledge entry updated and re-vectorized!', { id: toastId });
+        await greenApiService.updateKnowledgeEntry(
+          editingEntryId,
+          kbTitle,
+          kbContent,
+          kbType,
+          kbImage,
+          kbCaption,
+          kbDocUrl,
+          kbDocName,
+          stateId,
+        );
+        toast.success("Knowledge entry updated and re-vectorized!", { id: toastId });
         setEditingEntryId(null);
       } else {
-        await greenApiService.uploadKnowledge(stateId, kbTitle, kbContent, kbType, kbImage, kbCaption, kbDocUrl, kbDocName);
-        toast.success('Candidate knowledge chunked, vectorized & stored in background!', { id: toastId });
+        await greenApiService.uploadKnowledge(
+          stateId,
+          kbTitle,
+          kbContent,
+          kbType,
+          kbImage,
+          kbCaption,
+          kbDocUrl,
+          kbDocName,
+        );
+        toast.success("Candidate knowledge chunked, vectorized & stored in background!", {
+          id: toastId,
+        });
       }
-      setKbTitle('');
-      setKbContent('');
-      setKbType('policy');
-      setKbImage('');
-      setKbDocUrl('');
-      setKbDocName('');
-      setKbCaption('');
+      setKbTitle("");
+      setKbContent("");
+      setKbType("policy");
+      setKbImage("");
+      setKbDocUrl("");
+      setKbDocName("");
+      setKbCaption("");
       const updated = await greenApiService.getKnowledgeEntries(stateId);
       setKnowledgeList(updated);
     } catch (err: any) {
-      toast.error(err.message || 'Failed to save knowledge chunk', { id: toastId });
+      toast.error(err.message || "Failed to save knowledge chunk", { id: toastId });
     } finally {
       setUploadingKb(false);
     }
@@ -454,36 +568,46 @@ export const WhatsAppConfig: React.FC = () => {
 
   const handleReindexKnowledge = async () => {
     if (!config.ai_api_key) {
-      toast.error('Please configure and save an AI API key in the AI Engine tab first.');
+      toast.error("Please configure and save an AI API key in the AI Engine tab first.");
       return;
     }
     setReindexingKb(true);
-    const toastId = toast.loading('Re-chunking and vectorizing entire knowledge base in background...');
+    const toastId = toast.loading(
+      "Re-chunking and vectorizing entire knowledge base in background...",
+    );
     try {
       const res = await greenApiService.reindexKnowledge(stateId);
-      toast.success(`Complete! Processed ${res.totalProcessed} items (${res.createdChunksCount} chunks created & vectorized).`, { id: toastId });
+      toast.success(
+        `Complete! Processed ${res.totalProcessed} items (${res.createdChunksCount} chunks created & vectorized).`,
+        { id: toastId },
+      );
       const updated = await greenApiService.getKnowledgeEntries(stateId);
       setKnowledgeList(updated);
     } catch (err: any) {
-      toast.error(err.message || 'Re-indexing failed', { id: toastId });
+      toast.error(err.message || "Re-indexing failed", { id: toastId });
     } finally {
       setReindexingKb(false);
     }
   };
 
   const handleDeleteKnowledge = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this knowledge entry?')) return;
+    if (!confirm("Are you sure you want to delete this knowledge entry?")) return;
     try {
       await greenApiService.deleteKnowledgeEntry(id);
-      toast.success('Deleted');
-      setKnowledgeList(prev => prev.filter(k => k.id !== id));
+      toast.success("Deleted");
+      setKnowledgeList((prev) => prev.filter((k) => k.id !== id));
       if (editingEntryId === id) {
         setEditingEntryId(null);
-        setKbTitle(''); setKbContent(''); setKbType('policy');
-        setKbImage(''); setKbDocUrl(''); setKbDocName(''); setKbCaption('');
+        setKbTitle("");
+        setKbContent("");
+        setKbType("policy");
+        setKbImage("");
+        setKbDocUrl("");
+        setKbDocName("");
+        setKbCaption("");
       }
-    } catch (err: any) {
-      toast.error('Failed to delete');
+    } catch {
+      toast.error("Failed to delete");
     }
   };
 
@@ -492,17 +616,22 @@ export const WhatsAppConfig: React.FC = () => {
     setKbTitle(item.title);
     setKbType(item.content_type);
     setKbContent(item.content);
-    setKbImage(item.image_url || '');
-    setKbCaption(item.image_caption || '');
-    setKbDocUrl(item.doc_url || '');
-    setKbDocName(item.doc_name || '');
-    kbFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setKbImage(item.image_url || "");
+    setKbCaption(item.image_caption || "");
+    setKbDocUrl(item.doc_url || "");
+    setKbDocName(item.doc_name || "");
+    kbFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   const handleCancelEdit = () => {
     setEditingEntryId(null);
-    setKbTitle(''); setKbContent(''); setKbType('policy');
-    setKbImage(''); setKbDocUrl(''); setKbDocName(''); setKbCaption('');
+    setKbTitle("");
+    setKbContent("");
+    setKbType("policy");
+    setKbImage("");
+    setKbDocUrl("");
+    setKbDocName("");
+    setKbCaption("");
   };
 
   if (loading) {
@@ -540,7 +669,11 @@ export const WhatsAppConfig: React.FC = () => {
             disabled={saving}
             className="px-4 py-2 bg-[#004d25] hover:bg-[#00381b] text-white rounded-lg font-medium flex items-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
           >
-            {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            {saving ? (
+              <RefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4" />
+            )}
             Save Configuration
           </button>
         </div>
@@ -549,11 +682,11 @@ export const WhatsAppConfig: React.FC = () => {
       {/* Tabs */}
       <div className="flex overflow-x-auto border-b border-gray-200 gap-2">
         <button
-          onClick={() => setActiveTab('settings')}
+          onClick={() => setActiveTab("settings")}
           className={`px-4 py-3 text-sm font-semibold flex items-center gap-2 border-b-2 transition cursor-pointer ${
-            activeTab === 'settings'
-              ? 'border-[#004d25] text-[#004d25]'
-              : 'border-transparent text-gray-500 hover:text-gray-800'
+            activeTab === "settings"
+              ? "border-[#004d25] text-[#004d25]"
+              : "border-transparent text-gray-500 hover:text-gray-800"
           }`}
         >
           <Settings className="h-4 w-4" />
@@ -561,11 +694,11 @@ export const WhatsAppConfig: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab('sms')}
+          onClick={() => setActiveTab("sms")}
           className={`px-4 py-3 text-sm font-semibold flex items-center gap-2 border-b-2 transition cursor-pointer ${
-            activeTab === 'sms'
-              ? 'border-[#004d25] text-[#004d25]'
-              : 'border-transparent text-gray-500 hover:text-gray-800'
+            activeTab === "sms"
+              ? "border-[#004d25] text-[#004d25]"
+              : "border-transparent text-gray-500 hover:text-gray-800"
           }`}
         >
           <Phone className="h-4 w-4" />
@@ -573,11 +706,11 @@ export const WhatsAppConfig: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab('ai')}
+          onClick={() => setActiveTab("ai")}
           className={`px-4 py-3 text-sm font-semibold flex items-center gap-2 border-b-2 transition cursor-pointer ${
-            activeTab === 'ai'
-              ? 'border-[#004d25] text-[#004d25]'
-              : 'border-transparent text-gray-500 hover:text-gray-800'
+            activeTab === "ai"
+              ? "border-[#004d25] text-[#004d25]"
+              : "border-transparent text-gray-500 hover:text-gray-800"
           }`}
         >
           <Database className="h-4 w-4" />
@@ -585,11 +718,11 @@ export const WhatsAppConfig: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab('earnings')}
+          onClick={() => setActiveTab("earnings")}
           className={`px-4 py-3 text-sm font-semibold flex items-center gap-2 border-b-2 transition cursor-pointer ${
-            activeTab === 'earnings'
-              ? 'border-[#004d25] text-[#004d25]'
-              : 'border-transparent text-gray-500 hover:text-gray-800'
+            activeTab === "earnings"
+              ? "border-[#004d25] text-[#004d25]"
+              : "border-transparent text-gray-500 hover:text-gray-800"
           }`}
         >
           <DollarSign className="h-4 w-4" />
@@ -597,11 +730,11 @@ export const WhatsAppConfig: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab('pool')}
+          onClick={() => setActiveTab("pool")}
           className={`px-4 py-3 text-sm font-semibold flex items-center gap-2 border-b-2 transition cursor-pointer ${
-            activeTab === 'pool'
-              ? 'border-[#004d25] text-[#004d25]'
-              : 'border-transparent text-gray-500 hover:text-gray-800'
+            activeTab === "pool"
+              ? "border-[#004d25] text-[#004d25]"
+              : "border-transparent text-gray-500 hover:text-gray-800"
           }`}
         >
           <Server className="h-4 w-4" />
@@ -609,11 +742,11 @@ export const WhatsAppConfig: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab('groups')}
+          onClick={() => setActiveTab("groups")}
           className={`px-4 py-3 text-sm font-semibold flex items-center gap-2 border-b-2 transition cursor-pointer ${
-            activeTab === 'groups'
-              ? 'border-[#004d25] text-[#004d25]'
-              : 'border-transparent text-gray-500 hover:text-gray-800'
+            activeTab === "groups"
+              ? "border-[#004d25] text-[#004d25]"
+              : "border-transparent text-gray-500 hover:text-gray-800"
           }`}
         >
           <Users className="h-4 w-4" />
@@ -622,7 +755,7 @@ export const WhatsAppConfig: React.FC = () => {
       </div>
 
       {/* TAB: SMS Settings */}
-      {activeTab === 'sms' && (
+      {activeTab === "sms" && (
         <div className="max-w-2xl space-y-6">
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-5">
             <div>
@@ -631,7 +764,8 @@ export const WhatsAppConfig: React.FC = () => {
                 Twilio SMS Credentials
               </h2>
               <p className="text-xs text-gray-500 mt-1">
-                Configure your Twilio credentials for this state. Whenever agents are registered, their login details (phone &amp; password) are sent automatically via Twilio.
+                Configure your Twilio credentials for this state. Whenever agents are registered,
+                their login details (phone &amp; password) are sent automatically via Twilio.
               </p>
             </div>
 
@@ -641,12 +775,14 @@ export const WhatsAppConfig: React.FC = () => {
               </label>
               <input
                 type="text"
-                value={config.twilio_account_sid || ''}
-                onChange={e => setConfig({ ...config, twilio_account_sid: e.target.value })}
+                value={config.twilio_account_sid || ""}
+                onChange={(e) => setConfig({ ...config, twilio_account_sid: e.target.value })}
                 placeholder="AC... (your Twilio Account SID)"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 font-mono focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
               />
-              <p className="text-[11px] text-gray-400 mt-1">Found in your Twilio Console Account Info.</p>
+              <p className="text-[11px] text-gray-400 mt-1">
+                Found in your Twilio Console Account Info.
+              </p>
             </div>
 
             <div>
@@ -659,20 +795,22 @@ export const WhatsAppConfig: React.FC = () => {
                   onClick={() => setShowTwilioToken(!showTwilioToken)}
                   className="text-xs text-[#004d25] hover:underline cursor-pointer"
                 >
-                  {showTwilioToken ? 'Hide Token' : 'Show Token'}
+                  {showTwilioToken ? "Hide Token" : "Show Token"}
                 </button>
               </div>
               <input
-                type={showTwilioToken ? 'text' : 'password'}
-                value={config.twilio_auth_token || ''}
-                onChange={e => setConfig({ ...config, twilio_auth_token: e.target.value })}
+                type={showTwilioToken ? "text" : "password"}
+                value={config.twilio_auth_token || ""}
+                onChange={(e) => setConfig({ ...config, twilio_auth_token: e.target.value })}
                 placeholder="Twilio Auth Token"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 font-mono focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
               />
             </div>
 
             <div className="pt-2 border-t border-gray-100">
-              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Optional: API Key &amp; Secret (Builder Tools)</span>
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                Optional: API Key &amp; Secret (Builder Tools)
+              </span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -682,8 +820,8 @@ export const WhatsAppConfig: React.FC = () => {
                 </label>
                 <input
                   type="text"
-                  value={config.twilio_api_key_sid || ''}
-                  onChange={e => setConfig({ ...config, twilio_api_key_sid: e.target.value })}
+                  value={config.twilio_api_key_sid || ""}
+                  onChange={(e) => setConfig({ ...config, twilio_api_key_sid: e.target.value })}
                   placeholder="SK... (your API Key SID)"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 font-mono focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
                 />
@@ -694,8 +832,8 @@ export const WhatsAppConfig: React.FC = () => {
                 </label>
                 <input
                   type="password"
-                  value={config.twilio_api_secret || ''}
-                  onChange={e => setConfig({ ...config, twilio_api_secret: e.target.value })}
+                  value={config.twilio_api_secret || ""}
+                  onChange={(e) => setConfig({ ...config, twilio_api_secret: e.target.value })}
                   placeholder="API Secret"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 font-mono focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
                 />
@@ -708,13 +846,15 @@ export const WhatsAppConfig: React.FC = () => {
               </label>
               <input
                 type="text"
-                value={config.twilio_from_number || ''}
-                onChange={e => setConfig({ ...config, twilio_from_number: e.target.value })}
+                value={config.twilio_from_number || ""}
+                onChange={(e) => setConfig({ ...config, twilio_from_number: e.target.value })}
                 placeholder="e.g. EagleEye or +13802573907"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
               />
               <p className="text-xs text-gray-400 mt-1">
-                Enter an Alphanumeric Sender ID (e.g. <strong>EagleEye</strong> or <strong>OgunADC</strong>), a Twilio phone number, or a Messaging Service SID (MG...).
+                Enter an Alphanumeric Sender ID (e.g. <strong>EagleEye</strong> or{" "}
+                <strong>OgunADC</strong>), a Twilio phone number, or a Messaging Service SID
+                (MG...).
               </p>
             </div>
           </div>
@@ -727,15 +867,21 @@ export const WhatsAppConfig: React.FC = () => {
                 Login Credentials SMS Template
               </h2>
               <p className="text-xs text-gray-500 mt-1">
-                Sent automatically when an agent is registered, and can be re-sent manually by state, LGA, or ward admins from the Agents page.
+                Sent automatically when an agent is registered, and can be re-sent manually by
+                state, LGA, or ward admins from the Agents page.
               </p>
             </div>
 
             <div className="flex flex-wrap gap-2 text-xs">
-              {['{{firstname}}', '{{phone}}', '{{password}}'].map(tag => (
+              {["{{firstname}}", "{{phone}}", "{{password}}"].map((tag) => (
                 <span
                   key={tag}
-                  onClick={() => setConfig(prev => ({ ...prev, sms_login_template: (prev.sms_login_template || '') + tag }))}
+                  onClick={() =>
+                    setConfig((prev) => ({
+                      ...prev,
+                      sms_login_template: (prev.sms_login_template || "") + tag,
+                    }))
+                  }
                   className="bg-[#004d25]/10 text-[#004d25] px-2 py-1 rounded cursor-pointer hover:bg-[#004d25]/20 font-mono select-none"
                   title={`Click to insert ${tag}`}
                 >
@@ -747,8 +893,8 @@ export const WhatsAppConfig: React.FC = () => {
 
             <textarea
               rows={4}
-              value={config.sms_login_template || ''}
-              onChange={e => setConfig({ ...config, sms_login_template: e.target.value })}
+              value={config.sms_login_template || ""}
+              onChange={(e) => setConfig({ ...config, sms_login_template: e.target.value })}
               placeholder="Hello {{firstname}}, your EagleEye login credentials: Phone: {{phone}}, Password: {{password}}. Keep this safe and do not share."
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none resize-none"
             />
@@ -756,15 +902,18 @@ export const WhatsAppConfig: React.FC = () => {
             <div className="bg-gray-50 border border-dashed border-gray-200 rounded-lg p-3 text-xs text-gray-500 space-y-1">
               <p className="font-semibold text-gray-700">Preview</p>
               <p className="break-words font-mono text-gray-800">
-                {(config.sms_login_template || 'Hello {{firstname}}, your login: Phone: {{phone}}, Password: {{password}}.')
-                  .replace(/\{\{firstname\}\}/gi, 'Adeola')
-                  .replace(/\{\{phone\}\}/gi, '08012345678')
-                  .replace(/\{\{password\}\}/gi, 'SecurePass1!')}
+                {(
+                  config.sms_login_template ||
+                  "Hello {{firstname}}, your login: Phone: {{phone}}, Password: {{password}}."
+                )
+                  .replace(/\{\{firstname\}\}/gi, "Adeola")
+                  .replace(/\{\{phone\}\}/gi, "08012345678")
+                  .replace(/\{\{password\}\}/gi, "SecurePass1!")}
               </p>
             </div>
 
             <p className="text-xs text-gray-400">
-              Character count: {(config.sms_login_template || '').length} / 160 per SMS segment
+              Character count: {(config.sms_login_template || "").length} / 160 per SMS segment
             </p>
           </div>
 
@@ -776,7 +925,8 @@ export const WhatsAppConfig: React.FC = () => {
                 Test Twilio SMS
               </h2>
               <p className="text-xs text-gray-500 mt-1">
-                Send a quick test message to verify that your Twilio credentials and sender ID are working properly.
+                Send a quick test message to verify that your Twilio credentials and sender ID are
+                working properly.
               </p>
             </div>
 
@@ -784,7 +934,7 @@ export const WhatsAppConfig: React.FC = () => {
               <input
                 type="tel"
                 value={testPhone}
-                onChange={e => setTestPhone(e.target.value)}
+                onChange={(e) => setTestPhone(e.target.value)}
                 placeholder="Test phone (e.g. 08012345678)"
                 className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
               />
@@ -794,7 +944,11 @@ export const WhatsAppConfig: React.FC = () => {
                 disabled={testingSms || !testPhone}
                 className="px-4 py-2 bg-[#d4af37] hover:bg-[#c4a030] text-[#004d25] font-semibold text-sm rounded-lg transition disabled:opacity-50 flex items-center gap-2 cursor-pointer"
               >
-                {testingSms ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                {testingSms ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
                 Send Test
               </button>
             </div>
@@ -805,14 +959,18 @@ export const WhatsAppConfig: React.FC = () => {
             disabled={saving}
             className="w-full px-4 py-2.5 bg-[#004d25] hover:bg-[#00381b] text-white rounded-lg font-medium flex items-center justify-center gap-2 shadow-xs transition cursor-pointer disabled:opacity-50"
           >
-            {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            {saving ? (
+              <RefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4" />
+            )}
             Save Twilio SMS Settings
           </button>
         </div>
       )}
 
       {/* TAB 1: General & Flyer Settings */}
-      {activeTab === 'settings' && (
+      {activeTab === "settings" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Left Column: Partner Token & Flyer */}
           <div className="space-y-6">
@@ -822,7 +980,8 @@ export const WhatsAppConfig: React.FC = () => {
                 Green API Partner Credentials
               </h2>
               <p className="text-xs text-gray-500">
-                Enter your state-specific Green API Partner Token to allow programmatic creation and assignment of WhatsApp instances.
+                Enter your state-specific Green API Partner Token to allow programmatic creation and
+                assignment of WhatsApp instances.
               </p>
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 mb-1">
@@ -830,8 +989,10 @@ export const WhatsAppConfig: React.FC = () => {
                 </label>
                 <input
                   type="text"
-                  value={config.green_api_partner_token || ''}
-                  onChange={e => setConfig({ ...config, green_api_partner_token: e.target.value })}
+                  value={config.green_api_partner_token || ""}
+                  onChange={(e) =>
+                    setConfig({ ...config, green_api_partner_token: e.target.value })
+                  }
                   placeholder="gac.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-900 font-mono focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
                 />
@@ -845,19 +1006,26 @@ export const WhatsAppConfig: React.FC = () => {
                 Default Outreach Message Format
               </h2>
               <p className="text-xs text-gray-500">
-                Choose whether outreach dispatches a campaign image/flyer with text caption, or sends plain text messages only.
+                Choose whether outreach dispatches a campaign image/flyer with text caption, or
+                sends plain text messages only.
               </p>
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 mb-1">
                   Format Type
                 </label>
                 <select
-                  value={config.default_message_format || 'image_and_text'}
-                  onChange={e => setConfig({ ...config, default_message_format: e.target.value as any })}
+                  value={config.default_message_format || "image_and_text"}
+                  onChange={(e) =>
+                    setConfig({ ...config, default_message_format: e.target.value as any })
+                  }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
                 >
-                  <option value="image_and_text">Image and Text Message (State Flyer with Personalized Caption)</option>
-                  <option value="text_only">Text Message Only (Direct WhatsApp Text / SMS style)</option>
+                  <option value="image_and_text">
+                    Image and Text Message (State Flyer with Personalized Caption)
+                  </option>
+                  <option value="text_only">
+                    Text Message Only (Direct WhatsApp Text / SMS style)
+                  </option>
                 </select>
               </div>
             </div>
@@ -869,24 +1037,37 @@ export const WhatsAppConfig: React.FC = () => {
                 Central Campaign Flyer (Image or Video)
               </h2>
               <p className="text-xs text-gray-500">
-                {config.default_message_format === 'text_only' 
-                  ? 'Optional: Uploaded media will only be used when an agent specifically selects Image mode.'
-                  : 'Uploaded media is automatically attached to automated and manual voter outreach messages.'}
+                {config.default_message_format === "text_only"
+                  ? "Optional: Uploaded media will only be used when an agent specifically selects Image mode."
+                  : "Uploaded media is automatically attached to automated and manual voter outreach messages."}
               </p>
 
               <div className="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center hover:border-emerald-500 transition">
                 {config.default_flyer_url ? (
                   <div className="space-y-3">
-                    {config.default_flyer_type === 'video' ? (
-                      <video src={config.default_flyer_url} controls className="max-h-48 mx-auto rounded-lg shadow-sm" />
+                    {config.default_flyer_type === "video" ? (
+                      <video
+                        src={config.default_flyer_url}
+                        controls
+                        className="max-h-48 mx-auto rounded-lg shadow-sm"
+                      />
                     ) : (
-                      <img src={config.default_flyer_url} alt="Campaign Flyer" className="max-h-48 mx-auto rounded-lg shadow-sm object-contain" />
+                      <img
+                        src={config.default_flyer_url}
+                        alt="Campaign Flyer"
+                        className="max-h-48 mx-auto rounded-lg shadow-sm object-contain"
+                      />
                     )}
                     <p className="text-xs text-[#004d25] font-semibold">✓ Flyer asset linked</p>
                     <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-xs rounded-lg font-medium text-gray-700 transition">
                       <Upload className="h-3.5 w-3.5" />
                       Replace Asset
-                      <input type="file" accept="image/*,video/*" onChange={handleFlyerUpload} className="hidden" />
+                      <input
+                        type="file"
+                        accept="image/*,video/*"
+                        onChange={handleFlyerUpload}
+                        className="hidden"
+                      />
                     </label>
                   </div>
                 ) : (
@@ -896,7 +1077,12 @@ export const WhatsAppConfig: React.FC = () => {
                     <p className="text-xs text-gray-500 mt-1">PNG, JPG, MP4 up to 50MB</p>
                     <label className="mt-3 cursor-pointer inline-flex items-center gap-1.5 px-4 py-2 bg-[#004d25] hover:bg-[#00381b] text-xs rounded-lg font-medium text-white transition">
                       Browse File
-                      <input type="file" accept="image/*,video/*" onChange={handleFlyerUpload} className="hidden" />
+                      <input
+                        type="file"
+                        accept="image/*,video/*"
+                        onChange={handleFlyerUpload}
+                        className="hidden"
+                      />
                     </label>
                   </div>
                 )}
@@ -912,13 +1098,25 @@ export const WhatsAppConfig: React.FC = () => {
                 Voter Message Template
               </h2>
               <p className="text-xs text-gray-500">
-                Use dynamic tokens: <code className="bg-gray-100 px-1 py-0.5 rounded text-[#004d25] font-mono font-bold">&#123;&#123;voter_name&#125;&#125;</code>, <code className="bg-gray-100 px-1 py-0.5 rounded text-[#004d25] font-mono font-bold">&#123;&#123;agent_name&#125;&#125;</code>, <code className="bg-gray-100 px-1 py-0.5 rounded text-[#004d25] font-mono font-bold">&#123;&#123;ward_name&#125;&#125;</code>.
+                Use dynamic tokens:{" "}
+                <code className="bg-gray-100 px-1 py-0.5 rounded text-[#004d25] font-mono font-bold">
+                  &#123;&#123;voter_name&#125;&#125;
+                </code>
+                ,{" "}
+                <code className="bg-gray-100 px-1 py-0.5 rounded text-[#004d25] font-mono font-bold">
+                  &#123;&#123;agent_name&#125;&#125;
+                </code>
+                ,{" "}
+                <code className="bg-gray-100 px-1 py-0.5 rounded text-[#004d25] font-mono font-bold">
+                  &#123;&#123;ward_name&#125;&#125;
+                </code>
+                .
               </p>
 
               <textarea
                 rows={4}
-                value={config.default_message_template || ''}
-                onChange={e => setConfig({ ...config, default_message_template: e.target.value })}
+                value={config.default_message_template || ""}
+                onChange={(e) => setConfig({ ...config, default_message_template: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
                 placeholder="Enter default outreach message..."
               />
@@ -929,10 +1127,12 @@ export const WhatsAppConfig: React.FC = () => {
                   <Eye className="h-3.5 w-3.5" /> Sample Voter Preview
                 </p>
                 <p className="text-xs text-gray-700 italic">
-                  "{config.default_message_template
-                    ?.replace(/\{\{voter_name\}\}/g, 'Babatunde Adeyemi')
-                    ?.replace(/\{\{agent_name\}\}/g, user?.name || 'Sunday Okafor')
-                    ?.replace(/\{\{ward_name\}\}/g, 'Ward 04 Alimosho')}"
+                  "
+                  {config.default_message_template
+                    ?.replace(/\{\{voter_name\}\}/g, "Babatunde Adeyemi")
+                    ?.replace(/\{\{agent_name\}\}/g, user?.name || "Sunday Okafor")
+                    ?.replace(/\{\{ward_name\}\}/g, "Ward 04 Alimosho")}
+                  "
                 </p>
               </div>
             </div>
@@ -947,12 +1147,16 @@ export const WhatsAppConfig: React.FC = () => {
               <div className="flex items-center justify-between py-2 border-b border-gray-100">
                 <div>
                   <p className="text-sm font-medium text-gray-900">Automated Daily Outreach</p>
-                  <p className="text-xs text-gray-500">Enable scheduled background messaging for all active agents</p>
+                  <p className="text-xs text-gray-500">
+                    Enable scheduled background messaging for all active agents
+                  </p>
                 </div>
                 <input
                   type="checkbox"
                   checked={config.auto_outreach_enabled}
-                  onChange={e => setConfig({ ...config, auto_outreach_enabled: e.target.checked })}
+                  onChange={(e) =>
+                    setConfig({ ...config, auto_outreach_enabled: e.target.checked })
+                  }
                   className="h-5 w-5 accent-[#004d25] rounded cursor-pointer"
                 />
               </div>
@@ -960,7 +1164,9 @@ export const WhatsAppConfig: React.FC = () => {
               <div>
                 <div className="flex justify-between text-xs font-semibold text-gray-700 mb-1">
                   <span>Max Daily Outreach Per Agent</span>
-                  <span className="text-[#004d25] font-bold">{config.daily_outreach_max} voters/day</span>
+                  <span className="text-[#004d25] font-bold">
+                    {config.daily_outreach_max} voters/day
+                  </span>
                 </div>
                 <input
                   type="range"
@@ -968,10 +1174,15 @@ export const WhatsAppConfig: React.FC = () => {
                   max={25}
                   step={1}
                   value={config.daily_outreach_max || 10}
-                  onChange={e => setConfig({ ...config, daily_outreach_max: parseInt(e.target.value, 10) })}
+                  onChange={(e) =>
+                    setConfig({ ...config, daily_outreach_max: parseInt(e.target.value, 10) })
+                  }
                   className="w-full accent-[#004d25] cursor-pointer"
                 />
-                <p className="text-[11px] text-gray-500 mt-1">Agents can reduce their personal target on their dashboard, but cannot exceed this state maximum.</p>
+                <p className="text-[11px] text-gray-500 mt-1">
+                  Agents can reduce their personal target on their dashboard, but cannot exceed this
+                  state maximum.
+                </p>
               </div>
 
               <div>
@@ -980,7 +1191,9 @@ export const WhatsAppConfig: React.FC = () => {
                 </label>
                 <select
                   value={config.message_interval_minutes || 180}
-                  onChange={e => setConfig({ ...config, message_interval_minutes: parseInt(e.target.value, 10) })}
+                  onChange={(e) =>
+                    setConfig({ ...config, message_interval_minutes: parseInt(e.target.value, 10) })
+                  }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
                 >
                   <option value={60}>Every 1 hour</option>
@@ -995,7 +1208,7 @@ export const WhatsAppConfig: React.FC = () => {
       )}
 
       {/* TAB 2: AI & Candidate Knowledge Base */}
-      {activeTab === 'ai' && (
+      {activeTab === "ai" && (
         <div className="space-y-6">
           {/* AI Model Config Card */}
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-4">
@@ -1009,14 +1222,14 @@ export const WhatsAppConfig: React.FC = () => {
                   AI Provider
                 </label>
                 <select
-                  value={config.ai_provider || 'gemini'}
-                  onChange={e => {
+                  value={config.ai_provider || "gemini"}
+                  onChange={(e) => {
                     const nextProvider = e.target.value as any;
-                    const defaultForProvider = PROVIDER_MODELS[nextProvider]?.[0]?.id || '';
+                    const defaultForProvider = PROVIDER_MODELS[nextProvider]?.[0]?.id || "";
                     setConfig({
                       ...config,
                       ai_provider: nextProvider,
-                      ai_model: defaultForProvider
+                      ai_model: defaultForProvider,
                     });
                   }}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
@@ -1032,21 +1245,21 @@ export const WhatsAppConfig: React.FC = () => {
                   AI Model
                 </label>
                 <select
-                  value={config.ai_model || ''}
-                  onChange={e => setConfig({ ...config, ai_model: e.target.value })}
+                  value={config.ai_model || ""}
+                  onChange={(e) => setConfig({ ...config, ai_model: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
                 >
                   {/* Predefined models for the current provider */}
-                  {(PROVIDER_MODELS[config.ai_provider || 'gemini'] || []).map(m => (
+                  {(PROVIDER_MODELS[config.ai_provider || "gemini"] || []).map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.name} ({m.id})
                     </option>
                   ))}
                   {/* Fallback if user had an existing custom model value not in the list */}
                   {config.ai_model &&
-                    !(PROVIDER_MODELS[config.ai_provider || 'gemini'] || []).some(m => m.id === config.ai_model) && (
-                      <option value={config.ai_model}>{config.ai_model} (Custom)</option>
-                    )}
+                    !(PROVIDER_MODELS[config.ai_provider || "gemini"] || []).some(
+                      (m) => m.id === config.ai_model,
+                    ) && <option value={config.ai_model}>{config.ai_model} (Custom)</option>}
                 </select>
               </div>
 
@@ -1056,8 +1269,8 @@ export const WhatsAppConfig: React.FC = () => {
                 </label>
                 <input
                   type="password"
-                  value={config.ai_api_key || ''}
-                  onChange={e => setConfig({ ...config, ai_api_key: e.target.value })}
+                  value={config.ai_api_key || ""}
+                  onChange={(e) => setConfig({ ...config, ai_api_key: e.target.value })}
                   placeholder="AI Provider API Key"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-900 font-mono focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
                 />
@@ -1070,8 +1283,8 @@ export const WhatsAppConfig: React.FC = () => {
               </label>
               <textarea
                 rows={3}
-                value={config.group_ai_system_prompt || ''}
-                onChange={e => setConfig({ ...config, group_ai_system_prompt: e.target.value })}
+                value={config.group_ai_system_prompt || ""}
+                onChange={(e) => setConfig({ ...config, group_ai_system_prompt: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
                 placeholder="Persona prompt for defending the candidate in group chats..."
               />
@@ -1087,12 +1300,17 @@ export const WhatsAppConfig: React.FC = () => {
                   min={0}
                   max={20}
                   value={config.group_ai_response_frequency ?? 3}
-                  onChange={e => setConfig({ ...config, group_ai_response_frequency: parseInt(e.target.value, 10) || 0 })}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      group_ai_response_frequency: parseInt(e.target.value, 10) || 0,
+                    })
+                  }
                   className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
                 />
                 <span className="text-xs text-gray-500">
                   {config.group_ai_response_frequency === 0
-                    ? '⚠️ Bot responses disabled. AI will strictly monitor, categorize, and extract intelligence without replying.'
+                    ? "⚠️ Bot responses disabled. AI will strictly monitor, categorize, and extract intelligence without replying."
                     : `Maximum ${config.group_ai_response_frequency} automated replies per hour per group.`}
                 </span>
               </div>
@@ -1100,21 +1318,34 @@ export const WhatsAppConfig: React.FC = () => {
           </div>
 
           {/* Candidate Knowledge Base Ingestion Card */}
-          <div ref={kbFormRef} className={`bg-white p-6 rounded-xl border shadow-xs space-y-4 ${editingEntryId ? 'border-[#004d25] ring-2 ring-[#004d25]/20' : 'border-gray-200'}`}>
+          <div
+            ref={kbFormRef}
+            className={`bg-white p-6 rounded-xl border shadow-xs space-y-4 ${editingEntryId ? "border-[#004d25] ring-2 ring-[#004d25]/20" : "border-gray-200"}`}
+          >
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                  {editingEntryId ? <Pencil className="h-5 w-5 text-[#004d25]" /> : <Plus className="h-5 w-5 text-[#004d25]" />}
-                  {editingEntryId ? 'Edit Knowledge Entry' : 'Add Knowledge Section (Policies, Talking Points, FAQs)'}
+                  {editingEntryId ? (
+                    <Pencil className="h-5 w-5 text-[#004d25]" />
+                  ) : (
+                    <Plus className="h-5 w-5 text-[#004d25]" />
+                  )}
+                  {editingEntryId
+                    ? "Edit Knowledge Entry"
+                    : "Add Knowledge Section (Policies, Talking Points, FAQs)"}
                 </h2>
                 <p className="text-xs text-gray-500 mt-0.5">
                   {editingEntryId
-                    ? 'Update the fields below and save to update this entry in the AI knowledge base.'
-                    : 'Add verified candidate policies, talking points, and campaign facts. Each entry is vector-indexed for instant semantic retrieval during chat responses and group debates.'}
+                    ? "Update the fields below and save to update this entry in the AI knowledge base."
+                    : "Add verified candidate policies, talking points, and campaign facts. Each entry is vector-indexed for instant semantic retrieval during chat responses and group debates."}
                 </p>
               </div>
               {editingEntryId && (
-                <button type="button" onClick={handleCancelEdit} className="shrink-0 text-xs text-gray-500 hover:text-red-600 flex items-center gap-1 border border-gray-300 rounded-lg px-3 py-1.5 cursor-pointer">
+                <button
+                  type="button"
+                  onClick={handleCancelEdit}
+                  className="shrink-0 text-xs text-gray-500 hover:text-red-600 flex items-center gap-1 border border-gray-300 rounded-lg px-3 py-1.5 cursor-pointer"
+                >
                   <X className="h-3.5 w-3.5" /> Cancel Edit
                 </button>
               )}
@@ -1123,11 +1354,13 @@ export const WhatsAppConfig: React.FC = () => {
             <form onSubmit={handleAddKnowledge} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="md:col-span-2">
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">Section Title</label>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">
+                    Section Title
+                  </label>
                   <input
                     type="text"
                     value={kbTitle}
-                    onChange={e => setKbTitle(e.target.value)}
+                    onChange={(e) => setKbTitle(e.target.value)}
                     placeholder="e.g. Health Reform, Job Creation, Free Maternity"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
                     required
@@ -1138,7 +1371,7 @@ export const WhatsAppConfig: React.FC = () => {
                   <label className="block text-xs font-semibold text-gray-700 mb-1">Category</label>
                   <select
                     value={kbType}
-                    onChange={e => setKbType(e.target.value)}
+                    onChange={(e) => setKbType(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
                   >
                     <option value="policy">Policy / Governance</option>
@@ -1161,7 +1394,7 @@ export const WhatsAppConfig: React.FC = () => {
                     {kbImage && (
                       <button
                         type="button"
-                        onClick={() => setKbImage('')}
+                        onClick={() => setKbImage("")}
                         className="text-red-500 hover:text-red-700 text-xs flex items-center gap-1 cursor-pointer"
                       >
                         <Trash2 className="h-3 w-3" /> Remove
@@ -1175,8 +1408,12 @@ export const WhatsAppConfig: React.FC = () => {
                   ) : (
                     <label className="flex flex-col items-center justify-center p-4 border border-dashed border-gray-300 rounded-lg text-xs text-gray-600 hover:border-[#004d25] hover:text-[#004d25] cursor-pointer bg-white transition text-center h-28">
                       <Upload className="h-5 w-5 mb-1 text-gray-400" />
-                      <span>{uploadingKbImage ? 'Uploading Image...' : 'Click to Upload Image'}</span>
-                      <span className="text-[10px] text-gray-400 mt-0.5">PNG, JPG, WEBP previewable</span>
+                      <span>
+                        {uploadingKbImage ? "Uploading Image..." : "Click to Upload Image"}
+                      </span>
+                      <span className="text-[10px] text-gray-400 mt-0.5">
+                        PNG, JPG, WEBP previewable
+                      </span>
                       <input
                         type="file"
                         accept="image/*"
@@ -1198,7 +1435,10 @@ export const WhatsAppConfig: React.FC = () => {
                     {kbDocUrl && (
                       <button
                         type="button"
-                        onClick={() => { setKbDocUrl(''); setKbDocName(''); }}
+                        onClick={() => {
+                          setKbDocUrl("");
+                          setKbDocName("");
+                        }}
                         className="text-red-500 hover:text-red-700 text-xs flex items-center gap-1 cursor-pointer"
                       >
                         <Trash2 className="h-3 w-3" /> Remove
@@ -1210,7 +1450,9 @@ export const WhatsAppConfig: React.FC = () => {
                       <div className="flex items-center gap-3 overflow-hidden">
                         <FileText className="h-8 w-8 text-[#004d25] shrink-0" />
                         <div className="overflow-hidden">
-                          <p className="font-semibold text-gray-800 text-xs truncate max-w-[200px]">{kbDocName || 'Attached Document'}</p>
+                          <p className="font-semibold text-gray-800 text-xs truncate max-w-[200px]">
+                            {kbDocName || "Attached Document"}
+                          </p>
                           <a
                             href={kbDocUrl}
                             target="_blank"
@@ -1225,8 +1467,14 @@ export const WhatsAppConfig: React.FC = () => {
                   ) : (
                     <label className="flex flex-col items-center justify-center p-4 border border-dashed border-gray-300 rounded-lg text-xs text-gray-600 hover:border-[#004d25] hover:text-[#004d25] cursor-pointer bg-white transition text-center h-28">
                       <Upload className="h-5 w-5 mb-1 text-gray-400" />
-                      <span>{uploadingKbDoc ? 'Uploading Document...' : 'Upload Manifesto / Document / Video'}</span>
-                      <span className="text-[10px] text-gray-400 mt-0.5">PDF, DOCX, Video, Audio (Max 15MB)</span>
+                      <span>
+                        {uploadingKbDoc
+                          ? "Uploading Document..."
+                          : "Upload Manifesto / Document / Video"}
+                      </span>
+                      <span className="text-[10px] text-gray-400 mt-0.5">
+                        PDF, DOCX, Video, Audio (Max 15MB)
+                      </span>
                       <input
                         type="file"
                         accept=".pdf,.doc,.docx,.txt,video/*,audio/*"
@@ -1240,11 +1488,13 @@ export const WhatsAppConfig: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">Detailed Content</label>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  Detailed Content
+                </label>
                 <textarea
                   rows={4}
                   value={kbContent}
-                  onChange={e => setKbContent(e.target.value)}
+                  onChange={(e) => setKbContent(e.target.value)}
                   placeholder="Paste in-depth policy facts, budget numbers, past achievements, or specific candidate promises..."
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
                   required
@@ -1266,8 +1516,14 @@ export const WhatsAppConfig: React.FC = () => {
                   disabled={uploadingKb}
                   className="px-4 py-2 bg-[#004d25] hover:bg-[#00381b] text-white rounded-lg text-sm font-medium flex items-center gap-2 transition cursor-pointer disabled:opacity-50"
                 >
-                  {uploadingKb ? <RefreshCw className="h-4 w-4 animate-spin" /> : editingEntryId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-                  {editingEntryId ? 'Update Knowledge Entry' : 'Vectorize & Save Knowledge'}
+                  {uploadingKb ? (
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                  ) : editingEntryId ? (
+                    <Pencil className="h-4 w-4" />
+                  ) : (
+                    <Plus className="h-4 w-4" />
+                  )}
+                  {editingEntryId ? "Update Knowledge Entry" : "Vectorize & Save Knowledge"}
                 </button>
               </div>
             </form>
@@ -1281,7 +1537,8 @@ export const WhatsAppConfig: React.FC = () => {
                   Verified Candidate Knowledge Base ({knowledgeList.length} documents)
                 </h3>
                 <p className="text-xs text-gray-500">
-                  Documents are automatically split into optimized semantic chunks in the background for fast, accurate AI retrieval.
+                  Documents are automatically split into optimized semantic chunks in the background
+                  for fast, accurate AI retrieval.
                 </p>
               </div>
               <button
@@ -1291,17 +1548,22 @@ export const WhatsAppConfig: React.FC = () => {
                 className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-[#004d25] border border-emerald-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
                 title="Re-chunk and generate vector embeddings for all knowledge base documents"
               >
-                <RefreshCw className={`h-3.5 w-3.5 ${reindexingKb ? 'animate-spin' : ''}`} />
-                {reindexingKb ? 'Vectorizing in Background...' : 'Re-index & Vectorize All'}
+                <RefreshCw className={`h-3.5 w-3.5 ${reindexingKb ? "animate-spin" : ""}`} />
+                {reindexingKb ? "Vectorizing in Background..." : "Re-index & Vectorize All"}
               </button>
             </div>
 
             {knowledgeList.length === 0 ? (
-              <p className="text-sm text-gray-500 italic">No knowledge base items added yet. Add candidate policies and talking points above.</p>
+              <p className="text-sm text-gray-500 italic">
+                No knowledge base items added yet. Add candidate policies and talking points above.
+              </p>
             ) : (
               <div className="divide-y divide-gray-100">
-                {knowledgeList.map(item => (
-                  <div key={item.id} className={`py-3 flex items-start justify-between gap-4 rounded-lg px-2 -mx-2 transition ${editingEntryId === item.id ? 'bg-emerald-50 ring-1 ring-[#004d25]/30' : ''}`}>
+                {knowledgeList.map((item) => (
+                  <div
+                    key={item.id}
+                    className={`py-3 flex items-start justify-between gap-4 rounded-lg px-2 -mx-2 transition ${editingEntryId === item.id ? "bg-emerald-50 ring-1 ring-[#004d25]/30" : ""}`}
+                  >
                     <div className="space-y-1 flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-medium">
@@ -1325,7 +1587,8 @@ export const WhatsAppConfig: React.FC = () => {
                             rel="noopener noreferrer"
                             className="text-[11px] text-[#004d25] hover:underline flex items-center gap-1 font-medium bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded"
                           >
-                            <FileText className="h-3 w-3" /> {item.doc_name || 'Manifesto / Document'}
+                            <FileText className="h-3 w-3" />{" "}
+                            {item.doc_name || "Manifesto / Document"}
                           </a>
                         )}
                       </div>
@@ -1356,79 +1619,116 @@ export const WhatsAppConfig: React.FC = () => {
         </div>
       )}
 
-
       {/* TAB 3: Earnings & Incentives */}
-      {activeTab === 'earnings' && (
+      {activeTab === "earnings" && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
             <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-2">
-              <span className="text-xs font-semibold text-[#004d25] uppercase tracking-wider">Per Connected WhatsApp Outreach</span>
+              <span className="text-xs font-semibold text-[#004d25] uppercase tracking-wider">
+                Per Connected WhatsApp Outreach
+              </span>
               <div className="flex items-center gap-2 mt-2">
                 <span className="text-2xl font-bold text-gray-900">₦</span>
                 <input
                   type="number"
                   value={config.earning_per_chat || 50}
-                  onChange={e => setConfig({ ...config, earning_per_chat: parseFloat(e.target.value) || 0 })}
+                  onChange={(e) =>
+                    setConfig({ ...config, earning_per_chat: parseFloat(e.target.value) || 0 })
+                  }
                   className="w-full text-2xl font-bold px-2 py-1 border border-gray-300 rounded bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
                 />
               </div>
-              <p className="text-xs text-gray-500">Credited when an agent with connected WhatsApp dispatches flyer & message to a verified voter.</p>
+              <p className="text-xs text-gray-500">
+                Credited when an agent with connected WhatsApp dispatches flyer & message to a
+                verified voter.
+              </p>
             </div>
 
             <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-2">
-              <span className="text-xs font-semibold text-[#004d25] uppercase tracking-wider">Direct WhatsApp (wa.me) Link Bounty</span>
+              <span className="text-xs font-semibold text-[#004d25] uppercase tracking-wider">
+                Direct WhatsApp (wa.me) Link Bounty
+              </span>
               <div className="flex items-center gap-2 mt-2">
                 <span className="text-2xl font-bold text-gray-900">₦</span>
                 <input
                   type="number"
                   value={config.earning_per_manual_wa ?? 15}
-                  onChange={e => setConfig({ ...config, earning_per_manual_wa: parseFloat(e.target.value) || 0 })}
+                  onChange={(e) =>
+                    setConfig({ ...config, earning_per_manual_wa: parseFloat(e.target.value) || 0 })
+                  }
                   className="w-full text-2xl font-bold px-2 py-1 border border-gray-300 rounded bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
                 />
               </div>
-              <p className="text-xs text-gray-500">Credited when an agent without connected WhatsApp opens the voter chat on their phone via wa.me link.</p>
+              <p className="text-xs text-gray-500">
+                Credited when an agent without connected WhatsApp opens the voter chat on their
+                phone via wa.me link.
+              </p>
             </div>
 
             <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-2">
-              <span className="text-xs font-semibold text-[#004d25] uppercase tracking-wider">Phone Call Voter Outreach</span>
+              <span className="text-xs font-semibold text-[#004d25] uppercase tracking-wider">
+                Phone Call Voter Outreach
+              </span>
               <div className="flex items-center gap-2 mt-2">
                 <span className="text-2xl font-bold text-gray-900">₦</span>
                 <input
                   type="number"
                   value={config.earning_per_call ?? 20}
-                  onChange={e => setConfig({ ...config, earning_per_call: parseFloat(e.target.value) || 0 })}
+                  onChange={(e) =>
+                    setConfig({ ...config, earning_per_call: parseFloat(e.target.value) || 0 })
+                  }
                   className="w-full text-2xl font-bold px-2 py-1 border border-gray-300 rounded bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
                 />
               </div>
-              <p className="text-xs text-gray-500">Credited when an agent calls a voter (especially useful when voter is not registered on WhatsApp).</p>
+              <p className="text-xs text-gray-500">
+                Credited when an agent calls a voter (especially useful when voter is not registered
+                on WhatsApp).
+              </p>
             </div>
 
             <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-2">
-              <span className="text-xs font-semibold text-[#004d25] uppercase tracking-wider">Voter Conversion Bonus</span>
+              <span className="text-xs font-semibold text-[#004d25] uppercase tracking-wider">
+                Voter Conversion Bonus
+              </span>
               <div className="flex items-center gap-2 mt-2">
                 <span className="text-2xl font-bold text-gray-900">₦</span>
                 <input
                   type="number"
                   value={config.earning_per_conversion || 200}
-                  onChange={e => setConfig({ ...config, earning_per_conversion: parseFloat(e.target.value) || 0 })}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      earning_per_conversion: parseFloat(e.target.value) || 0,
+                    })
+                  }
                   className="w-full text-2xl font-bold px-2 py-1 border border-gray-300 rounded bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
                 />
               </div>
-              <p className="text-xs text-gray-500">Rewarded when AI sentiment confirms the voter has converted to an active ADC supporter.</p>
+              <p className="text-xs text-gray-500">
+                Rewarded when AI sentiment confirms the voter has converted to an active ADC
+                supporter.
+              </p>
             </div>
 
             <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-2">
-              <span className="text-xs font-semibold text-[#004d25] uppercase tracking-wider">Group Addition Bounty</span>
+              <span className="text-xs font-semibold text-[#004d25] uppercase tracking-wider">
+                Group Addition Bounty
+              </span>
               <div className="flex items-center gap-2 mt-2">
                 <span className="text-2xl font-bold text-gray-900">₦</span>
                 <input
                   type="number"
                   value={config.earning_per_group_add || 100}
-                  onChange={e => setConfig({ ...config, earning_per_group_add: parseFloat(e.target.value) || 0 })}
+                  onChange={(e) =>
+                    setConfig({ ...config, earning_per_group_add: parseFloat(e.target.value) || 0 })
+                  }
                   className="w-full text-2xl font-bold px-2 py-1 border border-gray-300 rounded bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
                 />
               </div>
-              <p className="text-xs text-gray-500">Rewarded when an agent adds the state Group Monitor WhatsApp number to a local political group.</p>
+              <p className="text-xs text-gray-500">
+                Rewarded when an agent adds the state Group Monitor WhatsApp number to a local
+                political group.
+              </p>
             </div>
           </div>
 
@@ -1438,20 +1738,24 @@ export const WhatsAppConfig: React.FC = () => {
               Unified Treasury Payout Integration
             </h3>
             <p className="text-xs text-gray-500">
-              All agent WhatsApp earnings directly populate each agent's unified wallet in the central Payment tab. Agents can withdraw both election verification earnings and WhatsApp canvassing rewards in a single Paystack bank payout.
+              All agent WhatsApp earnings directly populate each agent's unified wallet in the
+              central Payment tab. Agents can withdraw both election verification earnings and
+              WhatsApp canvassing rewards in a single Paystack bank payout.
             </p>
           </div>
         </div>
       )}
 
       {/* TAB 4: Instance Pool Management */}
-      {activeTab === 'pool' && (
+      {activeTab === "pool" && (
         <div className="space-y-6">
           {/* Status Metric Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-xs">
               <p className="text-xs text-gray-500 uppercase font-semibold">Standby Pool (Buffer)</p>
-              <p className={`text-2xl font-bold mt-1 ${poolStatus.standby < 2 ? 'text-amber-500' : 'text-[#004d25]'}`}>
+              <p
+                className={`text-2xl font-bold mt-1 ${poolStatus.standby < 2 ? "text-amber-500" : "text-[#004d25]"}`}
+              >
                 {poolStatus.standby} / min 2
               </p>
               <p className="text-[11px] text-gray-400 mt-1">Ready to assign immediately</p>
@@ -1471,14 +1775,14 @@ export const WhatsAppConfig: React.FC = () => {
 
             <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-xs flex flex-col justify-center">
               <button
-                onClick={() => handleCreateInstance('agent')}
+                onClick={() => handleCreateInstance("agent")}
                 className="w-full py-2 bg-[#004d25] hover:bg-[#00381b] text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer"
               >
                 <Plus className="h-3.5 w-3.5" />
                 Add Agent Instance
               </button>
               <button
-                onClick={() => handleCreateInstance('group_monitor')}
+                onClick={() => handleCreateInstance("group_monitor")}
                 className="w-full mt-2 py-2 border border-[#004d25] text-[#004d25] hover:bg-emerald-50 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer"
               >
                 <Plus className="h-3.5 w-3.5" />
@@ -1490,7 +1794,9 @@ export const WhatsAppConfig: React.FC = () => {
           {/* Instances Table */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-xs overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-900">All Provisioned WhatsApp Instances ({instances.length})</h3>
+              <h3 className="text-sm font-semibold text-gray-900">
+                All Provisioned WhatsApp Instances ({instances.length})
+              </h3>
             </div>
 
             <div className="overflow-x-auto">
@@ -1510,27 +1816,36 @@ export const WhatsAppConfig: React.FC = () => {
                   {instances.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
-                        No WhatsApp instances provisioned yet. Click "Add Agent Instance" to start your pool.
+                        No WhatsApp instances provisioned yet. Click "Add Agent Instance" to start
+                        your pool.
                       </td>
                     </tr>
                   ) : (
-                    instances.map(inst => (
+                    instances.map((inst) => (
                       <tr key={inst.id} className="hover:bg-gray-50/70 transition">
                         <td className="px-6 py-4 font-mono font-medium text-gray-900">
                           <div>{inst.name || `Instance #${inst.id_instance}`}</div>
-                          <div className="text-[10px] text-gray-400 font-mono">ID: {inst.id_instance}</div>
+                          <div className="text-[10px] text-gray-400 font-mono">
+                            ID: {inst.id_instance}
+                          </div>
                         </td>
                         <td className="px-6 py-4">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                            inst.instance_type === 'group_monitor'
-                              ? 'bg-purple-100 text-purple-700'
-                              : 'bg-blue-100 text-blue-700'
-                          }`}>
-                            {inst.instance_type === 'group_monitor' ? 'Group Monitor' : 'Agent'}
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                              inst.instance_type === "group_monitor"
+                                ? "bg-purple-100 text-purple-700"
+                                : "bg-blue-100 text-blue-700"
+                            }`}
+                          >
+                            {inst.instance_type === "group_monitor" ? "Group Monitor" : "Agent"}
                           </span>
                         </td>
                         <td className="px-6 py-4 font-mono text-gray-800">
-                          {inst.phone_number ? `+${inst.phone_number}` : <span className="text-gray-400 italic">Not linked</span>}
+                          {inst.phone_number ? (
+                            `+${inst.phone_number}`
+                          ) : (
+                            <span className="text-gray-400 italic">Not linked</span>
+                          )}
                         </td>
                         <td className="px-6 py-4">
                           {inst.assigned_agent_id && agentsMap[inst.assigned_agent_id] ? (
@@ -1540,30 +1855,43 @@ export const WhatsAppConfig: React.FC = () => {
                               </div>
                               <div className="text-[10px] text-gray-500 font-mono">
                                 {agentsMap[inst.assigned_agent_id].phone}
-                                {agentsMap[inst.assigned_agent_id].ward && ` • ${agentsMap[inst.assigned_agent_id].ward}`}
+                                {agentsMap[inst.assigned_agent_id].ward &&
+                                  ` • ${agentsMap[inst.assigned_agent_id].ward}`}
                               </div>
                             </div>
                           ) : inst.assigned_agent_id ? (
-                            <span className="font-mono text-gray-500 text-[11px]">Agent ID #{inst.assigned_agent_id}</span>
+                            <span className="font-mono text-gray-500 text-[11px]">
+                              Agent ID #{inst.assigned_agent_id}
+                            </span>
                           ) : (
-                            <span className="text-gray-400 italic text-[11px]">Unassigned (Pool)</span>
+                            <span className="text-gray-400 italic text-[11px]">
+                              Unassigned (Pool)
+                            </span>
                           )}
                         </td>
                         <td className="px-6 py-4">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                            inst.pool_status === 'standby' ? 'bg-amber-100 text-amber-700' :
-                            inst.pool_status === 'assigned' ? 'bg-emerald-100 text-emerald-700' :
-                            'bg-gray-100 text-gray-600'
-                          }`}>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                              inst.pool_status === "standby"
+                                ? "bg-amber-100 text-amber-700"
+                                : inst.pool_status === "assigned"
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : "bg-gray-100 text-gray-600"
+                            }`}
+                          >
                             {inst.pool_status}
                           </span>
                         </td>
                         <td className="px-6 py-4">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                            inst.wa_state === 'authorized' ? 'bg-emerald-100 text-emerald-700' :
-                            inst.wa_state === 'blocked' ? 'bg-red-100 text-red-700' :
-                            'bg-gray-100 text-gray-500'
-                          }`}>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                              inst.wa_state === "authorized"
+                                ? "bg-emerald-100 text-emerald-700"
+                                : inst.wa_state === "blocked"
+                                  ? "bg-red-100 text-red-700"
+                                  : "bg-gray-100 text-gray-500"
+                            }`}
+                          >
                             {inst.wa_state}
                           </span>
                         </td>
@@ -1572,7 +1900,7 @@ export const WhatsAppConfig: React.FC = () => {
                             onClick={() => openConnectModal(inst)}
                             className="px-2.5 py-1 text-xs border border-gray-300 hover:bg-gray-100 rounded font-medium text-gray-700 transition cursor-pointer"
                           >
-                            {inst.wa_state === 'authorized' ? 'Re-link / QR' : 'Connect'}
+                            {inst.wa_state === "authorized" ? "Re-link / QR" : "Connect"}
                           </button>
                         </td>
                       </tr>
@@ -1586,7 +1914,7 @@ export const WhatsAppConfig: React.FC = () => {
       )}
 
       {/* TAB 5: Monitored Groups */}
-      {activeTab === 'groups' && (
+      {activeTab === "groups" && (
         <div className="space-y-6">
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-2">
             <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
@@ -1594,51 +1922,87 @@ export const WhatsAppConfig: React.FC = () => {
               State Political WhatsApp Groups Monitor
             </h2>
             <p className="text-xs text-gray-500">
-              When agents add your state's Group Monitor WhatsApp number to local community and political WhatsApp groups, they automatically appear here. The AI reads incoming messages, categorizes discussions, and defends candidate policies with a natural 10-30s pacing delay. You can toggle AI defense on or off for any group.
+              When agents add your state's Group Monitor WhatsApp number to local community and
+              political WhatsApp groups, they automatically appear here. The AI reads incoming
+              messages, categorizes discussions, and defends candidate policies with a natural
+              10-30s pacing delay. You can toggle AI defense on or off for any group.
             </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {monitors.length === 0 ? (
               <div className="col-span-3 text-center py-12 bg-white rounded-xl border border-gray-200 text-gray-500 text-sm">
-                No WhatsApp groups monitored yet. Tell agents to add your Group Monitor number to political groups!
+                No WhatsApp groups monitored yet. Tell agents to add your Group Monitor number to
+                political groups!
               </div>
             ) : (
-              monitors.map(m => (
-                <div key={m.id} className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs space-y-3 flex flex-col justify-between">
+              monitors.map((m) => (
+                <div
+                  key={m.id}
+                  className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs space-y-3 flex flex-col justify-between"
+                >
                   <div>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
-                        <h4 className="font-semibold text-gray-900 text-sm truncate" title={m.group_name}>{m.group_name || 'Political Group'}</h4>
-                        <p className="text-xs text-gray-400">{m.participant_count || 0} participants</p>
+                        <h4
+                          className="font-semibold text-gray-900 text-sm truncate"
+                          title={m.group_name}
+                        >
+                          {m.group_name || "Political Group"}
+                        </h4>
+                        <p className="text-xs text-gray-400">
+                          {m.participant_count || 0} participants
+                        </p>
                       </div>
                       <button
                         type="button"
                         onClick={() => handleToggleGroupAi(m.id, m.ai_enabled)}
                         disabled={togglingGroupId === m.id}
-                        title={m.ai_enabled ? "Click to turn OFF AI for this group" : "Click to turn ON AI for this group"}
+                        title={
+                          m.ai_enabled
+                            ? "Click to turn OFF AI for this group"
+                            : "Click to turn ON AI for this group"
+                        }
                         className={`px-2.5 py-1 rounded-full text-[11px] font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-2xs shrink-0 ${
                           m.ai_enabled
-                            ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200 border border-emerald-300'
-                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-300'
+                            ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200 border border-emerald-300"
+                            : "bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-300"
                         }`}
                       >
-                        <span className={`w-2 h-2 rounded-full ${m.ai_enabled ? 'bg-emerald-600 animate-pulse' : 'bg-gray-400'}`} />
-                        {togglingGroupId === m.id ? '...' : m.ai_enabled ? 'AI ON' : 'AI OFF'}
+                        <span
+                          className={`w-2 h-2 rounded-full ${m.ai_enabled ? "bg-emerald-600 animate-pulse" : "bg-gray-400"}`}
+                        />
+                        {togglingGroupId === m.id ? "..." : m.ai_enabled ? "AI ON" : "AI OFF"}
                       </button>
                     </div>
 
                     <div className="text-xs text-gray-500 space-y-1 pt-2 mt-2 border-t border-gray-100">
-                      <p className="truncate">Added by: <span className="font-semibold text-gray-700">{m.added_by_agent?.name || 'Field Agent'}</span></p>
-                      <p>AI Replies Today: <span className="font-semibold text-[#004d25]">{m.ai_responses_today || 0}</span></p>
+                      <p className="truncate">
+                        Added by:{" "}
+                        <span className="font-semibold text-gray-700">
+                          {m.added_by_agent?.name || "Field Agent"}
+                        </span>
+                      </p>
+                      <p>
+                        AI Replies Today:{" "}
+                        <span className="font-semibold text-[#004d25]">
+                          {m.ai_responses_today || 0}
+                        </span>
+                      </p>
                     </div>
                   </div>
 
                   <div className="pt-2 border-t border-gray-50">
-                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded block text-center ${
-                      m.ai_enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'
-                    }`}>
-                      {m.ai_enabled ? 'Auto-Replies Active (10-30s delay)' : 'Replies Off (Passive Monitoring)'}
+                    <span
+                      className={`text-[10px] font-medium px-2 py-0.5 rounded block text-center ${
+                        m.ai_enabled
+                          ? "bg-emerald-50 text-emerald-700"
+                          : "bg-gray-100 text-gray-500"
+                      }`}
+                    >
+                      {m.ai_enabled
+                        ? "Auto-Replies Active (10-30s delay)"
+                        : "Replies Off (Passive Monitoring)"}
                     </span>
                   </div>
                 </div>
@@ -1657,34 +2021,49 @@ export const WhatsAppConfig: React.FC = () => {
                 <QrCode className="h-5 w-5 text-[#004d25]" />
                 Connect WhatsApp Device
               </h3>
-              <button onClick={() => setConnectingInstance(null)} className="text-gray-400 hover:text-gray-600 cursor-pointer">✕</button>
+              <button
+                onClick={() => setConnectingInstance(null)}
+                className="text-gray-400 hover:text-gray-600 cursor-pointer"
+              >
+                ✕
+              </button>
             </div>
 
             <div className="flex border-b border-gray-200">
               <button
-                onClick={() => setConnectMethod('qr')}
+                onClick={() => setConnectMethod("qr")}
                 className={`flex-1 py-2 text-xs font-semibold border-b-2 cursor-pointer ${
-                  connectMethod === 'qr' ? 'border-[#004d25] text-[#004d25]' : 'border-transparent text-gray-400'
+                  connectMethod === "qr"
+                    ? "border-[#004d25] text-[#004d25]"
+                    : "border-transparent text-gray-400"
                 }`}
               >
                 Scan QR Code
               </button>
               <button
-                onClick={() => setConnectMethod('phone')}
+                onClick={() => setConnectMethod("phone")}
                 className={`flex-1 py-2 text-xs font-semibold border-b-2 cursor-pointer ${
-                  connectMethod === 'phone' ? 'border-[#004d25] text-[#004d25]' : 'border-transparent text-gray-400'
+                  connectMethod === "phone"
+                    ? "border-[#004d25] text-[#004d25]"
+                    : "border-transparent text-gray-400"
                 }`}
               >
                 Link With Phone Number
               </button>
             </div>
 
-            {connectMethod === 'qr' ? (
+            {connectMethod === "qr" ? (
               <div className="text-center space-y-3">
-                <p className="text-xs text-gray-500">Open WhatsApp on your phone &gt; Linked Devices &gt; Link a Device.</p>
+                <p className="text-xs text-gray-500">
+                  Open WhatsApp on your phone &gt; Linked Devices &gt; Link a Device.
+                </p>
                 {qrCodeData ? (
                   <div className="p-3 bg-white border border-gray-200 rounded-xl inline-block shadow-xs">
-                    <img src={`data:image/png;base64,${qrCodeData}`} alt="WhatsApp QR" className="w-56 h-56 mx-auto" />
+                    <img
+                      src={`data:image/png;base64,${qrCodeData}`}
+                      alt="WhatsApp QR"
+                      className="w-56 h-56 mx-auto"
+                    />
                   </div>
                 ) : (
                   <div className="w-56 h-56 border-2 border-dashed border-gray-300 rounded-xl mx-auto flex items-center justify-center">
@@ -1701,7 +2080,7 @@ export const WhatsAppConfig: React.FC = () => {
                   <input
                     type="tel"
                     value={pairingPhone}
-                    onChange={e => setPairingPhone(e.target.value)}
+                    onChange={(e) => setPairingPhone(e.target.value)}
                     placeholder="e.g. 08012345678"
                     className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-900 focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
                   />
@@ -1714,7 +2093,7 @@ export const WhatsAppConfig: React.FC = () => {
                 </div>
 
                 {authCode && (
-                  <div 
+                  <div
                     onClick={() => handleCopyCode(authCode)}
                     className="p-4 bg-emerald-50 border border-emerald-300 rounded-xl text-center space-y-1.5 cursor-pointer hover:bg-emerald-100/70 transition group"
                     title="Click to copy pairing code"
@@ -1722,11 +2101,17 @@ export const WhatsAppConfig: React.FC = () => {
                     <div className="flex items-center justify-between text-xs text-gray-500">
                       <span>Enter this pairing code into WhatsApp:</span>
                       <span className="flex items-center gap-1 text-[#004d25] font-medium">
-                        {copiedCode ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5 group-hover:scale-110 transition" />}
-                        {copiedCode ? 'Copied' : 'Copy'}
+                        {copiedCode ? (
+                          <Check className="h-3.5 w-3.5" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5 group-hover:scale-110 transition" />
+                        )}
+                        {copiedCode ? "Copied" : "Copy"}
                       </span>
                     </div>
-                    <p className="text-2xl font-bold font-mono tracking-widest text-[#004d25] select-all">{authCode}</p>
+                    <p className="text-2xl font-bold font-mono tracking-widest text-[#004d25] select-all">
+                      {authCode}
+                    </p>
                   </div>
                 )}
               </div>

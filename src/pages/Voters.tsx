@@ -1,56 +1,82 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useApp, Voter, VoterNote } from '../context/AppContext';
-import { 
-  Search, Filter, X, Check, UserCircle, ChevronLeft, ChevronRight, MessageCircle, 
-  MessageSquare, Phone, Save, Loader2, ChevronDown, ChevronUp, MapPin, Send, 
-  Image as ImageIcon, Edit3, Sparkles, RotateCcw, AlertTriangle, Download, 
-  Maximize2, Eye, Clock, RefreshCw, Trash2 
-} from 'lucide-react';
-import { cn, getFriendlyErrorMessage } from '../lib/utils';
-import { supabase } from '../lib/supabase';
-import toast from 'react-hot-toast';
-import { greenApiService } from '../lib/greenApi';
+import React, { useState, useEffect } from "react";
+import { useApp, Voter, VoterNote } from "../context/AppContext";
+import {
+  Search,
+  X,
+  Check,
+  UserCircle,
+  ChevronLeft,
+  ChevronRight,
+  MessageCircle,
+  MessageSquare,
+  Phone,
+  Save,
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+  MapPin,
+  Send,
+  Image as ImageIcon,
+  Edit3,
+  Download,
+  Eye,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
+import { cn, getFriendlyErrorMessage } from "../lib/utils";
+import { supabase } from "../lib/supabase";
+import toast from "react-hot-toast";
+import { greenApiService } from "../lib/greenApi";
 
-import { 
-  buildImageKitUrl, 
-  getCachedImage, 
-  setCachedImage, 
-  enhanceImageViaCanvas, 
-  getCachedOrFetchImage, 
+import {
+  buildImageKitUrl,
+  getCachedImage,
+  setCachedImage,
+  enhanceImageViaCanvas,
   cleanupExpiredImages,
-  clearAllImageCache
-} from '../lib/imageStorage';
+  clearAllImageCache,
+} from "../lib/imageStorage";
 
 export default function Voters() {
-  const { 
-    user, voters, updateVoterDetails, logVoterContact, locations, 
-    votersPage, isLoadingVoters, fetchVotersPage,
-    voterLgaFilter, setVoterLgaFilter,
-    voterWardFilter, setVoterWardFilter,
-    voterPuFilter, setVoterPuFilter
+  const {
+    user,
+    voters,
+    updateVoterDetails,
+    logVoterContact,
+    votersPage,
+    isLoadingVoters,
+    fetchVotersPage,
+    voterLgaFilter,
+    setVoterLgaFilter,
+    voterWardFilter,
+    setVoterWardFilter,
+    voterPuFilter,
+    setVoterPuFilter,
   } = useApp();
 
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState("");
   const [selectedVoter, setSelectedVoter] = useState<Voter | null>(null);
-  const [noteText, setNoteText] = useState('');
+  const [noteText, setNoteText] = useState("");
   const [showNoteSuccess, setShowNoteSuccess] = useState(false);
 
   // Jurisdiction filter options
   const [lgas, setLgas] = useState<{ id: number; name: string }[]>([]);
   const [wards, setWards] = useState<{ id: number; name: string; ward_number?: string }[]>([]);
-  const [pollingUnits, setPollingUnits] = useState<{ id: number; name: string; puId?: string; no?: string | number }[]>([]);
+  const [pollingUnits, setPollingUnits] = useState<
+    { id: number; name: string; puId?: string; no?: string | number }[]
+  >([]);
 
   // Selected filter values
   const [selectedLga, setSelectedLga] = useState<number | null>(() => {
-    if (user?.role === 'lga_admin' || user?.role === 'ward_admin') return user.lgaId || null;
+    if (user?.role === "lga_admin" || user?.role === "ward_admin") return user.lgaId || null;
     return voterLgaFilter;
   });
   const [selectedWard, setSelectedWard] = useState<number | null>(() => {
-    if (user?.role === 'ward_admin') return user.wardId || null;
+    if (user?.role === "ward_admin") return user.wardId || null;
     return voterWardFilter;
   });
   const [selectedPu, setSelectedPu] = useState<number | null>(() => {
-    if (user?.role === 'pu_agent') return user.puId || user.lagosPollingUnitId || null;
+    if (user?.role === "pu_agent") return user.puId || user.lagosPollingUnitId || null;
     return voterPuFilter;
   });
 
@@ -68,7 +94,9 @@ export default function Voters() {
 
   // Ensure voters are fetched on mount if not already loaded or when jurisdiction filters change
   useEffect(() => {
-    fetchVotersPage(1, { lgaId: selectedLga, wardId: selectedWard, puId: selectedPu });
+    Promise.resolve(
+      fetchVotersPage(1, { lgaId: selectedLga, wardId: selectedWard, puId: selectedPu }),
+    ).catch((error: unknown) => console.error("Async operation failed in Voters", error));
   }, [user?.id, user?.stateId]);
 
   // Manual clear cache handler for development & testing
@@ -80,7 +108,7 @@ export default function Voters() {
 
   const handlePhotoClick = async (voter: Voter) => {
     if (!voter.image) {
-      toast.error('No photo available for this voter.');
+      toast.error("No photo available for this voter.");
       return;
     }
     setViewingVoter(voter);
@@ -90,7 +118,7 @@ export default function Voters() {
     // 1. Check local cache (5 days)
     const cached = getCachedImage(voter.id);
     if (cached) {
-      console.log('⚡ [Image Cache Hit] Loaded voter image from localStorage cache (5-day TTL):', {
+      console.log("⚡ [Image Cache Hit] Loaded voter image from localStorage cache (5-day TTL):", {
         voterId: voter.id,
         voterName: voter.name,
       });
@@ -104,7 +132,7 @@ export default function Voters() {
 
     // 3. Test ImageKit pipeline with diagnostic logging
     const imageKitUrl = buildImageKitUrl(voter.image);
-    console.log('🖼️ [ImageKit Test Request]:', {
+    console.log("🖼️ [ImageKit Test Request]:", {
       voterId: voter.id,
       voterName: voter.name,
       originalSupabaseUrl: voter.image,
@@ -113,20 +141,25 @@ export default function Voters() {
 
     let imageKitWorking = false;
     try {
-      const probeRes = await fetch(imageKitUrl, { method: 'HEAD', mode: 'cors' });
+      const probeRes = await fetch(imageKitUrl, { method: "HEAD", mode: "cors" });
       if (probeRes.ok) {
         imageKitWorking = true;
-        console.log(`✅ [ImageKit Success] ImageKit returned HTTP ${probeRes.status} for voter ${voter.id}`);
+        console.log(
+          `✅ [ImageKit Success] ImageKit returned HTTP ${probeRes.status} for voter ${voter.id}`,
+        );
       } else {
-        console.warn(`⚠️ [ImageKit Failed] HTTP ${probeRes.status}: ImageKit could not resolve this photo path.`, {
-          url: imageKitUrl,
-          status: probeRes.status
-        });
+        console.warn(
+          `⚠️ [ImageKit Failed] HTTP ${probeRes.status}: ImageKit could not resolve this photo path.`,
+          {
+            url: imageKitUrl,
+            status: probeRes.status,
+          },
+        );
         toast.error(`ImageKit unreachable (HTTP ${probeRes.status}). Using fallback scale.`);
       }
     } catch (probeErr) {
-      console.warn('⚠️ [ImageKit Network/CORS Error]:', probeErr);
-      toast.error('ImageKit failed. Using fallback scale.');
+      console.warn("⚠️ [ImageKit Network/CORS Error]:", probeErr);
+      toast.error("ImageKit failed. Using fallback scale.");
     }
 
     try {
@@ -141,7 +174,7 @@ export default function Voters() {
         setRefinedPhoto(enhanced);
       }
     } catch (e: any) {
-      console.warn('Fallback error, showing original:', e);
+      console.warn("Fallback error, showing original:", e);
       setRefinedPhoto(voter.image);
     } finally {
       setIsRefiningPhoto(false);
@@ -155,10 +188,10 @@ export default function Voters() {
       const enhanced = await enhanceImageViaCanvas(viewingVoter.image, 480, 640);
       setCachedImage(viewingVoter.id, enhanced, viewingVoter.image);
       setRefinedPhoto(enhanced);
-      toast.success('Photo re-enhanced & cached for 5 days!');
+      toast.success("Photo re-enhanced & cached for 5 days!");
     } catch (e: any) {
-      console.error('Re-enhance error:', e);
-      toast.error('Could not enhance photo.');
+      console.error("Re-enhance error:", e);
+      toast.error("Could not enhance photo.");
     } finally {
       setIsRefiningPhoto(false);
     }
@@ -171,11 +204,11 @@ export default function Voters() {
   // 1. Fetch LGAs for State/National Admin
   useEffect(() => {
     if (!user) return;
-    let query = supabase.from('local_governments').select('id, name');
+    let query = supabase.from("local_governments").select("id, name");
     if (user.stateId) {
-      query = query.eq('state_id', user.stateId);
+      query = query.eq("state_id", user.stateId);
     }
-    query.order('name').then(({ data }) => {
+    query.order("name").then(({ data }) => {
       if (data) setLgas(data);
     });
   }, [user]);
@@ -183,25 +216,28 @@ export default function Voters() {
   // 2. Fetch Wards based on selected LGA or user's assigned LGA
   useEffect(() => {
     if (!user) return;
-    const effectiveLga = selectedLga || (user.role === 'lga_admin' || user.role === 'ward_admin' ? user.lgaId : null);
+    const effectiveLga =
+      selectedLga || (user.role === "lga_admin" || user.role === "ward_admin" ? user.lgaId : null);
 
     if (effectiveLga) {
       supabase
-        .from('wards')
-        .select('id, name, ward_number')
-        .eq('localgovernment_id', effectiveLga)
+        .from("wards")
+        .select("id, name, ward_number")
+        .eq("localgovernment_id", effectiveLga)
         .then(({ data }) => {
           if (data) {
             const sortedWards = [...data].sort((a: any, b: any) => {
-              const numA = parseInt(a.ward_number || '', 10);
-              const numB = parseInt(b.ward_number || '', 10);
+              const numA = parseInt(a.ward_number || "", 10);
+              const numB = parseInt(b.ward_number || "", 10);
               if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
-              return (a.name || '').localeCompare(b.name || '');
+              return (a.name || "").localeCompare(b.name || "");
             });
             setWards(sortedWards);
-            setWardNames(prev => {
+            setWardNames((prev) => {
               const updated = { ...prev };
-              sortedWards.forEach((w: any) => { updated[w.id] = w.name; });
+              sortedWards.forEach((w: any) => {
+                updated[w.id] = w.name;
+              });
               return updated;
             });
           }
@@ -214,25 +250,27 @@ export default function Voters() {
   // 3. Fetch Polling Units based on selected Ward or user's assigned Ward
   useEffect(() => {
     if (!user) return;
-    const effectiveWard = selectedWard || (user.role === 'ward_admin' ? user.wardId : null);
+    const effectiveWard = selectedWard || (user.role === "ward_admin" ? user.wardId : null);
 
     if (effectiveWard) {
       supabase
-        .from('polling_units')
-        .select('id, name, puId, no')
-        .eq('ward_id', effectiveWard)
+        .from("polling_units")
+        .select("id, name, puId, no")
+        .eq("ward_id", effectiveWard)
         .then(({ data }) => {
           if (data) {
             const sortedPus = [...data].sort((a: any, b: any) => {
-              const noA = parseInt(a.no || (a.puId ? a.puId.split('-').pop() : '') || '', 10);
-              const noB = parseInt(b.no || (b.puId ? b.puId.split('-').pop() : '') || '', 10);
+              const noA = parseInt(a.no || (a.puId ? a.puId.split("-").pop() : "") || "", 10);
+              const noB = parseInt(b.no || (b.puId ? b.puId.split("-").pop() : "") || "", 10);
               if (!isNaN(noA) && !isNaN(noB)) return noA - noB;
-              return (a.name || '').localeCompare(b.name || '');
+              return (a.name || "").localeCompare(b.name || "");
             });
             setPollingUnits(sortedPus);
-            setPuNames(prev => {
+            setPuNames((prev) => {
               const updated = { ...prev };
-              sortedPus.forEach((p: any) => { updated[p.id] = p.name; });
+              sortedPus.forEach((p: any) => {
+                updated[p.id] = p.name;
+              });
               return updated;
             });
           }
@@ -246,42 +284,50 @@ export default function Voters() {
   useEffect(() => {
     if (!voters || voters.length === 0) return;
 
-    const missingWards = Array.from(new Set(
-      voters
-        .map(v => v.wardId)
-        .filter((id): id is number => typeof id === 'number' && !wardNames[id])
-    ));
+    const missingWards = Array.from(
+      new Set(
+        voters
+          .map((v) => v.wardId)
+          .filter((id): id is number => typeof id === "number" && !wardNames[id]),
+      ),
+    );
     if (missingWards.length > 0) {
       supabase
-        .from('wards')
-        .select('id, name')
-        .in('id', missingWards)
+        .from("wards")
+        .select("id, name")
+        .in("id", missingWards)
         .then(({ data }) => {
           if (data && data.length > 0) {
-            setWardNames(prev => {
+            setWardNames((prev) => {
               const next = { ...prev };
-              data.forEach((w: any) => { next[w.id] = w.name; });
+              data.forEach((w: any) => {
+                next[w.id] = w.name;
+              });
               return next;
             });
           }
         });
     }
 
-    const missingPus = Array.from(new Set(
-      voters
-        .map(v => v.puNumberId)
-        .filter((id): id is number => typeof id === 'number' && !puNames[id])
-    ));
+    const missingPus = Array.from(
+      new Set(
+        voters
+          .map((v) => v.puNumberId)
+          .filter((id): id is number => typeof id === "number" && !puNames[id]),
+      ),
+    );
     if (missingPus.length > 0) {
       supabase
-        .from('polling_units')
-        .select('id, name')
-        .in('id', missingPus)
+        .from("polling_units")
+        .select("id, name")
+        .in("id", missingPus)
         .then(({ data }) => {
           if (data && data.length > 0) {
-            setPuNames(prev => {
+            setPuNames((prev) => {
               const next = { ...prev };
-              data.forEach((p: any) => { next[p.id] = p.name; });
+              data.forEach((p: any) => {
+                next[p.id] = p.name;
+              });
               return next;
             });
           }
@@ -298,7 +344,9 @@ export default function Voters() {
     setVoterLgaFilter(val);
     setVoterWardFilter(null);
     setVoterPuFilter(null);
-    fetchVotersPage(1, { lgaId: val, wardId: null, puId: null });
+    Promise.resolve(fetchVotersPage(1, { lgaId: val, wardId: null, puId: null })).catch(
+      (error: unknown) => console.error("Async operation failed in Voters", error),
+    );
   };
 
   const handleWardChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -307,71 +355,80 @@ export default function Voters() {
     setSelectedPu(null);
     setVoterWardFilter(val);
     setVoterPuFilter(null);
-    fetchVotersPage(1, { lgaId: selectedLga, wardId: val, puId: null });
+    Promise.resolve(fetchVotersPage(1, { lgaId: selectedLga, wardId: val, puId: null })).catch(
+      (error: unknown) => console.error("Async operation failed in Voters", error),
+    );
   };
 
   const handlePuChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value ? parseInt(e.target.value, 10) : null;
-    const puObj = pollingUnits.find(p => p.id === val);
+    const puObj = pollingUnits.find((p) => p.id === val);
     setSelectedPu(val);
     setVoterPuFilter(val);
-    fetchVotersPage(1, { lgaId: selectedLga, wardId: selectedWard, puId: val, puid: puObj?.puId || null });
-  };
-
-  // Helper to format shortened PU (first 8 letters) before the phone number
-  const getShortPu8 = (voter: Voter) => {
-    const rawPu = (voter.puNumberId && puNames[voter.puNumberId]) 
-      ? puNames[voter.puNumberId] 
-      : (voter.puId || 'PU');
-
-    const cleanPu = rawPu.replace(/^[^a-zA-Z0-9]+/, '').trim();
-    return cleanPu.slice(0, 8) || 'PU';
+    Promise.resolve(
+      fetchVotersPage(1, {
+        lgaId: selectedLga,
+        wardId: selectedWard,
+        puId: val,
+        puid: puObj?.puId || null,
+      }),
+    ).catch((error: unknown) => console.error("Async operation failed in Voters", error));
   };
 
   // Ensure currentVoter has resolved Ward and PU names in the details modal
   useEffect(() => {
     if (!selectedVoter) return;
     if (selectedVoter.wardId && !wardNames[selectedVoter.wardId]) {
-      supabase.from('wards').select('id, name').eq('id', selectedVoter.wardId).single().then(({ data }) => {
-        if (data) setWardNames(prev => ({ ...prev, [data.id]: data.name }));
-      });
+      supabase
+        .from("wards")
+        .select("id, name")
+        .eq("id", selectedVoter.wardId)
+        .single()
+        .then(({ data }) => {
+          if (data) setWardNames((prev) => ({ ...prev, [data.id]: data.name }));
+        });
     }
     if (selectedVoter.puNumberId && !puNames[selectedVoter.puNumberId]) {
-      supabase.from('polling_units').select('id, name').eq('id', selectedVoter.puNumberId).single().then(({ data }) => {
-        if (data) setPuNames(prev => ({ ...prev, [data.id]: data.name }));
-      });
+      supabase
+        .from("polling_units")
+        .select("id, name")
+        .eq("id", selectedVoter.puNumberId)
+        .single()
+        .then(({ data }) => {
+          if (data) setPuNames((prev) => ({ ...prev, [data.id]: data.name }));
+        });
     }
   }, [selectedVoter]);
 
   // Edit fields and notes view state
-  const [selectedStatus, setSelectedStatus] = useState<Voter['status'] | null>(null);
+  const [selectedStatus, setSelectedStatus] = useState<Voter["status"] | null>(null);
   const [showNotesList, setShowNotesList] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   // International phone formatter: 234... instead of 080.../070... (for WhatsApp & APIs)
   const formatPhone = (phone?: string) => {
-    if (!phone) return 'N/A';
-    let clean = String(phone).replace(/\D/g, '');
-    if (clean.startsWith('0') && clean.length === 11) {
-      return '234' + clean.substring(1);
-    } else if (!clean.startsWith('234') && clean.length === 10) {
-      return '234' + clean;
+    if (!phone) return "N/A";
+    let clean = String(phone).replace(/\D/g, "");
+    if (clean.startsWith("0") && clean.length === 11) {
+      return "234" + clean.substring(1);
+    } else if (!clean.startsWith("234") && clean.length === 10) {
+      return "234" + clean;
     }
     return clean || phone;
   };
 
   // Domestic phone formatter: convert 2348... to 08... for standard Nigerian phone calls
   const formatCallPhone = (phone?: string) => {
-    if (!phone) return '';
-    let clean = String(phone).replace(/\D/g, '');
-    if (clean.startsWith('234') && clean.length >= 12) {
-      return '0' + clean.slice(3);
+    if (!phone) return "";
+    let clean = String(phone).replace(/\D/g, "");
+    if (clean.startsWith("234") && clean.length >= 12) {
+      return "0" + clean.slice(3);
     }
-    if (clean.startsWith('0')) {
+    if (clean.startsWith("0")) {
       return clean;
     }
     if (clean.length === 10) {
-      return '0' + clean;
+      return "0" + clean;
     }
     return clean;
   };
@@ -382,13 +439,13 @@ export default function Voters() {
     if (local.length === 11) {
       return `${local.slice(0, 4)} ${local.slice(4, 7)} ${local.slice(7)}`;
     }
-    return local || phone || '';
+    return local || phone || "";
   };
 
   const getFirstName = (fullName?: string) => {
-    if (!fullName) return '';
+    if (!fullName) return "";
     const parts = fullName.trim().split(/\s+/);
-    return parts[0] || '';
+    return parts[0] || "";
   };
 
   // Track voters known to NOT be on WhatsApp
@@ -397,7 +454,7 @@ export default function Voters() {
   // Track voters confirmed to BE on WhatsApp via API check or sent messages
   const [confirmedOnWaSet, setConfirmedOnWaSet] = useState<Set<string>>(() => {
     try {
-      const saved = localStorage.getItem('eagleeye_confirmed_on_wa');
+      const saved = localStorage.getItem("eagleeye_confirmed_on_wa");
       return saved ? new Set(JSON.parse(saved)) : new Set();
     } catch {
       return new Set();
@@ -405,12 +462,12 @@ export default function Voters() {
   });
 
   const markVoterConfirmedOnWa = (voterId: string | number, phone?: string) => {
-    setConfirmedOnWaSet(prev => {
+    setConfirmedOnWaSet((prev) => {
       const next = new Set(prev);
       next.add(String(voterId));
       if (phone) next.add(formatPhone(phone));
       try {
-        localStorage.setItem('eagleeye_confirmed_on_wa', JSON.stringify(Array.from(next)));
+        localStorage.setItem("eagleeye_confirmed_on_wa", JSON.stringify(Array.from(next)));
       } catch {}
       return next;
     });
@@ -418,15 +475,17 @@ export default function Voters() {
 
   const isVoterConfirmedOnWa = (voter: Voter) => {
     const p = formatPhone(voter.phone);
-    return confirmedOnWaSet.has(String(voter.id)) || (voter.phone ? confirmedOnWaSet.has(p) : false);
+    return (
+      confirmedOnWaSet.has(String(voter.id)) || (voter.phone ? confirmedOnWaSet.has(p) : false)
+    );
   };
 
   useEffect(() => {
     // 1. Fetch voters verified NOT on WhatsApp
     supabase
-      .from('whatsapp_outreach_queue')
-      .select('voter_phone, voter_id')
-      .eq('status', 'not_on_whatsapp')
+      .from("whatsapp_outreach_queue")
+      .select("voter_phone, voter_id")
+      .eq("status", "not_on_whatsapp")
       .then(({ data }) => {
         if (data) {
           const s = new Set<string>();
@@ -443,19 +502,19 @@ export default function Voters() {
 
     // 2. Fetch voters confirmed ON WhatsApp via delivery/read records
     supabase
-      .from('whatsapp_outreach_queue')
-      .select('voter_id, voter_phone, status')
-      .in('status', ['sent', 'delivered', 'read', 'completed'])
+      .from("whatsapp_outreach_queue")
+      .select("voter_id, voter_phone, status")
+      .in("status", ["sent", "delivered", "read", "completed"])
       .then(({ data }) => {
         if (data && data.length > 0) {
-          setConfirmedOnWaSet(prev => {
+          setConfirmedOnWaSet((prev) => {
             const next = new Set(prev);
             data.forEach((d: any) => {
               if (d.voter_id) next.add(String(d.voter_id));
               if (d.voter_phone) next.add(formatPhone(d.voter_phone));
             });
             try {
-              localStorage.setItem('eagleeye_confirmed_on_wa', JSON.stringify(Array.from(next)));
+              localStorage.setItem("eagleeye_confirmed_on_wa", JSON.stringify(Array.from(next)));
             } catch {}
             return next;
           });
@@ -464,18 +523,18 @@ export default function Voters() {
 
     // 3. Fetch voters who have active WhatsApp conversations
     supabase
-      .from('whatsapp_conversations')
-      .select('voter_id, voter_phone')
+      .from("whatsapp_conversations")
+      .select("voter_id, voter_phone")
       .then(({ data }) => {
         if (data && data.length > 0) {
-          setConfirmedOnWaSet(prev => {
+          setConfirmedOnWaSet((prev) => {
             const next = new Set(prev);
             data.forEach((d: any) => {
               if (d.voter_id) next.add(String(d.voter_id));
               if (d.voter_phone) next.add(formatPhone(d.voter_phone));
             });
             try {
-              localStorage.setItem('eagleeye_confirmed_on_wa', JSON.stringify(Array.from(next)));
+              localStorage.setItem("eagleeye_confirmed_on_wa", JSON.stringify(Array.from(next)));
             } catch {}
             return next;
           });
@@ -484,21 +543,21 @@ export default function Voters() {
 
     // 4. Fetch voters who have sent or received WhatsApp messages
     supabase
-      .from('whatsapp_messages')
-      .select('chat_id')
+      .from("whatsapp_messages")
+      .select("chat_id")
       .then(({ data }) => {
         if (data && data.length > 0) {
-          setConfirmedOnWaSet(prev => {
+          setConfirmedOnWaSet((prev) => {
             const next = new Set(prev);
             data.forEach((d: any) => {
               if (d.chat_id) {
-                const phoneOnly = d.chat_id.split('@')[0];
+                const phoneOnly = d.chat_id.split("@")[0];
                 next.add(phoneOnly);
                 next.add(formatPhone(phoneOnly));
               }
             });
             try {
-              localStorage.setItem('eagleeye_confirmed_on_wa', JSON.stringify(Array.from(next)));
+              localStorage.setItem("eagleeye_confirmed_on_wa", JSON.stringify(Array.from(next)));
             } catch {}
             return next;
           });
@@ -509,36 +568,47 @@ export default function Voters() {
   const isVoterNotOnWa = (voter: Voter) => {
     if (isVoterConfirmedOnWa(voter)) return false;
     const p = formatPhone(voter.phone);
-    return notOnWaSet.has(String(voter.id)) || (voter.phone ? (notOnWaSet.has(p) || notOnWaSet.has(voter.phone)) : false);
+    return (
+      notOnWaSet.has(String(voter.id)) ||
+      (voter.phone ? notOnWaSet.has(p) || notOnWaSet.has(voter.phone) : false)
+    );
   };
 
   // Agent Custom Outreach Message Template
-  const defaultTemplate = 'Hello {{voter_firstname}}! The time for real change and good governance is now. I am {{agent_firstname}}, reaching out directly from our ADC grassroots campaign here in {{ward_name}}. Together, we are building a state that works for every citizen—better jobs, quality healthcare, improved schools, and genuine security in our communities. Check out our candidate\'s official plan attached. Are you ready to make your vote count? Reply to join the movement!';
-  
+  const defaultTemplate =
+    "Hello {{voter_firstname}}! The time for real change and good governance is now. I am {{agent_firstname}}, reaching out directly from our ADC grassroots campaign here in {{ward_name}}. Together, we are building a state that works for every citizen—better jobs, quality healthcare, improved schools, and genuine security in our communities. Check out our candidate's official plan attached. Are you ready to make your vote count? Reply to join the movement!";
+
   const [customTemplate, setCustomTemplate] = useState<string>(() => {
-    if (!user?.id) return '';
+    if (!user?.id) return "";
     const saved = localStorage.getItem(`eagleeye_agent_template_${user.id}`);
-    if (saved && (saved.includes('Test message template') || saved.startsWith('Test message'))) {
+    if (saved && (saved.includes("Test message template") || saved.startsWith("Test message"))) {
       localStorage.removeItem(`eagleeye_agent_template_${user.id}`);
-      return '';
+      return "";
     }
-    return saved || '';
+    return saved || "";
   });
-  const [customFormat, setCustomFormat] = useState<'image_and_text' | 'text_only'>(() => {
-    return (user?.id && (localStorage.getItem(`eagleeye_agent_format_${user.id}`) as any)) || 'image_and_text';
+  const [, setCustomFormat] = useState<"image_and_text" | "text_only">(() => {
+    return (
+      (user?.id && (localStorage.getItem(`eagleeye_agent_format_${user.id}`) as any)) ||
+      "image_and_text"
+    );
   });
-  const [stateTemplate, setStateTemplate] = useState<string>('');
+  const [stateTemplate, setStateTemplate] = useState<string>("");
   const [stateConfig, setStateConfig] = useState<any>(null);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
-  const [tempTemplate, setTempTemplate] = useState('');
-  const [tempFormat, setTempFormat] = useState<'image_and_text' | 'text_only'>('image_and_text');
+  const [tempTemplate, setTempTemplate] = useState("");
+  const [tempFormat, setTempFormat] = useState<"image_and_text" | "text_only">("image_and_text");
 
   // Canvassed tracking & Reach/Stance filters
-  const [voterReachFilter, setVoterReachFilter] = useState<'all' | 'on_whatsapp' | 'not_whatsapp' | 'canvassed'>('all');
-  const [voterStanceFilter, setVoterStanceFilter] = useState<'all' | 'ADC Supporter' | 'Undecided' | 'Opposition'>('all');
+  const [voterReachFilter, setVoterReachFilter] = useState<
+    "all" | "on_whatsapp" | "not_whatsapp" | "canvassed"
+  >("all");
+  const [voterStanceFilter, setVoterStanceFilter] = useState<
+    "all" | "ADC Supporter" | "Undecided" | "Opposition"
+  >("all");
   const [canvassedSet, setCanvassedSet] = useState<Set<string>>(() => {
     try {
-      const saved = localStorage.getItem('eagleeye_canvassed_voters');
+      const saved = localStorage.getItem("eagleeye_canvassed_voters");
       return saved ? new Set(JSON.parse(saved)) : new Set();
     } catch {
       return new Set();
@@ -546,12 +616,12 @@ export default function Voters() {
   });
 
   const markVoterCanvassed = (voterId: string | number, phone?: string) => {
-    setCanvassedSet(prev => {
+    setCanvassedSet((prev) => {
       const next = new Set(prev);
       next.add(String(voterId));
       if (phone) next.add(formatPhone(phone));
       try {
-        localStorage.setItem('eagleeye_canvassed_voters', JSON.stringify(Array.from(next)));
+        localStorage.setItem("eagleeye_canvassed_voters", JSON.stringify(Array.from(next)));
       } catch {}
       return next;
     });
@@ -560,19 +630,19 @@ export default function Voters() {
   useEffect(() => {
     // Pre-load canvassed records from outreach queue where messages have been processed
     supabase
-      .from('whatsapp_outreach_queue')
-      .select('voter_id, voter_phone, status')
-      .in('status', ['sent', 'delivered', 'read', 'completed'])
+      .from("whatsapp_outreach_queue")
+      .select("voter_id, voter_phone, status")
+      .in("status", ["sent", "delivered", "read", "completed"])
       .then(({ data }) => {
         if (data && data.length > 0) {
-          setCanvassedSet(prev => {
+          setCanvassedSet((prev) => {
             const next = new Set(prev);
             data.forEach((d: any) => {
               if (d.voter_id) next.add(String(d.voter_id));
               if (d.voter_phone) next.add(formatPhone(d.voter_phone));
             });
             try {
-              localStorage.setItem('eagleeye_canvassed_voters', JSON.stringify(Array.from(next)));
+              localStorage.setItem("eagleeye_canvassed_voters", JSON.stringify(Array.from(next)));
             } catch {}
             return next;
           });
@@ -582,43 +652,52 @@ export default function Voters() {
 
   // WhatsApp Send/Preview Confirmation Modal state
   const [confirmWaVoter, setConfirmWaVoter] = useState<Voter | null>(null);
-  const [waModalMessage, setWaModalMessage] = useState<string>('');
+  const [waModalMessage, setWaModalMessage] = useState<string>("");
 
   useEffect(() => {
     if (user?.stateId) {
-      greenApiService.getConfig(user.stateId).then(cfg => {
-        if (cfg) {
-          setStateConfig(cfg);
-          if (cfg.default_message_template) {
-            setStateTemplate(cfg.default_message_template);
+      Promise.resolve(
+        greenApiService.getConfig(user.stateId).then((cfg) => {
+          if (cfg) {
+            setStateConfig(cfg);
+            if (cfg.default_message_template) {
+              setStateTemplate(cfg.default_message_template);
+            }
           }
-        }
-      });
+        }),
+      ).catch((error: unknown) => console.error("Async operation failed in Voters", error));
     }
   }, [user?.stateId]);
 
-  const getFormattedOutreachMessage = (voterName: string, wardId?: number) => {
+  const getFormattedOutreachMessage = (voterName: string, wardId?: number | null) => {
     let rawTpl = customTemplate.trim() || stateTemplate.trim() || defaultTemplate;
-    if (rawTpl.includes('Test message template')) {
+    if (rawTpl.includes("Test message template")) {
       rawTpl = defaultTemplate;
     }
-    const wardName = (wardId && wardNames[wardId]) || 'your Ward';
-    const voterFirstName = getFirstName(voterName) || 'Voter';
-    const agentFirstName = (user as any)?.firstName || getFirstName(user?.name) || 'Field Agent';
+    const wardName = (wardId && wardNames[wardId]) || "your Ward";
+    const voterFirstName = getFirstName(voterName) || "Voter";
+    const agentFirstName = (user as any)?.firstName || getFirstName(user?.name) || "Field Agent";
 
-    return rawTpl
-      // First name tags
-      .replace(/\{\{voter_firstt?name\}\}/gi, voterFirstName)
-      .replace(/\{\{voter_first_name\}\}/gi, voterFirstName)
-      .replace(/\{\{agent_firstt?name\}\}/gi, agentFirstName)
-      .replace(/\{\{agent_first_name\}\}/gi, agentFirstName)
-      // Full name tags
-      .replace(/\{\{voter_name\}\}/gi, voterName || 'Voter')
-      .replace(/\{\{agent_name\}\}/gi, user?.name || 'Field Agent')
-      .replace(/\{\{ward_name\}\}/gi, wardName);
+    return (
+      rawTpl
+        // First name tags
+        .replace(/\{\{voter_firstt?name\}\}/gi, voterFirstName)
+        .replace(/\{\{voter_first_name\}\}/gi, voterFirstName)
+        .replace(/\{\{agent_firstt?name\}\}/gi, agentFirstName)
+        .replace(/\{\{agent_first_name\}\}/gi, agentFirstName)
+        // Full name tags
+        .replace(/\{\{voter_name\}\}/gi, voterName || "Voter")
+        .replace(/\{\{agent_name\}\}/gi, user?.name || "Field Agent")
+        .replace(/\{\{ward_name\}\}/gi, wardName)
+    );
   };
 
-  const getWhatsAppLink = (phone: string, name: string, wardId?: number, overrideMsg?: string) => {
+  const getWhatsAppLink = (
+    phone: string,
+    name: string,
+    wardId?: number | null,
+    overrideMsg?: string,
+  ) => {
     const cleaned = formatPhone(phone);
     const message = overrideMsg || getFormattedOutreachMessage(name, wardId);
     return `https://wa.me/${cleaned}?text=${encodeURIComponent(message)}`;
@@ -629,10 +708,11 @@ export default function Voters() {
     if (e) e.stopPropagation();
     if (!voter.phone) return;
     const dialPhone = formatCallPhone(voter.phone);
-    const intlPhone = formatPhone(voter.phone);
     const earnAmount = Number(stateConfig?.earning_per_call ?? 20);
 
-    logVoterContact(voter.id, 'call');
+    Promise.resolve(logVoterContact(voter.id, "call")).catch((error: unknown) =>
+      console.error("Async operation failed in Voters", error),
+    );
     markVoterCanvassed(voter.id, voter.phone);
 
     // Trigger phone dialer using domestic Nigerian format: 081...
@@ -640,47 +720,49 @@ export default function Voters() {
 
     if (user?.id) {
       try {
-        await supabase.functions.invoke('whatsapp-admin', {
+        await supabase.functions.invoke("whatsapp-admin", {
           body: {
-            action: 'creditOutreachEarning',
+            action: "creditOutreachEarning",
             agentId: user.id,
-            type: 'call',
+            type: "call",
             voterId: voter.id,
             voterPhone: dialPhone,
-            voterName: voter.name
-          }
+            voterName: voter.name,
+          },
         });
         toast.success(`Call logged! (+₦${earnAmount} earned)`);
       } catch (err) {
-        console.error('Failed to credit call earning:', err);
+        console.error("Failed to credit call earning:", err);
       }
     }
   };
 
   // Sort & filter voters by search term, stance, and reach status
   const filteredVoters = voters
-    .filter(v => {
-      const matchSearch = (v.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
-        (v.phone || '').toLowerCase().includes(searchTerm.toLowerCase());
+    .filter((v) => {
+      const matchSearch =
+        (v.name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (v.phone || "").toLowerCase().includes(searchTerm.toLowerCase());
       if (!matchSearch) return false;
 
       // Stance Filter: All / Supporters / Undecided / Opposition
-      if (voterStanceFilter !== 'all') {
+      if (voterStanceFilter !== "all") {
         if (v.status !== voterStanceFilter) return false;
       }
 
       // Reach Filter: All / On WhatsApp / Not on WhatsApp / Canvassed
       // Only returns voters whose WhatsApp presence has been verified via API
-      if (voterReachFilter === 'on_whatsapp') {
+      if (voterReachFilter === "on_whatsapp") {
         return isVoterConfirmedOnWa(v);
       }
-      if (voterReachFilter === 'not_whatsapp') {
+      if (voterReachFilter === "not_whatsapp") {
         return isVoterNotOnWa(v);
       }
-      if (voterReachFilter === 'canvassed') {
-        const isCanvassed = canvassedSet.has(String(v.id)) ||
+      if (voterReachFilter === "canvassed") {
+        const isCanvassed =
+          canvassedSet.has(String(v.id)) ||
           Boolean(v.phone && canvassedSet.has(formatPhone(v.phone))) ||
-          Boolean(v.contactHistory && v.contactHistory.length > 0) ||
+          Boolean(v.contact_logs && v.contact_logs.length > 0) ||
           Boolean(v.notes && v.notes.length > 0);
         return isCanvassed;
       }
@@ -692,15 +774,17 @@ export default function Voters() {
       if (aNotOnWa !== bNotOnWa) {
         return aNotOnWa ? 1 : -1;
       }
-      return (a.name || '').localeCompare(b.name || '');
+      return (a.name || "").localeCompare(b.name || "");
     });
 
-  const currentVoter = selectedVoter ? voters.find(v => String(v.id) === String(selectedVoter.id)) || selectedVoter : null;
+  const currentVoter = selectedVoter
+    ? voters.find((v) => String(v.id) === String(selectedVoter.id)) || selectedVoter
+    : null;
 
   const handleSelectVoter = (voter: Voter) => {
     setSelectedVoter(voter);
     setSelectedStatus(voter.status);
-    setNoteText('');
+    setNoteText("");
     setShowNoteSuccess(false);
     setShowNotesList(false);
   };
@@ -716,16 +800,16 @@ export default function Voters() {
       if (noteText.trim()) {
         const newNote: VoterNote = {
           text: noteText.trim(),
-          agentId: user?.id || 'unknown',
-          agentName: user?.name || 'Unknown Agent',
-          createdAt: new Date().toISOString()
+          agentId: user?.id || "unknown",
+          agentName: user?.name || "Unknown Agent",
+          createdAt: new Date().toISOString(),
         };
         updates.notes = [...(currentVoter.notes || []), newNote];
       }
 
       if (Object.keys(updates).length > 0) {
         await updateVoterDetails(currentVoter.id, updates);
-        setNoteText('');
+        setNoteText("");
         setShowNoteSuccess(true);
         setTimeout(() => setShowNoteSuccess(false), 3000);
       }
@@ -741,9 +825,11 @@ export default function Voters() {
 
   useEffect(() => {
     if (user?.id) {
-      greenApiService.getAgentInstance(user.id).then(inst => {
-        setHasWaInstance(inst?.wa_state === 'authorized');
-      });
+      Promise.resolve(
+        greenApiService.getAgentInstance(user.id).then((inst) => {
+          setHasWaInstance(inst?.wa_state === "authorized");
+        }),
+      ).catch((error: unknown) => console.error("Async operation failed in Voters", error));
     }
   }, [user?.id]);
 
@@ -755,6 +841,10 @@ export default function Voters() {
 
   const handleDirectSendFlyer = async (voter: Voter, customMsgText?: string) => {
     if (!user) return;
+    if (!voter.phone) {
+      toast.error("Voter has no phone number");
+      return;
+    }
 
     const formattedMessage = customMsgText || getFormattedOutreachMessage(voter.name, voter.wardId);
     const cleanPhone = formatPhone(voter.phone);
@@ -762,28 +852,30 @@ export default function Voters() {
 
     // If agent WhatsApp instance is not connected/authorized, open wa.me on phone & award manual WA earning
     if (!hasWaInstance) {
-      logVoterContact(voter.id, 'whatsapp');
+      Promise.resolve(logVoterContact(voter.id, "whatsapp")).catch((error: unknown) =>
+        console.error("Async operation failed in Voters", error),
+      );
       markVoterCanvassed(voter.id, voter.phone);
       markVoterConfirmedOnWa(voter.id, voter.phone);
 
       const waUrl = getWhatsAppLink(voter.phone, voter.name, voter.wardId, formattedMessage);
-      window.open(waUrl, '_blank');
+      window.open(waUrl, "_blank");
 
       try {
-        const numericVoterId = voter.id ? parseInt(String(voter.id).replace(/\D/g, ''), 10) : null;
-        await supabase.functions.invoke('whatsapp-admin', {
+        const numericVoterId = voter.id ? parseInt(String(voter.id).replace(/\D/g, ""), 10) : null;
+        await supabase.functions.invoke("whatsapp-admin", {
           body: {
-            action: 'creditOutreachEarning',
+            action: "creditOutreachEarning",
             agentId: user.id,
-            type: 'manual_wa',
+            type: "manual_wa",
             voterId: Number.isFinite(numericVoterId) ? numericVoterId : null,
             voterPhone: cleanPhone,
-            voterName: voter.name
-          }
+            voterName: voter.name,
+          },
         });
         toast.success(`WhatsApp link opened! (+₦${manualWaBounty} earned)`);
       } catch (e) {
-        console.error('Failed to credit manual wa earning:', e);
+        console.error("Failed to credit manual wa earning:", e);
       }
       return;
     }
@@ -791,10 +883,16 @@ export default function Voters() {
     setSendingVoterId(voter.id);
     const toastId = toast.loading(`Sending campaign outreach to ${voter.name}...`);
     try {
-      const res = await greenApiService.sendFlyer(user.id, cleanPhone, voter.name, voter.id, formattedMessage);
+      const res = await greenApiService.sendFlyer(
+        user.id,
+        cleanPhone,
+        voter.name,
+        voter.id,
+        formattedMessage,
+      );
       if (res?.notOnWhatsapp) {
         toast.error(`${voter.name} is not registered on WhatsApp`, { id: toastId });
-        setNotOnWaSet(prev => {
+        setNotOnWaSet((prev) => {
           const next = new Set(prev);
           next.add(String(voter.id));
           next.add(cleanPhone);
@@ -805,18 +903,20 @@ export default function Voters() {
         const earned = res.earned || stateConfig?.earning_per_chat || 50;
         toast.success(`Campaign outreach sent to ${voter.name}! (+₦${earned})`, { id: toastId });
         markVoterConfirmedOnWa(voter.id, voter.phone);
-        setNotOnWaSet(prev => {
+        setNotOnWaSet((prev) => {
           const next = new Set(prev);
           next.delete(String(voter.id));
           next.delete(cleanPhone);
           if (voter.phone) next.delete(voter.phone);
           return next;
         });
-        logVoterContact(voter.id, 'whatsapp');
+        Promise.resolve(logVoterContact(voter.id, "whatsapp")).catch((error: unknown) =>
+          console.error("Async operation failed in Voters", error),
+        );
         markVoterCanvassed(voter.id, voter.phone);
       }
     } catch (err: any) {
-      toast.error(err.message || 'Failed to dispatch WhatsApp flyer', { id: toastId });
+      toast.error(err.message || "Failed to dispatch WhatsApp flyer", { id: toastId });
     } finally {
       setSendingVoterId(null);
     }
@@ -824,18 +924,17 @@ export default function Voters() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'ADC Supporter': return 'bg-green-100 text-green-800 border-green-200';
-      case 'Opposition': return 'bg-red-100 text-red-800 border-red-200';
-      case 'Undecided': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'Unreachable': return 'bg-gray-100 text-gray-800 border-gray-200';
-      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+      case "ADC Supporter":
+        return "bg-green-100 text-green-800 border-green-200";
+      case "Opposition":
+        return "bg-red-100 text-red-800 border-red-200";
+      case "Undecided":
+        return "bg-yellow-100 text-yellow-800 border-yellow-200";
+      case "Unreachable":
+        return "bg-gray-100 text-gray-800 border-gray-200";
+      default:
+        return "bg-gray-100 text-gray-800 border-gray-200";
     }
-  };
-
-  const getStateName = (stateId?: number | null) => {
-    if (!stateId) return '';
-    const stateLoc = locations.find(l => l.id === `state_${stateId}`);
-    return stateLoc ? ` • ${stateLoc.name} State` : '';
   };
 
   return (
@@ -843,7 +942,9 @@ export default function Voters() {
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Voter Register</h1>
-          <p className="text-gray-500 dark:text-gray-400">Manage and update voter canvassing status</p>
+          <p className="text-gray-500 dark:text-gray-400">
+            Manage and update voter canvassing status
+          </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button
@@ -858,7 +959,10 @@ export default function Voters() {
             <Edit3 size={15} className="text-emerald-600" />
             <span>My Outreach Message</span>
             {customTemplate && (
-              <span className="w-2 h-2 rounded-full bg-emerald-500" title="Personalized template active" />
+              <span
+                className="w-2 h-2 rounded-full bg-emerald-500"
+                title="Personalized template active"
+              />
             )}
           </button>
           {import.meta.env.DEV && (
@@ -876,7 +980,7 @@ export default function Voters() {
       </div>
 
       {/* Jurisdiction Filters (LGA, Ward, PU) */}
-      {user?.role !== 'pu_agent' && (
+      {user?.role !== "pu_agent" && (
         <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200 shadow-xs mb-4">
           <div className="flex items-center gap-2 mb-2.5 pb-2 border-b border-gray-100">
             <MapPin size={15} className="text-[#004d25]" />
@@ -890,22 +994,24 @@ export default function Voters() {
               <label className="block text-[11px] font-semibold text-gray-600 mb-1">
                 Local Government (LGA)
               </label>
-              {user?.role === 'national_admin' || user?.role === 'state_admin' ? (
+              {user?.role === "national_admin" || user?.role === "state_admin" ? (
                 <select
-                  value={selectedLga || ''}
+                  value={selectedLga || ""}
                   onChange={handleLgaChange}
                   className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white focus:ring-2 focus:ring-[#004d25] focus:outline-none"
                 >
                   <option value="">All LGAs</option>
-                  {lgas.map(lga => (
-                    <option key={lga.id} value={lga.id}>{lga.name}</option>
+                  {lgas.map((lga) => (
+                    <option key={lga.id} value={lga.id}>
+                      {lga.name}
+                    </option>
                   ))}
                 </select>
               ) : (
                 <input
                   type="text"
                   disabled
-                  value={user?.locationName || 'Assigned LGA'}
+                  value={user?.locationName || "Assigned LGA"}
                   className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-500 bg-gray-50 cursor-not-allowed"
                 />
               )}
@@ -913,29 +1019,30 @@ export default function Voters() {
 
             {/* Ward Filter */}
             <div>
-              <label className="block text-[11px] font-semibold text-gray-600 mb-1">
-                Ward
-              </label>
-              {user?.role === 'ward_admin' ? (
+              <label className="block text-[11px] font-semibold text-gray-600 mb-1">Ward</label>
+              {user?.role === "ward_admin" ? (
                 <input
                   type="text"
                   disabled
-                  value={user?.locationName || 'Assigned Ward'}
+                  value={user?.locationName || "Assigned Ward"}
                   className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-500 bg-gray-50 cursor-not-allowed"
                 />
               ) : (
                 <select
-                  value={selectedWard || ''}
+                  value={selectedWard || ""}
                   onChange={handleWardChange}
-                  disabled={!selectedLga && user?.role !== 'lga_admin'}
+                  disabled={!selectedLga && user?.role !== "lga_admin"}
                   className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white focus:ring-2 focus:ring-[#004d25] focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
                 >
                   <option value="">All Wards</option>
-                  {wards.map(ward => {
-                    const wardNo = ward.ward_number ? `${String(ward.ward_number).padStart(2, '0')} - ` : '';
+                  {wards.map((ward) => {
+                    const wardNo = ward.ward_number
+                      ? `${String(ward.ward_number).padStart(2, "0")} - `
+                      : "";
                     return (
                       <option key={ward.id} value={ward.id}>
-                        {wardNo}{ward.name}
+                        {wardNo}
+                        {ward.name}
                       </option>
                     );
                   })}
@@ -949,14 +1056,18 @@ export default function Voters() {
                 Polling Unit (PU)
               </label>
               <select
-                value={selectedPu || ''}
+                value={selectedPu || ""}
                 onChange={handlePuChange}
-                disabled={!selectedWard && user?.role !== 'ward_admin'}
+                disabled={!selectedWard && user?.role !== "ward_admin"}
                 className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white focus:ring-2 focus:ring-[#004d25] focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
               >
                 <option value="">All Polling Units</option>
-                {pollingUnits.map(pu => {
-                  const puNo = pu.no ? String(pu.no).padStart(3, '0') : (pu.puId ? pu.puId.split('-').pop() : '');
+                {pollingUnits.map((pu) => {
+                  const puNo = pu.no
+                    ? String(pu.no).padStart(3, "0")
+                    : pu.puId
+                      ? pu.puId.split("-").pop()
+                      : "";
                   const puLabel = puNo ? `${puNo} - ${pu.name}` : pu.name;
                   return (
                     <option key={pu.id} value={pu.id}>
@@ -974,9 +1085,9 @@ export default function Voters() {
       <div className="flex flex-col lg:flex-row gap-2.5 mb-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-          <input 
-            type="text" 
-            placeholder="Search by Name or Phone..." 
+          <input
+            type="text"
+            placeholder="Search by Name or Phone..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#004d25] focus:border-transparent text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
@@ -1017,7 +1128,9 @@ export default function Voters() {
               <div className="w-14 h-14 bg-emerald-50 rounded-full flex items-center justify-center text-[#004d25] mb-4">
                 <Loader2 size={32} className="animate-spin text-[#004d25]" />
               </div>
-              <h3 className="text-base font-semibold text-gray-900 mb-1">Loading Voter Records...</h3>
+              <h3 className="text-base font-semibold text-gray-900 mb-1">
+                Loading Voter Records...
+              </h3>
               <p className="text-xs text-gray-500 max-w-sm">
                 Fetching voter data for your jurisdiction. Please wait a moment.
               </p>
@@ -1029,33 +1142,36 @@ export default function Voters() {
               </div>
               <h3 className="text-lg font-medium text-gray-900 mb-1">No voters found</h3>
               <p className="text-gray-500">
-                {searchTerm ? 'No voters match your search criteria.' : 'Voters to be added soon.'}
+                {searchTerm ? "No voters match your search criteria." : "Voters to be added soon."}
               </p>
             </div>
           ) : (
             <ul className="divide-y divide-gray-100">
-              {filteredVoters.map(voter => {
-                const shortPu8 = getShortPu8(voter);
+              {filteredVoters.map((voter) => {
                 return (
-                  <li 
-                    key={voter.id} 
+                  <li
+                    key={voter.id}
                     onClick={() => handleSelectVoter(voter)}
                     className="p-4 hover:bg-gray-50 cursor-pointer flex items-center justify-between transition-colors"
                   >
                     <div className="flex items-center gap-4">
                       <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-400 overflow-hidden">
                         {voter.image ? (
-                          <img src={voter.image} alt={voter.name} className="w-full h-full object-cover" />
+                          <img
+                            src={voter.image}
+                            alt={voter.name}
+                            className="w-full h-full object-cover"
+                          />
                         ) : (
                           <UserCircle size={24} />
                         )}
                       </div>
                       <div>
-                        <h4 className="font-semibold text-gray-900">
-                          {voter.name}
-                        </h4>
+                        <h4 className="font-semibold text-gray-900">{voter.name}</h4>
                         <div className="flex items-center gap-2 mt-0.5">
-                          <p className="text-xs text-gray-500 font-mono">{formatPhone(voter.phone)}</p>
+                          <p className="text-xs text-gray-500 font-mono">
+                            {formatPhone(voter.phone)}
+                          </p>
                           {isVoterNotOnWa(voter) && (
                             <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 px-1.5 py-0.2 rounded">
                               Not on WhatsApp
@@ -1067,22 +1183,30 @@ export default function Voters() {
 
                     <div className="flex items-center gap-2.5 ml-auto">
                       {/* Do not render Undecided status pill; only render if defined and NOT Undecided */}
-                      {voter.status && voter.status !== 'Undecided' && (
-                        <span className={cn("px-2.5 py-1 rounded-full text-xs font-medium border whitespace-nowrap", getStatusColor(voter.status))}>
+                      {voter.status && voter.status !== "Undecided" && (
+                        <span
+                          className={cn(
+                            "px-2.5 py-1 rounded-full text-xs font-medium border whitespace-nowrap",
+                            getStatusColor(voter.status),
+                          )}
+                        >
                           {voter.status}
                         </span>
                       )}
 
                       {/* Action Icons: Aligned to Far Right */}
                       {voter.phone && (
-                        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                        <div
+                          className="flex items-center gap-1.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           {/* WhatsApp Outreach */}
                           {!(hasWaInstance && isVoterNotOnWa(voter)) && (
-                            <button 
+                            <button
                               type="button"
                               title={
-                                hasWaInstance 
-                                  ? `Dispatch Campaign Flyer & Message (+₦${stateConfig?.earning_per_chat || 50})` 
+                                hasWaInstance
+                                  ? `Dispatch Campaign Flyer & Message (+₦${stateConfig?.earning_per_chat || 50})`
                                   : `Open WhatsApp on phone (+₦${stateConfig?.earning_per_manual_wa || 15})`
                               }
                               onClick={(e) => handleOpenWaModal(voter, e)}
@@ -1091,7 +1215,7 @@ export default function Voters() {
                                 "p-1.5 rounded-full transition-colors disabled:opacity-50 cursor-pointer",
                                 isVoterNotOnWa(voter)
                                   ? "hover:bg-amber-50 text-amber-500 hover:text-amber-700"
-                                  : "hover:bg-green-50 text-green-600"
+                                  : "hover:bg-green-50 text-green-600",
                               )}
                             >
                               {sendingVoterId === voter.id ? (
@@ -1103,7 +1227,7 @@ export default function Voters() {
                           )}
 
                           {/* Call Voter */}
-                          <button 
+                          <button
                             type="button"
                             title={`Call Voter (+₦${stateConfig?.earning_per_call || 20} bounty)`}
                             onClick={(e) => handleCallVoter(voter, e)}
@@ -1121,11 +1245,9 @@ export default function Voters() {
           )}
         </div>
         <div className="p-4 border-t border-gray-100 text-sm text-gray-500 bg-gray-50 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div>
-            Showing {filteredVoters.length} voters
-          </div>
+          <div>Showing {filteredVoters.length} voters</div>
           <div className="flex items-center gap-3">
-            <button 
+            <button
               onClick={() => fetchVotersPage(votersPage - 1)}
               disabled={votersPage === 1 || isLoadingVoters}
               className="p-1.5 border border-gray-300 rounded hover:bg-white disabled:opacity-50 transition-colors"
@@ -1133,8 +1255,10 @@ export default function Voters() {
             >
               <ChevronLeft size={18} />
             </button>
-            <span className="font-medium text-gray-700 bg-white px-3 py-1 rounded border border-gray-200">Page {votersPage}</span>
-            <button 
+            <span className="font-medium text-gray-700 bg-white px-3 py-1 rounded border border-gray-200">
+              Page {votersPage}
+            </span>
+            <button
               onClick={() => fetchVotersPage(votersPage + 1)}
               disabled={voters.length < 500 || isLoadingVoters}
               className="p-1.5 border border-gray-300 rounded hover:bg-white disabled:opacity-50 transition-colors"
@@ -1147,17 +1271,23 @@ export default function Voters() {
       </div>
 
       {/* Side Drawer / Modal for Voter Details */}
-        {currentVoter && (
+      {currentVoter && (
         <div className="fixed inset-0 z-50 flex justify-end">
-          <div className="absolute inset-0 bg-black/30 backdrop-blur-sm transition-opacity" onClick={() => setSelectedVoter(null)} />
+          <div
+            className="absolute inset-0 bg-black/30 backdrop-blur-sm transition-opacity"
+            onClick={() => setSelectedVoter(null)}
+          />
           <div className="relative w-full max-w-md bg-white h-full shadow-2xl flex flex-col transform transition-transform duration-300 translate-x-0">
             <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-[#004d25] text-white">
               <h3 className="font-bold text-lg">Voter Details</h3>
-              <button onClick={() => setSelectedVoter(null)} className="p-1 hover:bg-[#006331] rounded-full">
+              <button
+                onClick={() => setSelectedVoter(null)}
+                className="p-1 hover:bg-[#006331] rounded-full"
+              >
                 <X size={24} />
               </button>
             </div>
-            
+
             <div className="p-6 flex-1 overflow-y-auto">
               <div className="text-center mb-6">
                 {(() => {
@@ -1165,18 +1295,22 @@ export default function Voters() {
                   const displayImg = cachedPhoto || currentVoter.image;
                   return (
                     <div className="flex flex-col items-center">
-                      <div 
+                      <div
                         onClick={() => handlePhotoClick(currentVoter)}
                         className={cn(
                           "relative group w-24 h-24 rounded-full mx-auto mb-2 overflow-hidden ring-4 transition shadow-md bg-gray-100 flex items-center justify-center",
-                          currentVoter.image 
-                            ? "cursor-pointer ring-emerald-500/25 hover:ring-emerald-600 hover:scale-105" 
-                            : "ring-gray-200"
+                          currentVoter.image
+                            ? "cursor-pointer ring-emerald-500/25 hover:ring-emerald-600 hover:scale-105"
+                            : "ring-gray-200",
                         )}
                         title={currentVoter.image ? "Click to view photo" : "No photo available"}
                       >
                         {displayImg ? (
-                          <img src={displayImg} alt={currentVoter.name} className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110" />
+                          <img
+                            src={displayImg}
+                            alt={currentVoter.name}
+                            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
+                          />
                         ) : (
                           <UserCircle size={56} className="text-gray-400" />
                         )}
@@ -1188,9 +1322,9 @@ export default function Voters() {
                           onClick={() => handlePhotoClick(currentVoter)}
                           className={cn(
                             "inline-flex items-center px-3 py-1 text-xs font-semibold rounded-full border transition cursor-pointer mb-2",
-                            cachedPhoto 
-                              ? "bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300" 
-                              : "bg-gray-50 hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 border-gray-200 hover:border-emerald-300"
+                            cachedPhoto
+                              ? "bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300"
+                              : "bg-gray-50 hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 border-gray-200 hover:border-emerald-300",
                           )}
                           title="View photo"
                         >
@@ -1200,9 +1334,7 @@ export default function Voters() {
                     </div>
                   );
                 })()}
-                <h2 className="text-2xl font-bold text-gray-900">
-                  {currentVoter.name}
-                </h2>
+                <h2 className="text-2xl font-bold text-gray-900">{currentVoter.name}</h2>
                 {currentVoter.phone ? (
                   <div className="mt-2.5 inline-flex items-center justify-center gap-2 px-4 py-1.5 bg-emerald-50 border border-emerald-200 rounded-full shadow-xs">
                     <Phone size={16} className="text-emerald-700 shrink-0" />
@@ -1223,21 +1355,30 @@ export default function Voters() {
               <div className="space-y-4">
                 {/* Official Campaign Outreach Box */}
                 {currentVoter.phone && (
-                  <div className={cn(
-                    "p-4 border rounded-2xl space-y-3",
-                    isVoterNotOnWa(currentVoter)
-                      ? "bg-amber-50/70 border-amber-200 text-amber-900"
-                      : "bg-emerald-50/70 border-emerald-200 text-emerald-900"
-                  )}>
+                  <div
+                    className={cn(
+                      "p-4 border rounded-2xl space-y-3",
+                      isVoterNotOnWa(currentVoter)
+                        ? "bg-amber-50/70 border-amber-200 text-amber-900"
+                        : "bg-emerald-50/70 border-emerald-200 text-emerald-900",
+                    )}
+                  >
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
-                        <MessageSquare size={14} className={isVoterNotOnWa(currentVoter) ? "text-amber-700" : "text-emerald-700"} />
+                        <MessageSquare
+                          size={14}
+                          className={
+                            isVoterNotOnWa(currentVoter) ? "text-amber-700" : "text-emerald-700"
+                          }
+                        />
                         Campaign Outreach
                       </span>
                       <span className="text-[11px] bg-emerald-100 text-emerald-800 font-bold px-2.5 py-0.5 rounded-full">
-                        +₦{hasWaInstance 
-                          ? (stateConfig?.earning_per_chat || 50) 
-                          : (stateConfig?.earning_per_manual_wa || 15)} Earned
+                        +₦
+                        {hasWaInstance
+                          ? stateConfig?.earning_per_chat || 50
+                          : stateConfig?.earning_per_manual_wa || 15}{" "}
+                        Earned
                       </span>
                     </div>
 
@@ -1250,7 +1391,7 @@ export default function Voters() {
                           "w-full py-3.5 px-4 text-white text-sm sm:text-base font-bold rounded-xl shadow-md flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-98 disabled:opacity-60",
                           isVoterNotOnWa(currentVoter)
                             ? "bg-amber-600 hover:bg-amber-700"
-                            : "bg-[#25D366] hover:bg-[#20ba59] shadow-emerald-500/20"
+                            : "bg-[#25D366] hover:bg-[#20ba59] shadow-emerald-500/20",
                         )}
                         title="WhatsApp chat with voter"
                       >
@@ -1274,21 +1415,23 @@ export default function Voters() {
                 <div>
                   <h4 className="font-semibold text-gray-900 mb-3">Update Status</h4>
                   <div className="grid grid-cols-2 gap-2">
-                    {(['ADC Supporter', 'Opposition', 'Undecided', 'Unreachable'] as const).map((status) => (
-                      <button
-                        key={status}
-                        onClick={() => setSelectedStatus(status)}
-                        className={cn(
-                          "p-3 rounded-lg border text-sm font-medium flex items-center justify-between transition-all cursor-pointer",
-                          selectedStatus === status 
-                            ? getStatusColor(status) + " ring-2 ring-offset-1"
-                            : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
-                        )}
-                      >
-                        {status}
-                        {selectedStatus === status && <Check size={16} />}
-                      </button>
-                    ))}
+                    {(["ADC Supporter", "Opposition", "Undecided", "Unreachable"] as const).map(
+                      (status) => (
+                        <button
+                          key={status}
+                          onClick={() => setSelectedStatus(status)}
+                          className={cn(
+                            "p-3 rounded-lg border text-sm font-medium flex items-center justify-between transition-all cursor-pointer",
+                            selectedStatus === status
+                              ? getStatusColor(status) + " ring-2 ring-offset-1"
+                              : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50",
+                          )}
+                        >
+                          {status}
+                          {selectedStatus === status && <Check size={16} />}
+                        </button>
+                      ),
+                    )}
                   </div>
                 </div>
 
@@ -1300,7 +1443,7 @@ export default function Voters() {
                     <span>Voter Notes ({currentVoter.notes?.length || 0})</span>
                     {showNotesList ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                   </button>
-                  
+
                   {showNotesList && (
                     <div className="mt-2 mb-4 space-y-3 max-h-48 overflow-y-auto">
                       {(!currentVoter.notes || currentVoter.notes.length === 0) && (
@@ -1320,7 +1463,7 @@ export default function Voters() {
 
                   <div className="mt-4">
                     <h4 className="font-semibold text-gray-900 mb-2">Write a New Note</h4>
-                    <textarea 
+                    <textarea
                       className="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-[#004d25] focus:border-transparent outline-none"
                       rows={3}
                       value={noteText}
@@ -1336,10 +1479,10 @@ export default function Voters() {
                 </div>
               </div>
             </div>
-            
+
             <div className="p-4 border-t border-gray-100 bg-gray-50 flex gap-3">
-              <button 
-                onClick={handleSaveChanges} 
+              <button
+                onClick={handleSaveChanges}
                 disabled={isSaving || (selectedStatus === currentVoter.status && !noteText.trim())}
                 className="flex-1 bg-[#004d25] text-white font-semibold py-3 rounded-lg hover:bg-[#006331] transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
@@ -1355,10 +1498,10 @@ export default function Voters() {
                   </>
                 )}
               </button>
-              <button 
+              <button
                 onClick={() => {
                   setSelectedVoter(null);
-                  setNoteText('');
+                  setNoteText("");
                   setShowNoteSuccess(false);
                 }}
                 disabled={isSaving}
@@ -1391,7 +1534,8 @@ export default function Voters() {
 
             <div className="p-5 space-y-4">
               <p className="text-xs text-gray-600 dark:text-gray-400">
-                Customize the message that will be sent to voters alongside your candidate campaign flyer, or prefilled in WhatsApp (wa.me) links.
+                Customize the message that will be sent to voters alongside your candidate campaign
+                flyer, or prefilled in WhatsApp (wa.me) links.
               </p>
 
               <div>
@@ -1403,7 +1547,9 @@ export default function Voters() {
                   onChange={(e) => setTempFormat(e.target.value as any)}
                   className="w-full text-xs sm:text-sm p-2.5 border border-gray-300 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
                 >
-                  <option value="image_and_text">Image & Text (Candidate Campaign Flyer + Message)</option>
+                  <option value="image_and_text">
+                    Image & Text (Candidate Campaign Flyer + Message)
+                  </option>
                   <option value="text_only">Text Message Only (Direct Message)</option>
                 </select>
               </div>
@@ -1414,16 +1560,16 @@ export default function Voters() {
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {[
-                    { label: 'Voter First Name', tag: '{{voter_firstname}}' },
-                    { label: 'Agent First Name', tag: '{{agent_firstname}}' },
-                    { label: 'Ward Name', tag: '{{ward_name}}' },
-                    { label: 'Voter Full Name', tag: '{{voter_name}}' },
-                    { label: 'Agent Full Name', tag: '{{agent_name}}' },
-                  ].map(chip => (
+                    { label: "Voter First Name", tag: "{{voter_firstname}}" },
+                    { label: "Agent First Name", tag: "{{agent_firstname}}" },
+                    { label: "Ward Name", tag: "{{ward_name}}" },
+                    { label: "Voter Full Name", tag: "{{voter_name}}" },
+                    { label: "Agent Full Name", tag: "{{agent_name}}" },
+                  ].map((chip) => (
                     <button
                       key={chip.tag}
                       type="button"
-                      onClick={() => setTempTemplate(prev => `${prev} ${chip.tag}`.trim())}
+                      onClick={() => setTempTemplate((prev) => `${prev} ${chip.tag}`.trim())}
                       className="text-[11px] font-medium bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 px-2.5 py-1 rounded-full cursor-pointer transition"
                     >
                       + {chip.label} <code className="opacity-70 text-[10px]">{chip.tag}</code>
@@ -1448,32 +1594,43 @@ export default function Voters() {
               {/* Real-time Preview */}
               <div className="p-3 bg-gray-50 dark:bg-gray-800/60 rounded-xl border border-gray-200 dark:border-gray-700/60 space-y-2">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 block">
-                  Live Preview {tempFormat === 'image_and_text' && '• Attached to Campaign Flyer'}
+                  Live Preview {tempFormat === "image_and_text" && "• Attached to Campaign Flyer"}
                 </span>
 
-                {tempFormat === 'image_and_text' && stateConfig?.default_flyer_url && (
+                {tempFormat === "image_and_text" && stateConfig?.default_flyer_url && (
                   <div className="flex items-center gap-3 p-2 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                    <img 
-                      src={stateConfig.default_flyer_url} 
-                      alt="Campaign Flyer" 
-                      className="w-16 h-16 object-cover rounded-md border border-gray-200 shrink-0" 
+                    <img
+                      src={stateConfig.default_flyer_url}
+                      alt="Campaign Flyer"
+                      className="w-16 h-16 object-cover rounded-md border border-gray-200 shrink-0"
                     />
                     <div className="text-xs text-gray-500 space-y-0.5">
-                      <p className="font-semibold text-gray-800 dark:text-gray-200">Official State Campaign Flyer</p>
-                      <p className="text-[11px] text-gray-500">Will be sent as the header image with your message below as the caption.</p>
+                      <p className="font-semibold text-gray-800 dark:text-gray-200">
+                        Official State Campaign Flyer
+                      </p>
+                      <p className="text-[11px] text-gray-500">
+                        Will be sent as the header image with your message below as the caption.
+                      </p>
                     </div>
                   </div>
                 )}
 
                 <p className="text-xs text-gray-800 dark:text-gray-200 italic whitespace-pre-wrap bg-white dark:bg-gray-900 p-2.5 rounded-lg border border-gray-100 dark:border-gray-800">
                   {tempTemplate
-                    .replace(/\{\{voter_firstt?name\}\}/gi, 'Adewale')
-                    .replace(/\{\{voter_first_name\}\}/gi, 'Adewale')
-                    .replace(/\{\{agent_firstt?name\}\}/gi, (user as any)?.firstName || getFirstName(user?.name) || 'Musa')
-                    .replace(/\{\{agent_first_name\}\}/gi, (user as any)?.firstName || getFirstName(user?.name) || 'Musa')
-                    .replace(/\{\{voter_name\}\}/gi, 'Adewale Johnson')
-                    .replace(/\{\{agent_name\}\}/gi, user?.name || 'Agent Musa')
-                    .replace(/\{\{ward_name\}\}/gi, 'Ward 01 (Central)') || '(Type your message template above to see live preview)'}
+                    .replace(/\{\{voter_firstt?name\}\}/gi, "Adewale")
+                    .replace(/\{\{voter_first_name\}\}/gi, "Adewale")
+                    .replace(
+                      /\{\{agent_firstt?name\}\}/gi,
+                      (user as any)?.firstName || getFirstName(user?.name) || "Musa",
+                    )
+                    .replace(
+                      /\{\{agent_first_name\}\}/gi,
+                      (user as any)?.firstName || getFirstName(user?.name) || "Musa",
+                    )
+                    .replace(/\{\{voter_name\}\}/gi, "Adewale Johnson")
+                    .replace(/\{\{agent_name\}\}/gi, user?.name || "Agent Musa")
+                    .replace(/\{\{ward_name\}\}/gi, "Ward 01 (Central)") ||
+                    "(Type your message template above to see live preview)"}
                 </p>
               </div>
             </div>
@@ -1483,7 +1640,7 @@ export default function Voters() {
                 type="button"
                 onClick={() => {
                   setTempTemplate(stateTemplate || defaultTemplate);
-                  setTempFormat('image_and_text');
+                  setTempFormat("image_and_text");
                 }}
                 className="text-xs text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 underline cursor-pointer"
               >
@@ -1513,7 +1670,7 @@ export default function Voters() {
                       localStorage.setItem(`eagleeye_agent_format_${user.id}`, tempFormat);
                     }
                     setIsTemplateModalOpen(false);
-                    toast.success('Outreach message template updated!');
+                    toast.success("Outreach message template updated!");
                   }}
                   className="px-4 py-1.5 text-xs font-semibold text-white bg-[#004d25] hover:bg-[#006331] rounded-lg shadow-xs cursor-pointer transition"
                 >
@@ -1546,12 +1703,20 @@ export default function Voters() {
             <div className="p-5 space-y-4">
               <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700">
                 <div>
-                  <span className="text-[10px] text-gray-400 uppercase font-semibold block">Target Voter</span>
-                  <p className="text-sm font-bold text-gray-900 dark:text-white">{confirmWaVoter.name}</p>
+                  <span className="text-[10px] text-gray-400 uppercase font-semibold block">
+                    Target Voter
+                  </span>
+                  <p className="text-sm font-bold text-gray-900 dark:text-white">
+                    {confirmWaVoter.name}
+                  </p>
                 </div>
                 <div className="text-right">
-                  <span className="text-[10px] text-gray-400 uppercase font-semibold block">Phone Number</span>
-                  <p className="text-xs font-mono font-bold text-gray-900 dark:text-white">{formatPhone(confirmWaVoter.phone)}</p>
+                  <span className="text-[10px] text-gray-400 uppercase font-semibold block">
+                    Phone Number
+                  </span>
+                  <p className="text-xs font-mono font-bold text-gray-900 dark:text-white">
+                    {formatPhone(confirmWaVoter.phone)}
+                  </p>
                 </div>
               </div>
 
@@ -1578,9 +1743,9 @@ export default function Voters() {
                         Official Campaign Flyer
                       </p>
                       <p className="text-[11px] text-gray-600 dark:text-gray-400">
-                        {hasWaInstance 
-                          ? 'This flyer image will be delivered directly with the message below as its caption.'
-                          : 'Notice: WhatsApp line not connected. Opening WhatsApp directly on your phone (wa.me) transfers text message only (URL protocol cannot auto-attach media).'}
+                        {hasWaInstance
+                          ? "This flyer image will be delivered directly with the message below as its caption."
+                          : "Notice: WhatsApp line not connected. Opening WhatsApp directly on your phone (wa.me) transfers text message only (URL protocol cannot auto-attach media)."}
                       </p>
                     </div>
                   </div>
@@ -1603,16 +1768,21 @@ export default function Voters() {
               <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 rounded-xl flex items-center justify-between">
                 <div className="space-y-0.5">
                   <p className="text-xs font-semibold text-emerald-900 dark:text-emerald-200">
-                    {hasWaInstance ? 'Official Campaign WhatsApp Instance Active' : 'Direct Phone WhatsApp (wa.me)'}
+                    {hasWaInstance
+                      ? "Official Campaign WhatsApp Instance Active"
+                      : "Direct Phone WhatsApp (wa.me)"}
                   </p>
                   <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
                     {hasWaInstance
-                      ? 'Dispatches candidate flyer with personalized caption directly from your assigned line.'
-                      : 'Opens WhatsApp on your device with this prefilled message.'}
+                      ? "Dispatches candidate flyer with personalized caption directly from your assigned line."
+                      : "Opens WhatsApp on your device with this prefilled message."}
                   </p>
                 </div>
                 <span className="text-xs bg-emerald-200/80 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-100 font-bold px-2.5 py-1 rounded-full shrink-0">
-                  +₦{hasWaInstance ? (stateConfig?.earning_per_chat || 50) : (stateConfig?.earning_per_manual_wa || 15)}
+                  +₦
+                  {hasWaInstance
+                    ? stateConfig?.earning_per_chat || 50
+                    : stateConfig?.earning_per_manual_wa || 15}
                 </span>
               </div>
             </div>
@@ -1645,7 +1815,7 @@ export default function Voters() {
                   <>
                     <Send size={14} />
                     <span>
-                      {hasWaInstance 
+                      {hasWaInstance
                         ? `Send Flyer (+₦${stateConfig?.earning_per_chat || 50})`
                         : `WhatsApp (+₦${stateConfig?.earning_per_manual_wa || 15})`}
                     </span>
@@ -1663,7 +1833,7 @@ export default function Voters() {
           <div className="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl overflow-hidden border border-gray-100 dark:border-gray-800 flex flex-col">
             {/* Header */}
             <div className="px-4 py-2.5 flex items-center justify-end">
-              <button 
+              <button
                 onClick={() => setPhotoViewerOpen(false)}
                 className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full text-gray-500 hover:text-gray-900 dark:hover:text-white transition cursor-pointer"
                 title="Close"
@@ -1682,9 +1852,13 @@ export default function Voters() {
                   </div>
                 ) : (
                   <>
-                    <img 
-                      src={showOriginalComparison ? viewingVoter.image : (refinedPhoto || viewingVoter.image)} 
-                      alt={viewingVoter.name} 
+                    <img
+                      src={
+                        showOriginalComparison
+                          ? viewingVoter.image
+                          : refinedPhoto || viewingVoter.image
+                      }
+                      alt={viewingVoter.name}
                       className="w-full h-full object-cover transition duration-300"
                     />
                     {showOriginalComparison && (
@@ -1698,8 +1872,12 @@ export default function Voters() {
 
               {/* Voter metadata pill */}
               <div className="mt-3 text-center">
-                <h4 className="font-bold text-sm text-gray-900 dark:text-white">{viewingVoter.name}</h4>
-                <p className="text-xs text-gray-500 font-mono mt-0.5">{viewingVoter.puId || viewingVoter.vin || 'INEC Voter'}</p>
+                <h4 className="font-bold text-sm text-gray-900 dark:text-white">
+                  {viewingVoter.name}
+                </h4>
+                <p className="text-xs text-gray-500 font-mono mt-0.5">
+                  {viewingVoter.puId || viewingVoter.vin || "INEC Voter"}
+                </p>
               </div>
             </div>
 
@@ -1734,7 +1912,7 @@ export default function Voters() {
                 {refinedPhoto && (
                   <a
                     href={refinedPhoto}
-                    download={`voter_${(viewingVoter.name || 'photo').replace(/\s+/g, '_')}_480x640.jpg`}
+                    download={`voter_${(viewingVoter.name || "photo").replace(/\s+/g, "_")}_480x640.jpg`}
                     className="px-3.5 py-2 text-xs font-semibold text-white bg-[#004d25] hover:bg-[#006331] rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer transition"
                     title="Download 480x640 portrait"
                   >

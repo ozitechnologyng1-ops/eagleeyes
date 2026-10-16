@@ -33,6 +33,10 @@ GEMINI.md
 gemini.md
 metadata.json
 
+playwright/.auth/
+env.text.local
+testvite+.md
+
 # Local documentation & scratch files
 documentation.md
 PolicyFlow.txt
@@ -43,3 +47,4 @@ fetch*.js
 *.csv
 csvs/
 src/csvs/
+.vitest/

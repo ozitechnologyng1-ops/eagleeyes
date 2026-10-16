@@ -1,4 +1,4 @@
-import jalBlackLogo from '../assets/JAL-black.png';
+import jalBlackLogo from "../assets/JAL-black.png";
 
 /**
  * branding.ts - Dynamic Multi-Tenant Branding Engine
@@ -12,7 +12,7 @@ import jalBlackLogo from '../assets/JAL-black.png';
  */
 
 export interface BrandConfig {
-  id: 'ogun' | 'lagos' | 'default';
+  id: "ogun" | "lagos" | "default";
   appName: string;
   subtitle: string;
   fullTitle: string;
@@ -23,30 +23,33 @@ export interface BrandConfig {
 
 const BRANDS: Record<string, BrandConfig> = {
   ogun: {
-    id: 'ogun',
-    appName: 'Ogun 2027',
-    subtitle: 'Ogun ADC Secure Election Management System',
-    fullTitle: 'Ogun 2027 | Ogun ADC Secure Election Management System',
+    id: "ogun",
+    appName: "Ogun 2027",
+    subtitle: "Ogun ADC Secure Election Management System",
+    fullTitle: "Ogun 2027 | Ogun ADC Secure Election Management System",
     logoUrl: jalBlackLogo,
-    shortCode: 'OG',
-    metaDescription: 'Ogun ADC High-Fidelity Multi-Tiered Election Management System for real-time result collation and voter canvassing.'
+    shortCode: "OG",
+    metaDescription:
+      "Ogun ADC High-Fidelity Multi-Tiered Election Management System for real-time result collation and voter canvassing.",
   },
   lagos: {
-    id: 'lagos',
-    appName: 'Lagos 2027',
-    subtitle: 'Lagos ADC Secure Election Management System',
-    fullTitle: 'Lagos 2027 | Lagos ADC Secure Election Management System',
-    shortCode: 'LG',
-    metaDescription: 'Lagos ADC High-Fidelity Multi-Tiered Election Management System for real-time result collation and voter canvassing.'
+    id: "lagos",
+    appName: "Lagos 2027",
+    subtitle: "Lagos ADC Secure Election Management System",
+    fullTitle: "Lagos 2027 | Lagos ADC Secure Election Management System",
+    shortCode: "LG",
+    metaDescription:
+      "Lagos ADC High-Fidelity Multi-Tiered Election Management System for real-time result collation and voter canvassing.",
   },
   default: {
-    id: 'default',
-    appName: 'EagleEye 2027',
-    subtitle: 'Secure Election Management System',
-    fullTitle: 'EagleEye 2027 | Election Management System',
-    shortCode: 'EE',
-    metaDescription: 'High-fidelity, interactive multi-tiered election management system for real-time result collation and voter canvassing.'
-  }
+    id: "default",
+    appName: "EagleEye 2027",
+    subtitle: "Secure Election Management System",
+    fullTitle: "EagleEye 2027 | Election Management System",
+    shortCode: "EE",
+    metaDescription:
+      "High-fidelity, interactive multi-tiered election management system for real-time result collation and voter canvassing.",
+  },
 };
 
 export function getBrandConfig(): BrandConfig {
@@ -57,22 +60,16 @@ export function getBrandConfig(): BrandConfig {
   }
 
   // 2. Check hostname / domain
-  if (typeof window !== 'undefined') {
+  if (typeof window !== "undefined") {
     const hostname = window.location.hostname.toLowerCase();
-    
+
     // Ogun domain matches (e.g., ogunadc.com, ogun.domain.com, ogun-election.com)
-    if (
-      hostname.includes('ogunadc.com') || 
-      hostname.includes('ogun')
-    ) {
+    if (hostname.includes("ogunadc.com") || hostname.includes("ogun")) {
       return BRANDS.ogun;
     }
 
     // Lagos domain matches (e.g., lagosadc.com, lagos.domain.com)
-    if (
-      hostname.includes('lagosadc.com') ||
-      hostname.includes('lagos')
-    ) {
+    if (hostname.includes("lagosadc.com") || hostname.includes("lagos")) {
       return BRANDS.lagos;
     }
   }

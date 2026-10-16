@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { Outlet, useLocation, Navigate } from 'react-router-dom';
-import { useApp } from '../context/AppContext';
-import { Menu } from 'lucide-react';
-import { cn } from '../lib/utils';
-import { Sidebar } from './Sidebar';
-import { getBrandConfig } from '../lib/branding';
+import React, { useState, useEffect } from "react";
+import { Outlet, useLocation, Navigate } from "react-router-dom";
+import { useApp } from "../context/AppContext";
+import { Menu } from "lucide-react";
+import { cn } from "../lib/utils";
+import { Sidebar } from "./Sidebar";
+import { getBrandConfig } from "../lib/branding";
 
 export default function Layout() {
   const { user } = useApp();
@@ -24,8 +24,8 @@ export default function Layout() {
         setIsMobileMenuOpen(false);
       }
     };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
   if (!user) {
@@ -36,10 +36,10 @@ export default function Layout() {
     <div className="min-h-screen bg-gray-50 flex flex-col lg:flex-row">
       {/* Mobile & Tablet Top Bar (< 1024px) */}
       <header className="lg:hidden bg-[#004d25] text-white px-4 py-3.5 flex justify-between items-center shadow-md z-30 sticky top-0 shrink-0">
-        <button 
+        <button
           type="button"
-          onClick={() => setIsMobileMenuOpen(true)} 
-          className="p-1.5 cursor-pointer hover:bg-[#006331] rounded-lg transition text-green-100 hover:text-white" 
+          onClick={() => setIsMobileMenuOpen(true)}
+          className="p-1.5 cursor-pointer hover:bg-[#006331] rounded-lg transition text-green-100 hover:text-white"
           aria-label="Open Navigation Menu"
         >
           <Menu size={22} />
@@ -60,21 +60,23 @@ export default function Layout() {
 
       {/* Mobile & Tablet Backdrop Overlay (< 1024px) */}
       {isMobileMenuOpen && (
-        <div 
-          onClick={() => setIsMobileMenuOpen(false)} 
+        <div
+          onClick={() => setIsMobileMenuOpen(false)}
           className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 lg:hidden transition-opacity"
           aria-hidden="true"
         />
       )}
 
       {/* Mobile & Tablet Off-canvas Sidebar Drawer (< 1024px) */}
-      <div className={cn(
-        "fixed inset-y-0 left-0 z-50 w-64 max-w-[85vw] transform transition-transform duration-300 ease-in-out lg:hidden shadow-2xl",
-        isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
-      )}>
-        <Sidebar 
-          onClose={() => setIsMobileMenuOpen(false)} 
-          showCloseButton={true} 
+      <div
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 w-64 max-w-[85vw] transform transition-transform duration-300 ease-in-out lg:hidden shadow-2xl",
+          isMobileMenuOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
+        <Sidebar
+          onClose={() => setIsMobileMenuOpen(false)}
+          showCloseButton={true}
           className="h-full shadow-2xl"
         />
       </div>

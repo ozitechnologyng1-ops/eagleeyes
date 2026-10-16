@@ -58,11 +58,14 @@ Deno.serve(async (req: Request) => {
 
         // Check if on WhatsApp
         try {
-          const checkRes = await fetch(`${inst.api_url}waInstance${inst.id_instance}/checkWhatsapp/${inst.api_token_instance}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ phoneNumber: parseInt(cleanPhone, 10) })
-          });
+          const checkRes = await fetch(
+            `${inst.api_url}waInstance${inst.id_instance}/checkWhatsapp/${inst.api_token_instance}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ phoneNumber: parseInt(cleanPhone, 10) }),
+            },
+          );
           const checkData = await checkRes.json();
 
           if (!checkData.existsWhatsapp) {
@@ -75,7 +78,8 @@ Deno.serve(async (req: Request) => {
           }
 
           // Build message caption
-          let caption = config?.default_message_template || "Hello {{voter_name}}, greetings from ADC!";
+          let caption =
+            config?.default_message_template || "Hello {{voter_name}}, greetings from ADC!";
           caption = caption
             .replace(/\{\{voter_name\}\}/g, item.voter_name || "Voter")
             .replace(/\{\{agent_name\}\}/g, agent?.name || "Field Agent")
@@ -85,25 +89,32 @@ Deno.serve(async (req: Request) => {
           let sendResData;
 
           if (config?.default_flyer_url) {
-            const fileName = config.default_flyer_type === "video" ? "adc_flyer.mp4" : "adc_flyer.jpg";
-            const sendRes = await fetch(`${inst.api_url}waInstance${inst.id_instance}/sendFileByUrl/${inst.api_token_instance}`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                chatId,
-                urlFile: config.default_flyer_url,
-                fileName,
-                caption
-              })
-            });
+            const fileName =
+              config.default_flyer_type === "video" ? "adc_flyer.mp4" : "adc_flyer.jpg";
+            const sendRes = await fetch(
+              `${inst.api_url}waInstance${inst.id_instance}/sendFileByUrl/${inst.api_token_instance}`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  chatId,
+                  urlFile: config.default_flyer_url,
+                  fileName,
+                  caption,
+                }),
+              },
+            );
             sendResData = await sendRes.json();
             messageId = sendResData.idMessage || "";
           } else {
-            const sendRes = await fetch(`${inst.api_url}waInstance${inst.id_instance}/sendMessage/${inst.api_token_instance}`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ chatId, message: caption })
-            });
+            const sendRes = await fetch(
+              `${inst.api_url}waInstance${inst.id_instance}/sendMessage/${inst.api_token_instance}`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ chatId, message: caption }),
+              },
+            );
             sendResData = await sendRes.json();
             messageId = sendResData.idMessage || "";
           }
@@ -114,22 +125,25 @@ Deno.serve(async (req: Request) => {
             .update({
               status: "sent",
               sent_at: new Date().toISOString(),
-              message_id: messageId
+              message_id: messageId,
             })
             .eq("id", item.id);
 
           // Update/create conversation
           const { data: conv } = await supabase
             .from("whatsapp_conversations")
-            .upsert({
-              agent_id: item.agent_id,
-              instance_id: inst.id,
-              voter_phone: cleanPhone,
-              voter_name: item.voter_name,
-              voter_id: item.voter_id || null,
-              chat_id: chatId,
-              last_message_at: new Date().toISOString()
-            }, { onConflict: "agent_id,chat_id" })
+            .upsert(
+              {
+                agent_id: item.agent_id,
+                instance_id: inst.id,
+                voter_phone: cleanPhone,
+                voter_name: item.voter_name,
+                voter_id: item.voter_id || null,
+                chat_id: chatId,
+                last_message_at: new Date().toISOString(),
+              },
+              { onConflict: "agent_id,chat_id" },
+            )
             .select()
             .single();
 
@@ -144,16 +158,23 @@ Deno.serve(async (req: Request) => {
               message_text: caption,
               media_url: config?.default_flyer_url || null,
               green_api_message_id: messageId,
-              delivery_status: "sent"
+              delivery_status: "sent",
             });
           }
 
           // Credit agent earnings
           const earningAmount = Number(config?.earning_per_chat || 50);
           if (earningAmount > 0) {
-            const { data: ag } = await supabase.from("agents").select("whatsapp_earnings_balance").eq("id", item.agent_id).single();
+            const { data: ag } = await supabase
+              .from("agents")
+              .select("whatsapp_earnings_balance")
+              .eq("id", item.agent_id)
+              .single();
             const newBal = Number(ag?.whatsapp_earnings_balance || 0) + earningAmount;
-            await supabase.from("agents").update({ whatsapp_earnings_balance: newBal }).eq("id", item.agent_id);
+            await supabase
+              .from("agents")
+              .update({ whatsapp_earnings_balance: newBal })
+              .eq("id", item.agent_id);
           }
 
           sentCount++;
@@ -168,20 +189,23 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    return new Response(JSON.stringify({
-      success: true,
-      processed: queueItems?.length || 0,
-      sent: sentCount,
-      notOnWhatsapp: notOnWaCount,
-      failed: failedCount
-    }), {
-      headers: { "Content-Type": "application/json" }
-    });
+    return new Response(
+      JSON.stringify({
+        success: true,
+        processed: queueItems?.length || 0,
+        sent: sentCount,
+        notOnWhatsapp: notOnWaCount,
+        failed: failedCount,
+      }),
+      {
+        headers: { "Content-Type": "application/json" },
+      },
+    );
   } catch (err: any) {
     console.error("Outreach runner error:", err);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
-      headers: { "Content-Type": "application/json" }
+      headers: { "Content-Type": "application/json" },
     });
   }
 });
