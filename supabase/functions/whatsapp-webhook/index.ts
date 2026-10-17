@@ -13,12 +13,13 @@ Deno.serve(async (req: Request) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     const body = await req.json().catch(() => ({}));
 
-    const { typeWebhook, instanceData, senderData, messageData, stateInstance, idMessage, status } = body;
+    const { typeWebhook, instanceData, senderData, messageData, stateInstance, idMessage, status } =
+      body;
     const idInstance = instanceData?.idInstance;
 
     if (!idInstance) {
       return new Response(JSON.stringify({ received: true, note: "No instance ID" }), {
-        headers: { "Content-Type": "application/json" }
+        headers: { "Content-Type": "application/json" },
       });
     }
 
@@ -30,9 +31,12 @@ Deno.serve(async (req: Request) => {
       .single();
 
     if (!inst) {
-      return new Response(JSON.stringify({ received: true, note: "Instance not registered in DB" }), {
-        headers: { "Content-Type": "application/json" }
-      });
+      return new Response(
+        JSON.stringify({ received: true, note: "Instance not registered in DB" }),
+        {
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     }
 
     // 1. Handle State Changes (authorized, notAuthorized, blocked, etc.)
@@ -42,7 +46,9 @@ Deno.serve(async (req: Request) => {
 
       if (newState === "authorized" && !phone) {
         // Fetch phone number
-        const setRes = await fetch(`${inst.api_url}waInstance${inst.id_instance}/getWaSettings/${inst.api_token_instance}`);
+        const setRes = await fetch(
+          `${inst.api_url}waInstance${inst.id_instance}/getWaSettings/${inst.api_token_instance}`,
+        );
         if (setRes.ok) {
           const s = await setRes.json();
           phone = s.phone || s.wid?.split("@")[0] || null;
@@ -54,12 +60,19 @@ Deno.serve(async (req: Request) => {
         .update({
           wa_state: newState,
           phone_number: phone,
-          pool_status: newState === "authorized" ? "assigned" : (newState === "blocked" ? "banned" : inst.pool_status),
-          updated_at: new Date().toISOString()
+          pool_status:
+            newState === "authorized"
+              ? "assigned"
+              : newState === "blocked"
+                ? "banned"
+                : inst.pool_status,
+          updated_at: new Date().toISOString(),
         })
         .eq("id", inst.id);
 
-      return new Response(JSON.stringify({ received: true }), { headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ received: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
     // 2. Handle Outgoing Message Status (sent -> delivered -> read)
@@ -75,7 +88,9 @@ Deno.serve(async (req: Request) => {
           .update({ status })
           .eq("message_id", idMessage);
       }
-      return new Response(JSON.stringify({ received: true }), { headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ received: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
     // 3. Handle Incoming Message from Voter
@@ -88,7 +103,7 @@ Deno.serve(async (req: Request) => {
       // Only handle personal chats (@c.us) on this webhook
       if (!chatId.endsWith("@c.us")) {
         return new Response(JSON.stringify({ received: true, note: "Skipped non-personal chat" }), {
-          headers: { "Content-Type": "application/json" }
+          headers: { "Content-Type": "application/json" },
         });
       }
 
@@ -130,11 +145,13 @@ Deno.serve(async (req: Request) => {
               agent_id: agentId,
               instance_id: inst.id,
               voter_phone: senderPhone,
-              voter_name: matchedVoter ? `${matchedVoter.first_name} ${matchedVoter.last_name}` : senderName,
+              voter_name: matchedVoter
+                ? `${matchedVoter.first_name} ${matchedVoter.last_name}`
+                : senderName,
               voter_id: matchedVoter?.id || null,
               chat_id: chatId,
               last_message_at: new Date().toISOString(),
-              message_count: 1
+              message_count: 1,
             })
             .select()
             .single();
@@ -146,7 +163,7 @@ Deno.serve(async (req: Request) => {
             .update({
               last_message_at: new Date().toISOString(),
               message_count: (conv.message_count || 1) + 1,
-              updated_at: new Date().toISOString()
+              updated_at: new Date().toISOString(),
             })
             .eq("id", conv.id);
         }
@@ -163,7 +180,7 @@ Deno.serve(async (req: Request) => {
             message_text: text,
             media_url: mediaUrl,
             green_api_message_id: idMessage || null,
-            delivery_status: "delivered"
+            delivery_status: "delivered",
           });
 
           // Run AI Sentiment & Conversion Analysis on incoming text
@@ -174,7 +191,11 @@ Deno.serve(async (req: Request) => {
               .eq("state_id", inst.state_id)
               .maybeSingle();
 
-            const aiKey = stateCfg?.ai_api_key || Deno.env.get("VITE_GOOGLE_AI_KEY") || Deno.env.get("GEMINI_API_KEY") || "";
+            const aiKey =
+              stateCfg?.ai_api_key ||
+              Deno.env.get("VITE_GOOGLE_AI_KEY") ||
+              Deno.env.get("GEMINI_API_KEY") ||
+              "";
 
             if (aiKey) {
               try {
@@ -189,14 +210,17 @@ Respond in pure JSON with format:
   "summary": "one brief sentence"
 }`;
 
-                const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${aiKey}`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { responseMimeType: "application/json" }
-                  })
-                });
+                const aiRes = await fetch(
+                  `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${aiKey}`,
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      contents: [{ parts: [{ text: prompt }] }],
+                      generationConfig: { responseMimeType: "application/json" },
+                    }),
+                  },
+                );
 
                 if (aiRes.ok) {
                   const aiData = await aiRes.json();
@@ -208,9 +232,13 @@ Respond in pure JSON with format:
                       .from("whatsapp_conversations")
                       .update({
                         ai_sentiment_score: parsed.sentiment,
-                        conversion_status: parsed.converted ? "converted" : (parsed.sentiment > 0.3 ? "engaged" : conv.conversion_status),
+                        conversion_status: parsed.converted
+                          ? "converted"
+                          : parsed.sentiment > 0.3
+                            ? "engaged"
+                            : conv.conversion_status,
                         ai_analysis: parsed,
-                        updated_at: new Date().toISOString()
+                        updated_at: new Date().toISOString(),
                       })
                       .eq("id", conv.id);
 
@@ -218,13 +246,23 @@ Respond in pure JSON with format:
                     if (parsed.converted && conv.conversion_status !== "converted") {
                       const conversionBonus = Number(stateCfg?.earning_per_conversion || 200);
                       if (conversionBonus > 0) {
-                        const { data: ag } = await supabase.from("agents").select("whatsapp_earnings_balance").eq("id", agentId).single();
+                        const { data: ag } = await supabase
+                          .from("agents")
+                          .select("whatsapp_earnings_balance")
+                          .eq("id", agentId)
+                          .single();
                         const newBal = Number(ag?.whatsapp_earnings_balance || 0) + conversionBonus;
-                        await supabase.from("agents").update({ whatsapp_earnings_balance: newBal }).eq("id", agentId);
+                        await supabase
+                          .from("agents")
+                          .update({ whatsapp_earnings_balance: newBal })
+                          .eq("id", agentId);
                       }
 
                       if (conv.voter_id) {
-                        await supabase.from("voters").update({ status: "ADC Supporter" }).eq("id", conv.voter_id);
+                        await supabase
+                          .from("voters")
+                          .update({ status: "ADC Supporter" })
+                          .eq("id", conv.voter_id);
                       }
                     }
                   }
@@ -237,17 +275,19 @@ Respond in pure JSON with format:
         }
       }
 
-      return new Response(JSON.stringify({ received: true }), { headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ received: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
     return new Response(JSON.stringify({ received: true, unhandled: typeWebhook }), {
-      headers: { "Content-Type": "application/json" }
+      headers: { "Content-Type": "application/json" },
     });
   } catch (err: any) {
     console.error("Webhook processing error:", err);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
-      headers: { "Content-Type": "application/json" }
+      headers: { "Content-Type": "application/json" },
     });
   }
 });

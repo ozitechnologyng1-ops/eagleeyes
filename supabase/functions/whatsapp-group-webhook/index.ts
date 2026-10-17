@@ -26,7 +26,10 @@ function parseJsonSafe(rawText: string): any {
 function cleanAiReply(raw: string): string {
   if (!raw) return "";
   let clean = raw.trim();
-  if ((clean.startsWith('"') && clean.endsWith('"')) || (clean.startsWith("'") && clean.endsWith("'"))) {
+  if (
+    (clean.startsWith('"') && clean.endsWith('"')) ||
+    (clean.startsWith("'") && clean.endsWith("'"))
+  ) {
     clean = clean.slice(1, -1).trim();
   }
   clean = clean.replace(/[\u2014\u2013]/g, ", ");
@@ -36,7 +39,8 @@ function cleanAiReply(raw: string): string {
 // Detect links, web URLs, and invite links in WhatsApp messages
 function containsUrl(str: string): boolean {
   if (!str) return false;
-  const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(chat\.whatsapp\.com\/[^\s]+)|(wa\.me\/[^\s]+)|(\b[a-zA-Z0-9-]+\.(?:com|ng|org|net|gov|edu|io|co|me|ly|tv|app|site|online|xyz|info|biz|to|tech|news|cc|gg|be)\b(?:\/[^\s]*)?)/i;
+  const urlRegex =
+    /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(chat\.whatsapp\.com\/[^\s]+)|(wa\.me\/[^\s]+)|(\b[a-zA-Z0-9-]+\.(?:com|ng|org|net|gov|edu|io|co|me|ly|tv|app|site|online|xyz|info|biz|to|tech|news|cc|gg|be)\b(?:\/[^\s]*)?)/i;
   return urlRegex.test(str);
 }
 
@@ -47,7 +51,7 @@ async function generateAiText({
   apiKey,
   systemPrompt,
   userPrompt,
-  jsonMode = false
+  jsonMode = false,
 }: {
   provider: string;
   model: string;
@@ -60,9 +64,10 @@ async function generateAiText({
   const cleanKey = apiKey.trim();
 
   if (prov === "groq" || prov === "openai") {
-    const url = prov === "groq"
-      ? "https://api.groq.com/openai/v1/chat/completions"
-      : "https://api.openai.com/v1/chat/completions";
+    const url =
+      prov === "groq"
+        ? "https://api.groq.com/openai/v1/chat/completions"
+        : "https://api.openai.com/v1/chat/completions";
 
     const chosenModel = model || (prov === "groq" ? "llama-3.3-70b-versatile" : "gpt-4o-mini");
 
@@ -70,9 +75,9 @@ async function generateAiText({
       model: chosenModel,
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt }
+        { role: "user", content: userPrompt },
       ],
-      temperature: 0.3
+      temperature: 0.3,
     };
 
     if (jsonMode) {
@@ -82,10 +87,10 @@ async function generateAiText({
     const res = await fetch(url, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${cleanKey}`,
-        "Content-Type": "application/json"
+        Authorization: `Bearer ${cleanKey}`,
+        "Content-Type": "application/json",
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
     });
 
     if (!res.ok) {
@@ -102,19 +107,22 @@ async function generateAiText({
       contents: [
         {
           role: "user",
-          parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }]
-        }
-      ]
+          parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }],
+        },
+      ],
     };
     if (jsonMode) {
       body.generationConfig = { responseMimeType: "application/json" };
     }
 
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${chosenModel}:generateContent?key=${cleanKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${chosenModel}:generateContent?key=${cleanKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
 
     if (!res.ok) {
       const errText = await res.text();
@@ -139,7 +147,9 @@ Deno.serve(async (req: Request) => {
     const idInstance = instanceData?.idInstance;
 
     if (!idInstance) {
-      return new Response(JSON.stringify({ received: true }), { headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ received: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
     // Lookup instance in DB
@@ -150,13 +160,21 @@ Deno.serve(async (req: Request) => {
       .single();
 
     if (!inst) {
-      return new Response(JSON.stringify({ received: true }), { headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ received: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
     const instPhone = (inst.phone_number || "").replace(/\D/g, "");
     const senderClean = (senderData?.sender || "").replace(/\D/g, "");
-    if (senderData?.fromMe === true || (instPhone && senderClean && (instPhone === senderClean || senderClean.endsWith(instPhone)))) {
-      return new Response(JSON.stringify({ received: true, ignored: "message sent by bot itself" }), { headers: { "Content-Type": "application/json" } });
+    if (
+      senderData?.fromMe === true ||
+      (instPhone && senderClean && (instPhone === senderClean || senderClean.endsWith(instPhone)))
+    ) {
+      return new Response(
+        JSON.stringify({ received: true, ignored: "message sent by bot itself" }),
+        { headers: { "Content-Type": "application/json" } },
+      );
     }
 
     const stateId = inst.state_id;
@@ -189,11 +207,14 @@ Deno.serve(async (req: Request) => {
 
       // Query Green API getGroupData once to extract participants and count
       try {
-        const grpRes = await fetch(`${inst.api_url}waInstance${inst.id_instance}/getGroupData/${inst.api_token_instance}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ groupId: chatId })
-        });
+        const grpRes = await fetch(
+          `${inst.api_url}waInstance${inst.id_instance}/getGroupData/${inst.api_token_instance}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ groupId: chatId }),
+          },
+        );
 
         if (grpRes.ok) {
           const grpData = await grpRes.json();
@@ -239,7 +260,7 @@ Deno.serve(async (req: Request) => {
             participant_count: participantCount,
             status: "active",
             ai_enabled: true,
-            last_message_at: new Date().toISOString()
+            last_message_at: new Date().toISOString(),
           })
           .select()
           .single();
@@ -250,25 +271,29 @@ Deno.serve(async (req: Request) => {
         if (addedByAgentId) {
           const groupEarning = Number(stateCfg?.earning_per_group_add || 100);
           if (groupEarning > 0) {
-            const { data: ag } = await supabase.from("agents").select("whatsapp_earnings_balance").eq("id", addedByAgentId).single();
+            const { data: ag } = await supabase
+              .from("agents")
+              .select("whatsapp_earnings_balance")
+              .eq("id", addedByAgentId)
+              .single();
             const newBal = Number(ag?.whatsapp_earnings_balance || 0) + groupEarning;
-            await supabase.from("agents").update({ whatsapp_earnings_balance: newBal }).eq("id", addedByAgentId);
+            await supabase
+              .from("agents")
+              .update({ whatsapp_earnings_balance: newBal })
+              .eq("id", addedByAgentId);
           }
         }
       } else {
         // Update last message timestamp, name, and refresh participant count if we got one
         const updatePayload: any = {
           last_message_at: new Date().toISOString(),
-          group_name: groupName || monitor.group_name
+          group_name: groupName || monitor.group_name,
         };
         if (participantCount > 0) {
           updatePayload.participant_count = participantCount;
         }
 
-        await supabase
-          .from("whatsapp_group_monitors")
-          .update(updatePayload)
-          .eq("id", monitor.id);
+        await supabase.from("whatsapp_group_monitors").update(updatePayload).eq("id", monitor.id);
       }
 
       // 2. Extract Message Content
@@ -278,7 +303,10 @@ Deno.serve(async (req: Request) => {
 
       if (messageData?.typeMessage === "textMessage") {
         text = messageData.textMessageData?.textMessage || "";
-      } else if (messageData?.typeMessage === "extendedTextMessage" || messageData?.typeMessage === "quotedMessage") {
+      } else if (
+        messageData?.typeMessage === "extendedTextMessage" ||
+        messageData?.typeMessage === "quotedMessage"
+      ) {
         text = messageData.extendedTextMessageData?.text || "";
       } else if (messageData?.typeMessage === "imageMessage") {
         messageType = "image";
@@ -286,16 +314,27 @@ Deno.serve(async (req: Request) => {
         mediaUrl = messageData.imageMessageData?.downloadUrl || null;
       }
 
-      const quotedText = messageData?.quotedMessage?.textMessage || messageData?.quotedMessage?.caption || "";
+      const quotedText =
+        messageData?.quotedMessage?.textMessage || messageData?.quotedMessage?.caption || "";
       const queryText = quotedText ? `${text} (Replying to: "${quotedText}")` : text;
 
       if (monitor && text) {
         const extData = messageData?.extendedTextMessageData;
-        const hasLink = containsUrl(text) || containsUrl(quotedText) || Boolean(extData?.matchedText || extData?.canonicalUrl);
+        const hasLink =
+          containsUrl(text) ||
+          containsUrl(quotedText) ||
+          Boolean(extData?.matchedText || extData?.canonicalUrl);
 
-        const apiKey = stateCfg?.ai_api_key || Deno.env.get("GROQ_API_KEY") || Deno.env.get("VITE_GOOGLE_AI_KEY") || Deno.env.get("GEMINI_API_KEY") || "";
+        const apiKey =
+          stateCfg?.ai_api_key ||
+          Deno.env.get("GROQ_API_KEY") ||
+          Deno.env.get("VITE_GOOGLE_AI_KEY") ||
+          Deno.env.get("GEMINI_API_KEY") ||
+          "";
         const aiProvider = stateCfg?.ai_provider || "groq";
-        const aiModel = stateCfg?.ai_model || (aiProvider === "groq" ? "llama-3.3-70b-versatile" : "gemini-2.0-flash");
+        const aiModel =
+          stateCfg?.ai_model ||
+          (aiProvider === "groq" ? "llama-3.3-70b-versatile" : "gemini-2.0-flash");
 
         let aiCategory = hasLink ? "link_shared" : "neutral";
         let aiSummary = "";
@@ -305,20 +344,32 @@ Deno.serve(async (req: Request) => {
         const responseFreq = Number(stateCfg?.group_ai_response_frequency ?? 3);
 
         if (hasLink) {
-          console.log(`[Group AI] Link detected in message from ${senderPhone} in group ${chatId}. Strictly ignoring link per policy.`);
+          console.log(
+            `[Group AI] Link detected in message from ${senderPhone} in group ${chatId}. Strictly ignoring link per policy.`,
+          );
         }
 
         // Dynamic low-token pre-filter: Check if message relates to candidate/campaign context for this state
         let isRelevant = false;
-        const quotedParticipant = (messageData?.extendedTextMessageData?.participant || "").replace(/\D/g, "");
-        const isQuotingBot = Boolean(instPhone && quotedParticipant.length > 5 && (quotedParticipant === instPhone || quotedParticipant.endsWith(instPhone) || instPhone.endsWith(quotedParticipant)));
+        const quotedParticipant = (messageData?.extendedTextMessageData?.participant || "").replace(
+          /\D/g,
+          "",
+        );
+        const isQuotingBot = Boolean(
+          instPhone &&
+          quotedParticipant.length > 5 &&
+          (quotedParticipant === instPhone ||
+            quotedParticipant.endsWith(instPhone) ||
+            instPhone.endsWith(quotedParticipant)),
+        );
 
         if (!hasLink) {
           if (isQuotingBot) {
             isRelevant = true;
           } else if (apiKey && queryText.trim().length > 2) {
             try {
-              const candidateInfo = stateCfg?.group_ai_system_prompt || "ADC Candidate Gbadebo Rhodes-Vivour (GRV)";
+              const candidateInfo =
+                stateCfg?.group_ai_system_prompt || "ADC Candidate Gbadebo Rhodes-Vivour (GRV)";
               const checkPrompt = `Candidate & Campaign Context: ${candidateInfo.slice(0, 300)}
 WhatsApp message: "${queryText.slice(0, 400)}"
 
@@ -331,7 +382,7 @@ Reply with only "YES" or "NO".`;
                 apiKey,
                 systemPrompt: "You are a fast relevance classifier. Answer only with YES or NO.",
                 userPrompt: checkPrompt,
-                jsonMode: false
+                jsonMode: false,
               });
 
               isRelevant = checkRes.toUpperCase().includes("YES");
@@ -343,11 +394,15 @@ Reply with only "YES" or "NO".`;
         }
 
         if (!hasLink && apiKey && isRelevant && monitor.ai_enabled && responseFreq > 0) {
-          const lastResponseAt = monitor.last_ai_response_at ? new Date(monitor.last_ai_response_at).getTime() : 0;
-          const inCooldown = (Date.now() - lastResponseAt) < 10000; // 10s cooldown
+          const lastResponseAt = monitor.last_ai_response_at
+            ? new Date(monitor.last_ai_response_at).getTime()
+            : 0;
+          const inCooldown = Date.now() - lastResponseAt < 10000; // 10s cooldown
 
           if (inCooldown) {
-            console.log(`Skipping reply for group ${chatId}: Cooldown active (< 10s since last reply)`);
+            console.log(
+              `Skipping reply for group ${chatId}: Cooldown active (< 10s since last reply)`,
+            );
           } else if ((monitor.ai_responses_today || 0) < responseFreq * 12) {
             try {
               aiCategory = "candidate_inquiry";
@@ -364,13 +419,13 @@ Reply with only "YES" or "NO".`;
                     method: "POST",
                     headers: {
                       "Content-Type": "application/json",
-                      "Authorization": `Bearer ${apiKey}`
+                      Authorization: `Bearer ${apiKey}`,
                     },
                     body: JSON.stringify({
                       model: "text-embedding-3-small",
                       input: queryText.slice(0, 8000),
-                      dimensions: 768
-                    })
+                      dimensions: 768,
+                    }),
                   });
                   if (embRes.ok) {
                     const embData = await embRes.json();
@@ -378,15 +433,18 @@ Reply with only "YES" or "NO".`;
                   }
                 } else if (apiKey) {
                   // Default to Gemini gemini-embedding-2 (768 dimensions)
-                  const embRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key=${apiKey}`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      model: "models/gemini-embedding-2",
-                      content: { parts: [{ text: queryText.slice(0, 8000) }] },
-                      outputDimensionality: 768
-                    })
-                  });
+                  const embRes = await fetch(
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key=${apiKey}`,
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        model: "models/gemini-embedding-2",
+                        content: { parts: [{ text: queryText.slice(0, 8000) }] },
+                        outputDimensionality: 768,
+                      }),
+                    },
+                  );
                   if (embRes.ok) {
                     const embData = await embRes.json();
                     queryVec = embData.embedding?.values || null;
@@ -398,10 +456,12 @@ Reply with only "YES" or "NO".`;
                     p_state_id: stateId,
                     p_query_embedding: queryVec,
                     p_match_count: 5,
-                    p_match_threshold: 0.45
+                    p_match_threshold: 0.45,
                   });
                   if (matched && matched.length > 0) {
-                    contextText = matched.map((m: any) => `[${m.title}]: ${m.content}`).join("\n\n");
+                    contextText = matched
+                      .map((m: any) => `[${m.title}]: ${m.content}`)
+                      .join("\n\n");
                   }
                 }
               } catch (vErr) {
@@ -417,12 +477,16 @@ Reply with only "YES" or "NO".`;
                   .limit(5);
 
                 if (directKbs && directKbs.length > 0) {
-                  contextText = directKbs.map((k: any) => `[${k.title}]: ${k.content}`).join("\n\n");
+                  contextText = directKbs
+                    .map((k: any) => `[${k.title}]: ${k.content}`)
+                    .join("\n\n");
                 }
               }
 
               // Generate defense response using candidate knowledge (single AI call)
-              const systemPrompt = stateCfg?.group_ai_system_prompt || "You are a calm, respectful community supporter defending the candidate factually and peacefully.";
+              const systemPrompt =
+                stateCfg?.group_ai_system_prompt ||
+                "You are a calm, respectful community supporter defending the candidate factually and peacefully.";
               const respPrompt = `Candidate Knowledge & Facts:
 ${contextText || "ADC Core Commitments: Grassroots welfare, infrastructure transparency, healthcare revitalization, and youth enterprise support."}
 
@@ -444,7 +508,7 @@ STRICT ANTI-SLOP & WHATSAPP VOICE RULES:
                 apiKey,
                 systemPrompt,
                 userPrompt: respPrompt,
-                jsonMode: false
+                jsonMode: false,
               });
 
               aiReplyText = cleanAiReply(rawAiReply);
@@ -454,28 +518,35 @@ STRICT ANTI-SLOP & WHATSAPP VOICE RULES:
 
                 // Variable delay between 10 to 30 seconds before replying (natural human timing)
                 const delayMs = Math.floor(Math.random() * (30000 - 10000 + 1)) + 10000;
-                console.log(`[Group AI] Delaying ${(delayMs / 1000).toFixed(1)}s before dispatching reply to ${chatId}...`);
-                await new Promise(resolve => setTimeout(resolve, delayMs));
+                console.log(
+                  `[Group AI] Delaying ${(delayMs / 1000).toFixed(1)}s before dispatching reply to ${chatId}...`,
+                );
+                await new Promise((resolve) => setTimeout(resolve, delayMs));
 
                 // Send response to WhatsApp Group via Green API
-                const sendRes = await fetch(`${inst.api_url}waInstance${inst.id_instance}/sendMessage/${inst.api_token_instance}`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    chatId,
-                    message: aiReplyText,
-                    quotedMessageId: idMessage
-                  })
-                });
+                const sendRes = await fetch(
+                  `${inst.api_url}waInstance${inst.id_instance}/sendMessage/${inst.api_token_instance}`,
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      chatId,
+                      message: aiReplyText,
+                      quotedMessageId: idMessage,
+                    }),
+                  },
+                );
 
-                console.log(`Dispatched AI reply to group ${chatId} after ${(delayMs / 1000).toFixed(1)}s delay, status=${sendRes.status}`);
+                console.log(
+                  `Dispatched AI reply to group ${chatId} after ${(delayMs / 1000).toFixed(1)}s delay, status=${sendRes.status}`,
+                );
 
                 // Increment today's AI responses and stamp last_ai_response_at
                 await supabase
                   .from("whatsapp_group_monitors")
-                  .update({ 
+                  .update({
                     ai_responses_today: (monitor.ai_responses_today || 0) + 1,
-                    last_ai_response_at: new Date().toISOString()
+                    last_ai_response_at: new Date().toISOString(),
                   })
                   .eq("id", monitor.id);
               }
@@ -500,7 +571,7 @@ STRICT ANTI-SLOP & WHATSAPP VOICE RULES:
           ai_summary: aiSummary,
           green_api_message_id: idMessage || null,
           ai_responded: shouldRespond,
-          ai_response_text: aiReplyText || null
+          ai_response_text: aiReplyText || null,
         });
       }
     }
@@ -510,24 +581,38 @@ STRICT ANTI-SLOP & WHATSAPP VOICE RULES:
       let text = "";
       if (messageData?.typeMessage === "textMessage") {
         text = messageData.textMessageData?.textMessage || "";
-      } else if (messageData?.typeMessage === "extendedTextMessage" || messageData?.typeMessage === "quotedMessage") {
+      } else if (
+        messageData?.typeMessage === "extendedTextMessage" ||
+        messageData?.typeMessage === "quotedMessage"
+      ) {
         text = messageData.extendedTextMessageData?.text || "";
       } else if (messageData?.typeMessage === "imageMessage") {
         text = messageData.imageMessageData?.caption || "";
       }
 
-      const quotedText = messageData?.quotedMessage?.textMessage || messageData?.quotedMessage?.caption || "";
+      const quotedText =
+        messageData?.quotedMessage?.textMessage || messageData?.quotedMessage?.caption || "";
       const queryText = quotedText ? `${text} (Replying to: "${quotedText}")` : text;
 
       const extData = messageData?.extendedTextMessageData;
-      const hasLink = containsUrl(text) || containsUrl(quotedText) || Boolean(extData?.matchedText || extData?.canonicalUrl);
+      const hasLink =
+        containsUrl(text) ||
+        containsUrl(quotedText) ||
+        Boolean(extData?.matchedText || extData?.canonicalUrl);
 
       if (hasLink) {
         console.log(`[Direct AI] Link detected from ${chatId}. Skipping AI response.`);
       } else if (text.trim().length > 1) {
-        const apiKey = stateCfg?.ai_api_key || Deno.env.get("GROQ_API_KEY") || Deno.env.get("VITE_GOOGLE_AI_KEY") || Deno.env.get("GEMINI_API_KEY") || "";
+        const apiKey =
+          stateCfg?.ai_api_key ||
+          Deno.env.get("GROQ_API_KEY") ||
+          Deno.env.get("VITE_GOOGLE_AI_KEY") ||
+          Deno.env.get("GEMINI_API_KEY") ||
+          "";
         const aiProvider = stateCfg?.ai_provider || "groq";
-        const aiModel = stateCfg?.ai_model || (aiProvider === "groq" ? "llama-3.3-70b-versatile" : "gemini-2.0-flash");
+        const aiModel =
+          stateCfg?.ai_model ||
+          (aiProvider === "groq" ? "llama-3.3-70b-versatile" : "gemini-2.0-flash");
 
         if (apiKey) {
           try {
@@ -543,7 +628,9 @@ STRICT ANTI-SLOP & WHATSAPP VOICE RULES:
               contextText = directKbs.map((k: any) => `[${k.title}]: ${k.content}`).join("\n\n");
             }
 
-            const systemPrompt = stateCfg?.group_ai_system_prompt || "You are an articulate, respectful, and knowledgeable representative answering questions about the candidate and party.";
+            const systemPrompt =
+              stateCfg?.group_ai_system_prompt ||
+              "You are an articulate, respectful, and knowledgeable representative answering questions about the candidate and party.";
             const userPrompt = `Verified Candidate Knowledge & Policies:
 ${contextText || "ADC Core Commitments: Grassroots welfare, infrastructure transparency, healthcare revitalization, and youth enterprise support."}
 
@@ -562,7 +649,7 @@ STRICT ANTI-SLOP RULES:
               apiKey,
               systemPrompt,
               userPrompt,
-              jsonMode: false
+              jsonMode: false,
             });
 
             const replyText = cleanAiReply(rawReplyText);
@@ -570,19 +657,26 @@ STRICT ANTI-SLOP RULES:
             if (replyText) {
               // Variable delay between 10 and 30 seconds before replying
               const delayMs = Math.floor(Math.random() * (30000 - 10000 + 1)) + 10000;
-              console.log(`[Direct AI] Delaying ${(delayMs / 1000).toFixed(1)}s before replying to ${chatId}...`);
-              await new Promise(resolve => setTimeout(resolve, delayMs));
+              console.log(
+                `[Direct AI] Delaying ${(delayMs / 1000).toFixed(1)}s before replying to ${chatId}...`,
+              );
+              await new Promise((resolve) => setTimeout(resolve, delayMs));
 
-              const directSendRes = await fetch(`${inst.api_url}waInstance${inst.id_instance}/sendMessage/${inst.api_token_instance}`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  chatId,
-                  message: replyText,
-                  quotedMessageId: idMessage
-                })
-              });
-              console.log(`Dispatched direct 1-on-1 AI reply to ${chatId} after ${(delayMs / 1000).toFixed(1)}s delay, status=${directSendRes.status}`);
+              const directSendRes = await fetch(
+                `${inst.api_url}waInstance${inst.id_instance}/sendMessage/${inst.api_token_instance}`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    chatId,
+                    message: replyText,
+                    quotedMessageId: idMessage,
+                  }),
+                },
+              );
+              console.log(
+                `Dispatched direct 1-on-1 AI reply to ${chatId} after ${(delayMs / 1000).toFixed(1)}s delay, status=${directSendRes.status}`,
+              );
             }
           } catch (directAiErr) {
             console.error("Direct 1-on-1 chat AI error:", directAiErr);
@@ -591,12 +685,14 @@ STRICT ANTI-SLOP RULES:
       }
     }
 
-    return new Response(JSON.stringify({ received: true }), { headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ received: true }), {
+      headers: { "Content-Type": "application/json" },
+    });
   } catch (err: any) {
     console.error("Group webhook error:", err);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
-      headers: { "Content-Type": "application/json" }
+      headers: { "Content-Type": "application/json" },
     });
   }
 });

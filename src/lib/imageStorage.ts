@@ -12,7 +12,7 @@
  *   Paid plans = check https://imagekit.io/dashboard/billing/subscriptions
  */
 
-const CACHE_PREFIX = 'eagleeye_img_cache_';
+const CACHE_PREFIX = "eagleeye_img_cache_";
 const CACHE_TTL_MS = 5 * 24 * 60 * 60 * 1000; // 5 days
 
 export interface CachedImageEntry {
@@ -23,19 +23,19 @@ export interface CachedImageEntry {
   expiresAt: number;
 }
 
-export const IMAGEKIT_URL_ENDPOINT = 'https://ik.imagekit.io/qdzmaxs1z/v1';
-export const IMAGEKIT_PUBLIC_KEY = 'public_acWqVcCDA3nUMqUFm07cAzZ0Ql4=';
+export const IMAGEKIT_URL_ENDPOINT = "https://ik.imagekit.io/qdzmaxs1z/v1";
+export const IMAGEKIT_PUBLIC_KEY = "public_acWqVcCDA3nUMqUFm07cAzZ0Ql4=";
 
 // Primary: Chained ImageKit GenAI Upscale + AI Retouch (10 units per image)
-export const AI_TRANSFORM = 'e-upscale:e-retouch';
+export const AI_TRANSFORM = "e-upscale:e-retouch";
 
 // Fallback: Plain transform if AI isn't used or times out
-export const FALLBACK_TRANSFORM = 'w-480,h-640,c-at_max';
+export const FALLBACK_TRANSFORM = "w-480,h-640,c-at_max";
 
 export const DEFAULT_TRANSFORM = AI_TRANSFORM;
 
 // Supabase voter-images bucket prefix to strip
-const SUPABASE_VOTER_IMAGES_PREFIX = '/storage/v1/object/public/voter-images/';
+const SUPABASE_VOTER_IMAGES_PREFIX = "/storage/v1/object/public/voter-images/";
 
 /**
  * Builds an ImageKit transformed URL from a Supabase storage URL or relative path.
@@ -43,41 +43,43 @@ const SUPABASE_VOTER_IMAGES_PREFIX = '/storage/v1/object/public/voter-images/';
  */
 export function buildImageKitUrl(
   imagePathOrUrl?: string | null,
-  transformParams: string = DEFAULT_TRANSFORM
+  transformParams: string = DEFAULT_TRANSFORM,
 ): string {
-  if (!imagePathOrUrl || !imagePathOrUrl.trim()) return '';
+  if (!imagePathOrUrl || !imagePathOrUrl.trim()) return "";
   const clean = imagePathOrUrl.trim();
 
   // Already an ImageKit URL
-  if (clean.includes('ik.imagekit.io')) {
-    if (clean.includes('tr=') || clean.includes('tr:')) return clean;
-    const sep = clean.includes('?') ? '&' : '?';
-    return clean + sep + 'tr=' + transformParams;
+  if (clean.includes("ik.imagekit.io")) {
+    if (clean.includes("tr=") || clean.includes("tr:")) return clean;
+    const sep = clean.includes("?") ? "&" : "?";
+    return clean + sep + "tr=" + transformParams;
   }
 
-  const base = IMAGEKIT_URL_ENDPOINT.replace(/\/+$/, '');
+  const base = IMAGEKIT_URL_ENDPOINT.replace(/\/+$/, "");
 
-  if (clean.startsWith('http://') || clean.startsWith('https://')) {
+  if (clean.startsWith("http://") || clean.startsWith("https://")) {
     try {
       const parsed = new URL(clean);
       const pathname = parsed.pathname;
       const idx = pathname.indexOf(SUPABASE_VOTER_IMAGES_PREFIX);
       if (idx !== -1) {
         const filename = pathname.slice(idx + SUPABASE_VOTER_IMAGES_PREFIX.length);
-        console.log(`[ImageKit] ${import.meta.env.DEV ? '🤖 DEV (AI upscale)' : '⚡ PROD (plain scale)'} → ${filename}`);
+        console.log(
+          `[ImageKit] ${import.meta.env.DEV ? "🤖 DEV (AI upscale)" : "⚡ PROD (plain scale)"} → ${filename}`,
+        );
         return `${base}/${filename}?tr=${transformParams}`;
       }
       // Fallback: last path segment
-      const parts = pathname.split('/').filter(Boolean);
-      const filename = parts[parts.length - 1] || '';
+      const parts = pathname.split("/").filter(Boolean);
+      const filename = parts[parts.length - 1] || "";
       return `${base}/${filename}?tr=${transformParams}`;
     } catch {
-      return '';
+      return "";
     }
   }
 
   // Relative path
-  return `${base}/${clean.replace(/^\/+/, '')}?tr=${transformParams}`;
+  return `${base}/${clean.replace(/^\/+/, "")}?tr=${transformParams}`;
 }
 
 /**
@@ -103,7 +105,7 @@ export function getCachedImage(voterId: string | number): string | null {
  * Saves an image dataUrl to localStorage with a 5-day expiry.
  * Evicts the 5 oldest entries if quota is exceeded.
  */
-export function setCachedImage(voterId: string | number, dataUrl: string, sourceUrl = ''): void {
+export function setCachedImage(voterId: string | number, dataUrl: string, sourceUrl = ""): void {
   const key = `${CACHE_PREFIX}${voterId}`;
   const now = Date.now();
   const payload: CachedImageEntry = {
@@ -123,7 +125,7 @@ export function setCachedImage(voterId: string | number, dataUrl: string, source
         const k = localStorage.key(i);
         if (k && k.startsWith(CACHE_PREFIX)) {
           try {
-            const p = JSON.parse(localStorage.getItem(k) || '{}');
+            const p = JSON.parse(localStorage.getItem(k) || "{}");
             entries.push({ key: k, savedAt: p.savedAt || 0 });
           } catch {
             entries.push({ key: k, savedAt: 0 });
@@ -131,10 +133,10 @@ export function setCachedImage(voterId: string | number, dataUrl: string, source
         }
       }
       entries.sort((a, b) => a.savedAt - b.savedAt);
-      entries.slice(0, 5).forEach(e => localStorage.removeItem(e.key));
+      entries.slice(0, 5).forEach((e) => localStorage.removeItem(e.key));
       localStorage.setItem(key, JSON.stringify(payload));
     } catch (e) {
-      console.warn('localStorage save failed after eviction:', e);
+      console.warn("localStorage save failed after eviction:", e);
     }
   }
 }
@@ -150,16 +152,16 @@ export function setCachedImage(voterId: string | number, dataUrl: string, source
 export async function enhanceImageViaCanvas(
   imgSource: HTMLImageElement | string,
   targetWidth = 480,
-  targetHeight = 640
+  targetHeight = 640,
 ): Promise<string> {
   let img: HTMLImageElement;
 
-  if (typeof imgSource === 'string') {
+  if (typeof imgSource === "string") {
     img = await new Promise<HTMLImageElement>((resolve, reject) => {
       const i = new Image();
-      i.crossOrigin = 'anonymous';
+      i.crossOrigin = "anonymous";
       i.onload = () => resolve(i);
-      i.onerror = () => reject(new Error('Failed to load image'));
+      i.onerror = () => reject(new Error("Failed to load image"));
       i.src = imgSource;
     });
   } else {
@@ -172,7 +174,10 @@ export async function enhanceImageViaCanvas(
   const srcAspect = srcW / srcH;
 
   // Compute crop that fills the target aspect, biased upward to keep face in frame
-  let sx = 0, sy = 0, sw = srcW, sh = srcH;
+  let sx = 0,
+    sy = 0,
+    sw = srcW,
+    sh = srcH;
   if (srcAspect > targetAspect) {
     sw = Math.round(srcH * targetAspect);
     sx = Math.round((srcW - sw) / 2);
@@ -183,19 +188,19 @@ export async function enhanceImageViaCanvas(
     if (sy + sh > srcH) sy = srcH - sh;
   }
 
-  const canvas = document.createElement('canvas');
+  const canvas = document.createElement("canvas");
   canvas.width = targetWidth;
   canvas.height = targetHeight;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) throw new Error('Canvas 2D context unavailable');
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) throw new Error("Canvas 2D context unavailable");
 
   ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
+  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
 
   // In DEV, ImageKit already did AI enhancement — skip heavy pixel ops, just return draw
   if (import.meta.env.DEV) {
-    return canvas.toDataURL('image/jpeg', 0.93);
+    return canvas.toDataURL("image/jpeg", 0.93);
   }
 
   // PROD: apply very mild brightness normalisation only — no hue/saturation shift
@@ -220,7 +225,7 @@ export async function enhanceImageViaCanvas(
 
     if (Math.abs(clampedGain - 1) > 0.03) {
       for (let i = 0; i < d.length; i += 4) {
-        d[i]     = Math.min(255, d[i]     * clampedGain);
+        d[i] = Math.min(255, d[i] * clampedGain);
         d[i + 1] = Math.min(255, d[i + 1] * clampedGain);
         d[i + 2] = Math.min(255, d[i + 2] * clampedGain);
       }
@@ -230,7 +235,7 @@ export async function enhanceImageViaCanvas(
     // CORS blocked — return raw scaled image
   }
 
-  return canvas.toDataURL('image/jpeg', 0.93);
+  return canvas.toDataURL("image/jpeg", 0.93);
 }
 
 /**
@@ -238,9 +243,9 @@ export async function enhanceImageViaCanvas(
  */
 export async function getCachedOrFetchImage(
   voterId: string | number,
-  imageUrl?: string | null
+  imageUrl?: string | null,
 ): Promise<string> {
-  if (!imageUrl) return '';
+  if (!imageUrl) return "";
 
   const cached = getCachedImage(voterId);
   if (cached) return cached;
@@ -268,16 +273,16 @@ export function cleanupExpiredImages(): void {
       const key = localStorage.key(i);
       if (key && key.startsWith(CACHE_PREFIX)) {
         try {
-          const item: CachedImageEntry = JSON.parse(localStorage.getItem(key) || '{}');
+          const item: CachedImageEntry = JSON.parse(localStorage.getItem(key) || "{}");
           if (item.expiresAt && now > item.expiresAt) toRemove.push(key);
         } catch {
           toRemove.push(key);
         }
       }
     }
-    toRemove.forEach(k => localStorage.removeItem(k));
+    toRemove.forEach((k) => localStorage.removeItem(k));
   } catch (e) {
-    console.error('Failed to cleanup expired image cache:', e);
+    console.error("Failed to cleanup expired image cache:", e);
   }
 }
 
@@ -293,17 +298,20 @@ export function clearAllImageCache(): number {
       if (
         key &&
         (key.startsWith(CACHE_PREFIX) ||
-          key.startsWith('eagleeye_refined_voter_photo_') ||
-          key.startsWith('eagleeye_original_voter_photo_'))
+          key.startsWith("eagleeye_refined_voter_photo_") ||
+          key.startsWith("eagleeye_original_voter_photo_"))
       ) {
         keysToRemove.push(key);
       }
     }
-    keysToRemove.forEach(k => { localStorage.removeItem(k); count++; });
+    keysToRemove.forEach((k) => {
+      localStorage.removeItem(k);
+      count++;
+    });
     console.log(`🧹 [Image Cache] Cleared ${count} cached voter images.`);
     return count;
   } catch (e) {
-    console.error('Failed to clear voter image cache:', e);
+    console.error("Failed to clear voter image cache:", e);
     return 0;
   }
 }

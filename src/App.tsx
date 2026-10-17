@@ -1,25 +1,28 @@
-import React, { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { HelmetProvider, Helmet } from 'react-helmet-async';
-import { AppProvider } from './context/AppContext';
-import Layout from './components/Layout';
-import { Toaster } from 'react-hot-toast';
+import React, { lazy, Suspense } from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { HelmetProvider, Helmet } from "react-helmet-async";
+import { AppProvider } from "./context/AppContext";
+import Layout from "./components/Layout";
+import { Toaster } from "react-hot-toast";
 
-const Login        = lazy(() => import('./pages/Login'));
-const Landing      = lazy(() => import('./pages/Landing'));
-const Dashboard    = lazy(() => import('./pages/Dashboard'));
-const Voters       = lazy(() => import('./pages/Voters'));
-const ResultCapture = lazy(() => import('./pages/ResultCapture'));
-const Agents       = lazy(() => import('./pages/Agents'));
-const Jurisdictions = lazy(() => import('./pages/Jurisdictions'));
-const Profile      = lazy(() => import('./pages/Profile'));
-const Payment      = lazy(() => import('./pages/Payment'));
-const Sms          = lazy(() => import('./pages/Sms'));
-const Billing      = lazy(() => import('./pages/Billing'));
-const WhatsAppConfig = lazy(() => import('./pages/WhatsAppConfig').then(m => ({ default: m.WhatsAppConfig })));
-const GroupMonitor = lazy(() => import('./pages/GroupMonitor').then(m => ({ default: m.GroupMonitor })));
-const Volunteers   = lazy(() => import('./pages/Volunteers'));
-import { getBrandConfig } from './lib/branding';
+const Login = lazy(() => import("./pages/Login"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Voters = lazy(() => import("./pages/Voters"));
+const ResultCapture = lazy(() => import("./pages/ResultCapture"));
+const Agents = lazy(() => import("./pages/Agents"));
+const Jurisdictions = lazy(() => import("./pages/Jurisdictions"));
+const Profile = lazy(() => import("./pages/Profile"));
+const Payment = lazy(() => import("./pages/Payment"));
+const Sms = lazy(() => import("./pages/Sms"));
+const Billing = lazy(() => import("./pages/Billing"));
+const WhatsAppConfig = lazy(() =>
+  import("./pages/WhatsAppConfig").then((m) => ({ default: m.WhatsAppConfig })),
+);
+const GroupMonitor = lazy(() =>
+  import("./pages/GroupMonitor").then((m) => ({ default: m.GroupMonitor })),
+);
+const Volunteers = lazy(() => import("./pages/Volunteers"));
+import { getBrandConfig } from "./lib/branding";
 
 export default function App() {
   const brand = getBrandConfig();
@@ -33,7 +36,13 @@ export default function App() {
           <meta name="description" content={brand.metaDescription} />
         </Helmet>
         <BrowserRouter>
-          <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="w-8 h-8 border-4 border-[#004d25] border-t-transparent rounded-full animate-spin" /></div>}>
+          <Suspense
+            fallback={
+              <div className="min-h-screen flex items-center justify-center">
+                <div className="w-8 h-8 border-4 border-[#004d25] border-t-transparent rounded-full animate-spin" />
+              </div>
+            }
+          >
             <Routes>
               {/* Landing page removed: Login is directly at root */}
               <Route path="/" element={<Login />} />

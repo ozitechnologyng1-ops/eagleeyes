@@ -1,21 +1,32 @@
-import React, { useState, useEffect } from 'react';
-import { useApp } from '../context/AppContext';
-import { User, Upload, Save, CreditCard, MessageSquare, Unlink, CheckCircle2, AlertCircle, RefreshCw, FileText } from 'lucide-react';
-import toast from 'react-hot-toast';
-import { greenApiService, WhatsAppInstance } from '../lib/greenApi';
-import { supabase } from '../lib/supabase';
-import { cn } from '../lib/utils';
-import FileUpload, { UploadedFile } from '../components/FileUpload';
+import { writeAgent } from "../lib/agentAuth";
+import React, { useState, useEffect } from "react";
+import { useApp } from "../context/AppContext";
+import {
+  User,
+  Upload,
+  Save,
+  CreditCard,
+  MessageSquare,
+  Unlink,
+  CheckCircle2,
+  RefreshCw,
+  FileText,
+} from "lucide-react";
+import toast from "react-hot-toast";
+import { greenApiService, WhatsAppInstance } from "../lib/greenApi";
+import { supabase } from "../lib/supabase";
+import FileUpload, { UploadedFile } from "../components/FileUpload";
+import { getFriendlyErrorMessage } from "../lib/utils";
 
 export default function Profile() {
   const { user, updateUser, agents, updateAgent } = useApp();
   const [isEditing, setIsEditing] = useState(false);
-  
+
   const [form, setForm] = useState({
-    firstName: user?.firstName || '',
-    lastName: user?.lastName || '',
-    phone: user?.phone || '',
-    picture: user?.picture || '',
+    firstName: user?.firstName || "",
+    lastName: user?.lastName || "",
+    phone: user?.phone || "",
+    picture: user?.picture || "",
   });
 
   const [waInstance, setWaInstance] = useState<WhatsAppInstance | null>(null);
@@ -26,51 +37,52 @@ export default function Profile() {
   useEffect(() => {
     if (user) {
       setForm({
-        firstName: user.firstName || '',
-        lastName: user.lastName || '',
-        phone: user.phone || '',
-        picture: user.picture || '',
+        firstName: user.firstName || "",
+        lastName: user.lastName || "",
+        phone: user.phone || "",
+        picture: user.picture || "",
       });
-      loadWhatsAppInstance();
-      loadDocuments();
+      Promise.resolve(loadWhatsAppInstance()).catch((error: unknown) =>
+        console.error("Async operation failed in Profile", error),
+      );
+      Promise.resolve(loadDocuments()).catch((error: unknown) =>
+        console.error("Async operation failed in Profile", error),
+      );
     }
   }, [user, agents]);
 
   const loadDocuments = async () => {
-    const currentAgentId = user?.id || agents.find(a => a.phone === user?.phone)?.id;
+    const currentAgentId = user?.id || agents.find((a) => a.phone === user?.phone)?.id;
     if (!currentAgentId) return;
     try {
       const { data } = await supabase
-        .from('agents')
-        .select('supporting_documents')
-        .eq('id', currentAgentId)
+        .from("agents")
+        .select("supporting_documents")
+        .eq("id", currentAgentId)
         .maybeSingle();
       if (data?.supporting_documents && Array.isArray(data.supporting_documents)) {
         setMyDocuments(data.supporting_documents);
       }
     } catch (e) {
-      console.error('Failed to load agent documents:', e);
+      console.error("Failed to load agent documents:", e);
     }
   };
 
   const handleDocumentsChange = async (files: UploadedFile[]) => {
     setMyDocuments(files);
-    const currentAgentId = user?.id || agents.find(a => a.phone === user?.phone)?.id;
+    const currentAgentId = user?.id || agents.find((a) => a.phone === user?.phone)?.id;
     if (currentAgentId) {
       try {
-        await supabase
-          .from('agents')
-          .update({ supporting_documents: files })
-          .eq('id', currentAgentId);
-        toast.success('Supporting documents saved');
+        await writeAgent(currentAgentId, { supporting_documents: files });
+        toast.success("Supporting documents saved");
       } catch (err: any) {
-        toast.error('Failed to save documents: ' + err.message);
+        toast.error("Failed to save documents: " + err.message);
       }
     }
   };
 
   const loadWhatsAppInstance = async () => {
-    const currentAgentId = user?.id || agents.find(a => a.phone === user?.phone)?.id;
+    const currentAgentId = user?.id || agents.find((a) => a.phone === user?.phone)?.id;
     setLoadingWa(true);
     try {
       let inst: WhatsAppInstance | null = null;
@@ -78,17 +90,17 @@ export default function Profile() {
         inst = await greenApiService.getAgentInstance(currentAgentId);
       }
       if (!inst && user?.phone) {
-        const cleanPhone = user.phone.replace(/\D/g, '').slice(-10);
+        const cleanPhone = user.phone.replace(/\D/g, "").slice(-10);
         const { data } = await supabase
-          .from('whatsapp_instances')
-          .select('*')
+          .from("whatsapp_instances")
+          .select("*")
           .or(`phone_number.ilike.%${cleanPhone}%,assigned_agent_id.eq.${currentAgentId}`)
           .maybeSingle();
         inst = data;
       }
       setWaInstance(inst);
     } catch (e) {
-      console.error('Failed to load agent WhatsApp instance:', e);
+      console.error("Failed to load agent WhatsApp instance:", e);
     } finally {
       setLoadingWa(false);
     }
@@ -96,35 +108,40 @@ export default function Profile() {
 
   const handleDisconnectWhatsApp = async () => {
     if (!waInstance) return;
-    if (!confirm('Are you sure you want to disconnect your WhatsApp account? You will need to reconnect it from the Voters section to send outreach messages.')) {
+    if (
+      !confirm(
+        "Are you sure you want to disconnect your WhatsApp account? You will need to reconnect it from the Voters section to send outreach messages.",
+      )
+    ) {
       return;
     }
 
     setDisconnectingWa(true);
-    const toastId = toast.loading('Disconnecting WhatsApp account...');
+    const toastId = toast.loading("Disconnecting WhatsApp account...");
     try {
       await greenApiService.disconnectAgentInstance(waInstance.id);
       setWaInstance(null);
-      toast.success('WhatsApp disconnected successfully', { id: toastId });
+      toast.success("WhatsApp disconnected successfully", { id: toastId });
     } catch (err: any) {
-      toast.error(err.message || 'Failed to disconnect WhatsApp', { id: toastId });
+      toast.error(err.message || "Failed to disconnect WhatsApp", { id: toastId });
     } finally {
       setDisconnectingWa(false);
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateUser(form);
-    
-    // If the user is also an agent, update their agent record
-    const agentRecord = agents.find(a => a.phone === user?.phone);
-    if (agentRecord) {
-      updateAgent(agentRecord.id, form);
+    try {
+      await updateUser(form);
+      const agentRecord = agents.find((a) => a.phone === user?.phone);
+      if (agentRecord) {
+        await updateAgent(agentRecord.id, form);
+      }
+      setIsEditing(false);
+      toast.success("Profile updated successfully");
+    } catch (error) {
+      toast.error(getFriendlyErrorMessage(error));
     }
-    
-    setIsEditing(false);
-    toast.success('Profile updated successfully');
   };
 
   return (
@@ -132,7 +149,7 @@ export default function Profile() {
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">My Profile</h1>
         {!isEditing && (
-          <button 
+          <button
             onClick={() => setIsEditing(true)}
             className="px-4 py-2 bg-[#004d25] text-white rounded-lg hover:bg-[#006331] transition-colors"
           >
@@ -143,7 +160,7 @@ export default function Profile() {
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="h-32 bg-[#004d25]"></div>
-        
+
         <form onSubmit={handleSubmit} className="px-8 pb-8">
           <div className="relative flex justify-between items-end -mt-16 mb-8">
             <div className="relative">
@@ -157,14 +174,15 @@ export default function Profile() {
               {isEditing && (
                 <label className="absolute bottom-0 right-0 bg-[#004d25] text-white p-2 rounded-full cursor-pointer hover:bg-[#006331] shadow-sm transition-colors">
                   <Upload size={16} />
-                  <input 
-                    type="file" 
-                    accept="image/*" 
+                  <input
+                    type="file"
+                    accept="image/*"
                     className="hidden"
                     onChange={(e) => {
                       if (e.target.files && e.target.files[0]) {
                         const reader = new FileReader();
-                        reader.onload = (e) => setForm({...form, picture: e.target?.result as string});
+                        reader.onload = (e) =>
+                          setForm({ ...form, picture: e.target?.result as string });
                         reader.readAsDataURL(e.target.files[0]);
                       }
                     }}
@@ -172,17 +190,17 @@ export default function Profile() {
                 </label>
               )}
             </div>
-            
+
             {isEditing && (
               <div className="flex gap-3">
-                <button 
+                <button
                   type="button"
                   onClick={() => setIsEditing(false)}
                   className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   Cancel
                 </button>
-                <button 
+                <button
                   type="submit"
                   className="px-4 py-2 bg-[#004d25] text-white rounded-lg hover:bg-[#006331] transition-colors flex items-center gap-2"
                 >
@@ -203,41 +221,50 @@ export default function Profile() {
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">First Name</label>
-                      <input 
-                        type="text" 
-                        value={form.firstName} 
-                        onChange={e => setForm({...form, firstName: e.target.value})}
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        First Name
+                      </label>
+                      <input
+                        type="text"
+                        value={form.firstName}
+                        onChange={(e) => setForm({ ...form, firstName: e.target.value })}
                         disabled={!isEditing}
                         className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#004d25] disabled:bg-gray-50 disabled:text-gray-500"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Last Name</label>
-                      <input 
-                        type="text" 
-                        value={form.lastName} 
-                        onChange={e => setForm({...form, lastName: e.target.value})}
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Last Name
+                      </label>
+                      <input
+                        type="text"
+                        value={form.lastName}
+                        onChange={(e) => setForm({ ...form, lastName: e.target.value })}
                         disabled={!isEditing}
                         className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#004d25] disabled:bg-gray-50 disabled:text-gray-500"
                       />
                     </div>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
-                    <input 
-                      type="tel" 
-                      value={form.phone} 
-                      onChange={e => setForm({...form, phone: e.target.value})}
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Phone Number
+                    </label>
+                    <input
+                      type="tel"
+                      value={form.phone}
+                      onChange={(e) => setForm({ ...form, phone: e.target.value })}
                       disabled={!isEditing}
                       className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#004d25] disabled:bg-gray-50 disabled:text-gray-500"
                     />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-                    <input 
-                      type="text" 
-                      value={user?.role.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')} 
+                    <input
+                      type="text"
+                      value={user?.role
+                        .split("_")
+                        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+                        .join(" ")}
                       disabled
                       className="w-full border border-gray-300 rounded-lg p-2 bg-gray-50 text-gray-500"
                     />
@@ -258,7 +285,7 @@ export default function Profile() {
                     <RefreshCw size={24} className="animate-spin text-[#004d25]" />
                     <span className="text-xs">Checking WhatsApp connection status...</span>
                   </div>
-                ) : waInstance && waInstance.wa_state === 'authorized' ? (
+                ) : waInstance && waInstance.wa_state === "authorized" ? (
                   <div className="p-5 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -266,7 +293,9 @@ export default function Profile() {
                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                           <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-600"></span>
                         </span>
-                        <span className="text-sm font-bold text-emerald-950">WhatsApp Connected</span>
+                        <span className="text-sm font-bold text-emerald-950">
+                          WhatsApp Connected
+                        </span>
                       </div>
                       <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300">
                         Active
@@ -299,7 +328,7 @@ export default function Profile() {
                       className="w-full px-4 py-2.5 bg-white hover:bg-red-50 text-red-600 hover:text-red-700 border border-red-200 hover:border-red-300 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50 shadow-xs"
                     >
                       <Unlink size={16} />
-                      {disconnectingWa ? 'Disconnecting Account...' : 'Disconnect WhatsApp'}
+                      {disconnectingWa ? "Disconnecting Account..." : "Disconnect WhatsApp"}
                     </button>
                     <p className="text-[11px] text-gray-500 text-center">
                       Disconnecting will unpair this WhatsApp account from the system.
@@ -313,7 +342,8 @@ export default function Profile() {
                     <div>
                       <h4 className="text-sm font-semibold text-gray-800">No WhatsApp Connected</h4>
                       <p className="text-xs text-gray-500 mt-1 max-w-xs mx-auto">
-                        Your WhatsApp account is not linked yet. You can connect it in the Voters section to send flyers and campaign messages.
+                        Your WhatsApp account is not linked yet. You can connect it in the Voters
+                        section to send flyers and campaign messages.
                       </p>
                     </div>
                   </div>
@@ -322,7 +352,9 @@ export default function Profile() {
 
               <div className="p-4 bg-gray-50 rounded-xl border border-gray-200 flex items-center gap-3 text-xs text-gray-600">
                 <CreditCard size={18} className="text-[#004d25] shrink-0" />
-                <span>Bank details and payout accounts are managed in the <strong>Payment</strong> tab.</span>
+                <span>
+                  Bank details and payout accounts are managed in the <strong>Payment</strong> tab.
+                </span>
               </div>
             </div>
           </div>
@@ -335,7 +367,8 @@ export default function Profile() {
                 Official Documentation & Records
               </h3>
               <p className="text-xs text-gray-500 mt-1">
-                Upload your ID card, party credentials, or documentation for administrative verification and record keeping.
+                Upload your ID card, party credentials, or documentation for administrative
+                verification and record keeping.
               </p>
             </div>
 
@@ -344,7 +377,7 @@ export default function Profile() {
               description="Upload ID proof, appointment letters, or credential files (PDF, Word, Excel, Images up to 10MB)"
               value={myDocuments}
               onChange={handleDocumentsChange}
-              allowedExtensions={['pdf', 'xlsx', 'xls', 'docx', 'doc', 'csv', 'png', 'jpg', 'jpeg']}
+              allowedExtensions={["pdf", "xlsx", "xls", "docx", "doc", "csv", "png", "jpg", "jpeg"]}
               maxFiles={5}
             />
           </div>
