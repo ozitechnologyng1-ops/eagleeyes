@@ -2,9 +2,9 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { supabase } from "../lib/supabase";
 import { VISION_AI_PROMPT } from "../lib/prompts";
 import toast from "react-hot-toast";
-import { sendTwilioSms, buildLoginSms, getTwilioConfig } from "../lib/smsService";
 import { getVoterScope } from "../lib/voterScope";
 import { loginAgent, logoutAgent, restoreAgent, writeAgent } from "../lib/agentAuth";
+import { sendRegistrationSms } from "../lib/smsService";
 import { readAgentSession, SESSION_CHANGED_EVENT, SESSION_KEY } from "../lib/agentSession";
 
 export type Role = "national_admin" | "state_admin" | "lga_admin" | "ward_admin" | "pu_agent";
@@ -1496,33 +1496,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
         },
       ]);
 
-      // Fire-and-forget: send login credentials SMS via Twilio
-      if (agent.phone && agent.password) {
-        const targetState = stateId || user?.stateId || 27;
+      if (agent.password && agent.phone) {
         try {
-          const twilioConfig = getTwilioConfig(targetState);
-          const template =
-            twilioConfig.sms_login_template ||
-            "Hello {{firstname}}, your EagleEye login credentials: Phone: {{phone}}, Password: {{password}}. Keep this safe.";
-          const message = buildLoginSms(template, {
-            firstname: agent.firstName || agent.name?.split(" ")[0] || "",
+          const firstName = String(agent.firstName || agent.name || "Agent").split(" ")[0];
+          const smsResult = await sendRegistrationSms({
+            firstname: firstName,
             phone: agent.phone,
             password: agent.password,
+            agentId: data.id,
           });
-          sendTwilioSms({
-            to: agent.phone,
-            message,
-            stateId: targetState,
-            config: twilioConfig,
-          })
-            .then(() => toast.success(`Login credentials sent to ${agent.phone} via Twilio`))
-            .catch((err: any) => {
-              console.warn("Twilio SMS error:", err);
-              toast(`SMS notice: ${err.message || "Delivery pending"}`, { icon: "⚠️" });
-            });
-        } catch (e) {
-          console.warn("Twilio setup error:", e);
+          if (smsResult.reference || smsResult.status === "pending") {
+            toast.success(`Login credentials sent via SMS to ${agent.phone}`);
+          } else {
+            toast(`Agent registered. SMS status: ${smsResult.status}`);
+          }
+        } catch (smsErr: any) {
+          console.error("[EGAB SMS] Failed to send registration SMS:", smsErr);
+          toast(`Agent registered, but SMS delivery failed: ${smsErr.message || "Provider error"}`);
         }
+      } else if (data.smsSubmission) {
+        const sms = data.smsSubmission;
+        if (sms.reference) toast.success(`Login SMS submitted (${sms.status})`);
+        else toast(`Agent registered. SMS ${sms.status}; check SMS configuration.`);
       }
     } catch (err: any) {
       console.error("Failed to add agent:", err);

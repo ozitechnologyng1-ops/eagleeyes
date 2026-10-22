@@ -71,4 +71,28 @@ describe("server agent operations", () => {
       },
     });
   });
+  it("keeps a successful registration when SMS is not configured", async () => {
+    authorize.mockResolvedValue(
+      access({
+        action: "create",
+        values: { name: "Synthetic", password: "synthetic-new-password" },
+      }),
+    );
+    rpc.mockResolvedValue({
+      data: { id: "synthetic", phone: "08031234567", name: "Synthetic" },
+      error: null,
+    });
+    const response = await admin(
+      new Request("https://edge.invalid", {
+        method: "POST",
+        headers: { origin: "https://ogunadc.com" },
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.agent.id).toBe("synthetic");
+    expect(body.sms).toMatchObject({ status: "unavailable", code: "SMS_UNAVAILABLE" });
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(body)).not.toContain("synthetic-new-password");
+  });
 });

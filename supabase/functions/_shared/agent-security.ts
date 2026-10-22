@@ -57,7 +57,7 @@ async function derivePassword(password: string, salt: Uint8Array, iterations: nu
 }
 
 export async function hashPassword(password: string): Promise<string> {
-  if (password.length < 8 || password.length > 1024) throw new Error("Invalid password length");
+  if (password.length < 6 || password.length > 1024) throw new Error("Invalid password length");
   const salt = crypto.getRandomValues(new Uint8Array(16));
   return `pbkdf2-sha256$600000$${hex(salt)}$${await derivePassword(password, salt, 600000)}`;
 }

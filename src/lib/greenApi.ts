@@ -19,13 +19,6 @@ export interface WhatsAppStateConfig {
   ai_model: string;
   ai_api_key?: string;
   group_ai_system_prompt: string;
-  // Twilio SMS
-  twilio_account_sid?: string;
-  twilio_auth_token?: string;
-  twilio_api_key_sid?: string;
-  twilio_api_secret?: string;
-  twilio_from_number?: string;
-  sms_login_template?: string;
 }
 
 export interface WhatsAppInstance {
