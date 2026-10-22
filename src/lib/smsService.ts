@@ -241,17 +241,52 @@ export async function sendDirectEgabSms(
   }
 }
 
+export function getLoginUrlForState(
+  stateId?: number | string | null,
+  stateName?: string | null,
+  siteUrl?: string,
+): string {
+  const normName = String(stateName || "")
+    .trim()
+    .toLowerCase();
+  const idNum =
+    stateId !== undefined && stateId !== null && stateId !== "" ? Number(stateId) : null;
+
+  // 1. If state is Ogun (id 27 in database, or name is Ogun) -> use ogunadc.com
+  if (idNum === 27 || normName === "ogun" || normName.includes("ogun")) {
+    return "https://ogunadc.com/login";
+  }
+
+  // 2. If a custom siteUrl is explicitly provided that isn't localhost or ogunadc
+  if (
+    siteUrl &&
+    !siteUrl.includes("localhost") &&
+    !siteUrl.includes("127.0.0.1") &&
+    !siteUrl.includes("ogunadc.com")
+  ) {
+    return `${siteUrl.replace(/\/$/, "")}/login`;
+  }
+
+  // 3. Fallback for Lagos and all other states without dedicated domain
+  return "https://eagleeyess.vercel.app/";
+}
+
 export function buildLoginSms(
-  vars: { firstname: string; phone: string; password: string },
-  origin = typeof window !== "undefined" && window.location?.origin
-    ? window.location.origin
-    : "https://ogunadc.com",
+  vars: {
+    firstname: string;
+    phone: string;
+    password: string;
+    stateId?: number | string | null;
+    stateName?: string | null;
+  },
+  origin?: string,
+  stateId?: number | string | null,
+  stateName?: string | null,
 ) {
-  const loginUrl =
-    origin.includes("localhost") || origin.includes("127.0.0.1")
-      ? "https://ogunadc.com/login"
-      : `${origin.replace(/\/$/, "")}/login`;
-  return `Hello ${vars.firstname.replace(/[\r\n]/g, " ")}, your EagleEye account is ready. Phone: ${vars.phone}. Password: ${vars.password}. Login: ${loginUrl}. Please keep your password safe and private.`;
+  const effectiveStateId = vars.stateId ?? stateId;
+  const effectiveStateName = vars.stateName ?? stateName;
+  const loginUrl = getLoginUrlForState(effectiveStateId, effectiveStateName, origin);
+  return `Hello ${vars.firstname.replace(/[\r\n]/g, " ")}, your account is ready. Phone: ${vars.phone}. Password: ${vars.password}. Login: ${loginUrl}. Please keep your password safe and private.`;
 }
 
 export async function sendRegistrationSms(vars: {
@@ -260,18 +295,11 @@ export async function sendRegistrationSms(vars: {
   password: string;
   siteUrl?: string;
   agentId?: string;
+  stateId?: number | string | null;
+  stateName?: string | null;
 }): Promise<SmsResult> {
-  const siteUrl =
-    vars.siteUrl ||
-    (typeof window !== "undefined" && window.location?.origin
-      ? window.location.origin
-      : "https://ogunadc.com");
-  const loginUrl =
-    siteUrl.includes("localhost") || siteUrl.includes("127.0.0.1")
-      ? "https://ogunadc.com/login"
-      : `${siteUrl.replace(/\/$/, "")}/login`;
-
-  const message = buildLoginSms(vars, siteUrl);
+  const loginUrl = getLoginUrlForState(vars.stateId, vars.stateName, vars.siteUrl);
+  const message = buildLoginSms(vars, vars.siteUrl, vars.stateId, vars.stateName);
   const messageJson = {
     type: "agent_registration_credentials",
     recipient: vars.phone,
@@ -279,12 +307,14 @@ export async function sendRegistrationSms(vars: {
     phone: vars.phone,
     password: vars.password,
     login_url: loginUrl,
+    state_id: vars.stateId || null,
     timestamp: new Date().toISOString(),
   };
 
   return sendDirectEgabSms(vars.phone, message, undefined, messageJson, {
     agent_id: vars.agentId,
-    site_url: siteUrl,
+    state_id: vars.stateId,
+    site_url: loginUrl,
   });
 }
 

@@ -86,7 +86,7 @@ export function loginMessage(
   agentCorsHeaders(req, allowedOrigins);
   const origin = req.headers.get("origin");
   if (!origin) throw new Error("Registration site origin required for the login URL");
-  return `Hello ${name.replace(/[\r\n]/g, " ")}, your EagleEye account is ready. Phone: ${phone}. Password: ${password}. Login: ${origin}/login. Keep these details private.`;
+  return `Hello ${name.replace(/[\r\n]/g, " ")}, your account is ready. Phone: ${phone}. Password: ${password}. Login: ${origin}/login. Keep these details private.`;
 }
 
 export function createSmsService(

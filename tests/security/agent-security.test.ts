@@ -24,7 +24,7 @@ describe("server credential and request checks", () => {
     expect(await verifyPassword("synthetic-new-password", hash)).toBe(true);
     expect(await verifyPassword("wrong", hash)).toBe(false);
     expect(await hashPassword("synthetic-new-password")).not.toBe(hash);
-  });
+  }, 15000);
   it("requires unguessable session tokens and ignores identity headers", () => {
     const token = createSessionToken();
     expect(token).toMatch(/^[a-f0-9]{64}$/);

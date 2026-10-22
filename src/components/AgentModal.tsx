@@ -1883,6 +1883,9 @@ function JurisdictionSelector({
     targetRole,
   ]);
 
+  const getStateName = (id: string | number) =>
+    states.find((s) => String(s.id) === String(id))?.name || null;
+
   const handleStateChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
     setSelectedState(val);
@@ -1896,6 +1899,7 @@ function JurisdictionSelector({
     lastInternalLocationIdRef.current = finalId;
     onChange(finalId, {
       stateId: val ? parseInt(val, 10) : null,
+      stateName: val ? getStateName(val) : null,
       lgaId: null,
       wardId: null,
       puId: null,
@@ -1932,6 +1936,7 @@ function JurisdictionSelector({
     lastInternalLocationIdRef.current = finalId;
     onChange(finalId, {
       stateId: selectedState ? parseInt(selectedState, 10) : null,
+      stateName: selectedState ? getStateName(selectedState) : null,
       lgaId: val ? parseInt(val, 10) : null,
       wardId: null,
       puId: null,
@@ -1965,6 +1970,7 @@ function JurisdictionSelector({
     lastInternalLocationIdRef.current = finalId;
     onChange(finalId, {
       stateId: selectedState ? parseInt(selectedState, 10) : null,
+      stateName: selectedState ? getStateName(selectedState) : null,
       lgaId: selectedLga ? parseInt(selectedLga, 10) : null,
       wardId: val ? parseInt(val, 10) : null,
       puId: null,
@@ -1988,6 +1994,7 @@ function JurisdictionSelector({
     lastInternalLocationIdRef.current = finalId;
     onChange(finalId, {
       stateId: selectedState ? parseInt(selectedState, 10) : null,
+      stateName: selectedState ? getStateName(selectedState) : null,
       lgaId: selectedLga ? parseInt(selectedLga, 10) : null,
       wardId: selectedWard ? parseInt(selectedWard, 10) : null,
       puId: val ? parseInt(val, 10) : null,

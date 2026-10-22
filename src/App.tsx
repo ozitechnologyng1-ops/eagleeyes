@@ -27,6 +27,12 @@ import { getBrandConfig } from "./lib/branding";
 export default function App() {
   const brand = getBrandConfig();
 
+  const siteOrigin =
+    typeof window !== "undefined" && window.location.origin
+      ? window.location.origin
+      : "https://eagleeyess.vercel.app";
+  const ogImageUrl = `${siteOrigin}/og-image.png`;
+
   return (
     <HelmetProvider>
       <AppProvider>
@@ -34,6 +40,21 @@ export default function App() {
         <Helmet>
           <title>{brand.fullTitle}</title>
           <meta name="description" content={brand.metaDescription} />
+          <meta property="og:type" content="website" />
+          <meta property="og:site_name" content="Eagle Eye" />
+          <meta property="og:url" content={siteOrigin} />
+          <meta property="og:title" content={brand.fullTitle} />
+          <meta property="og:description" content={brand.metaDescription} />
+          <meta property="og:image" content={ogImageUrl} />
+          <meta property="og:image:secure_url" content={ogImageUrl} />
+          <meta property="og:image:type" content="image/png" />
+          <meta name="twitter:card" content="summary_large_image" />
+          <meta name="twitter:url" content={siteOrigin} />
+          <meta name="twitter:title" content={brand.fullTitle} />
+          <meta name="twitter:description" content={brand.metaDescription} />
+          <meta name="twitter:image" content={ogImageUrl} />
+          <link rel="icon" type="image/png" href="/favicon.png" />
+          <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         </Helmet>
         <BrowserRouter>
           <Suspense

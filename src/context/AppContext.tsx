@@ -1499,11 +1499,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (agent.password && agent.phone) {
         try {
           const firstName = String(agent.firstName || agent.name || "Agent").split(" ")[0];
+          const resolvedStateName =
+            (agent as any).stateName ||
+            locations.find((l) => l.id === `state_${stateId}`)?.name ||
+            null;
           const smsResult = await sendRegistrationSms({
             firstname: firstName,
             phone: agent.phone,
             password: agent.password,
             agentId: data.id,
+            stateId,
+            stateName: resolvedStateName,
           });
           if (smsResult.reference || smsResult.status === "pending") {
             toast.success(`Login credentials sent via SMS to ${agent.phone}`);

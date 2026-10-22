@@ -174,6 +174,8 @@ export default function Agents() {
           firstname: firstName,
           phone: smsModalAgent.phone,
           password: smsPassword,
+          agentId: smsModalAgent.id,
+          stateId: smsModalAgent.stateId,
         });
       }
 
@@ -585,6 +587,7 @@ export default function Agents() {
                     firstname: smsModalAgent.firstName || smsModalAgent.name.split(" ")[0] || "",
                     phone: smsModalAgent.phone,
                     password: smsPassword || "(as registered)",
+                    stateId: smsModalAgent.stateId,
                   })}
                 </p>
               </div>
