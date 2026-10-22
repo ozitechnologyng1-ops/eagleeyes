@@ -56,12 +56,17 @@ export async function logoutAgent() {
     );
 }
 
-export async function writeAgent(id: string | null, values: Record<string, unknown>) {
+export async function writeAgent(
+  id: string | null,
+  values: Record<string, unknown>,
+  notifySms = false,
+) {
   const data = await callAgentEndpoint("agent-admin", {
     action: id ? "update" : "create",
     id,
     values,
+    notifySms,
   });
   if (!data.agent?.id) throw new Error("Invalid agent response");
-  return data.agent;
+  return { ...data.agent, smsSubmission: data.sms };
 }

@@ -17,6 +17,10 @@ env.*
 # IDE & Editor files
 .vscode/
 .idea/
+.obsidian/
+scratch*
+*.local.*
+test-*.mjs
 
 # Local Netlify CLI state
 .netlify/

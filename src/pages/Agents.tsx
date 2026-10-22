@@ -1,4 +1,4 @@
-import { AGENT_PUBLIC_COLUMNS } from "../lib/agentAuth";
+import { AGENT_PUBLIC_COLUMNS, writeAgent } from "../lib/agentAuth";
 import React, { useState, useCallback } from "react";
 import { useApp, Role, Location, Agent, roleHierarchy } from "../context/AppContext";
 import {
@@ -18,7 +18,12 @@ import { cn, getFriendlyErrorMessage } from "../lib/utils";
 import AgentModal from "../components/AgentModal";
 import { supabase } from "../lib/supabase";
 import toast from "react-hot-toast";
-import { sendTwilioSms, buildLoginSms, getTwilioConfig } from "../lib/smsService";
+import {
+  buildLoginSms,
+  retryCredentialSms,
+  sendRegistrationSms,
+  type SmsResult,
+} from "../lib/smsService";
 
 const JurisdictionCell = ({ id, locations }: { id: string; locations: Location[] }) => {
   const existing = locations.find((l) => l.id === id);
@@ -135,6 +140,7 @@ export default function Agents() {
   const [smsPassword, setSmsPassword] = useState("");
   const [syncPasswordToDb, setSyncPasswordToDb] = useState(true);
   const [sendingSms, setSendingSms] = useState(false);
+  const [credentialSms, setCredentialSms] = useState<SmsResult | null>(null);
 
   const generateTempPassword = () => {
     return `ADC@${Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
@@ -143,6 +149,7 @@ export default function Agents() {
   const handleOpenSmsModal = (agent: Agent, e: React.MouseEvent) => {
     e.stopPropagation();
     setSmsModalAgent(agent);
+    setCredentialSms(null);
     setSmsPassword(generateTempPassword());
     setSyncPasswordToDb(true);
   };
@@ -151,31 +158,31 @@ export default function Agents() {
     if (!smsModalAgent) return;
     setSendingSms(true);
     try {
-      const targetState = smsModalAgent.stateId || user?.stateId || 27;
-      const twilioConfig = getTwilioConfig(targetState);
-      const template =
-        twilioConfig.sms_login_template ||
-        "Hello {{firstname}}, your EagleEye login credentials: Phone: {{phone}}, Password: {{password}}. Keep this safe.";
+      if (!syncPasswordToDb || !smsPassword)
+        throw new Error("Set and save the password before sending login credentials.");
+      const result = credentialSms
+        ? { smsSubmission: await retryCredentialSms(smsModalAgent.phone, smsPassword) }
+        : await writeAgent(smsModalAgent.id, { password: smsPassword }, true);
 
-      const message = buildLoginSms(template, {
-        firstname: smsModalAgent.firstName || smsModalAgent.name.split(" ")[0] || "",
-        phone: smsModalAgent.phone,
-        password: smsPassword || "(as registered)",
-      });
-
-      // Update password hash in database if synced
-      if (syncPasswordToDb && smsPassword) {
-        await updateAgent(smsModalAgent.id, { password: smsPassword });
+      let finalSubmission = result.smsSubmission;
+      if (!finalSubmission?.reference) {
+        // Direct EGAB SMS dispatch fallback
+        const firstName = String(smsModalAgent.firstName || smsModalAgent.name || "Agent").split(
+          " ",
+        )[0];
+        finalSubmission = await sendRegistrationSms({
+          firstname: firstName,
+          phone: smsModalAgent.phone,
+          password: smsPassword,
+        });
       }
 
-      await sendTwilioSms({
-        to: smsModalAgent.phone,
-        message,
-        stateId: targetState,
-        config: twilioConfig,
-      });
-
-      toast.success(`Login credentials SMS sent to ${smsModalAgent.name} via Twilio!`);
+      setCredentialSms(finalSubmission || null);
+      if (!finalSubmission?.reference && finalSubmission?.status !== "pending")
+        throw new Error(
+          `Password updated. SMS ${finalSubmission?.status || "unavailable"}; check console for error details.`,
+        );
+      toast.success(`Login SMS submitted (${finalSubmission.status})`);
       setSmsModalAgent(null);
     } catch (err: any) {
       toast.error(err.message || "Failed to send SMS");
@@ -297,6 +304,7 @@ export default function Agents() {
       );
     } catch (err: any) {
       toast.error(getFriendlyErrorMessage(err));
+      throw err;
     }
   };
 
@@ -436,7 +444,7 @@ export default function Agents() {
                       <button
                         onClick={(e) => handleOpenSmsModal(agent, e)}
                         className="text-blue-600 hover:text-blue-800 font-medium text-xs inline-flex items-center gap-1 cursor-pointer"
-                        title="Send login credentials SMS via Twilio"
+                        title="Send login credentials SMS via EGAB"
                       >
                         <SendHorizonal size={12} />
                         SMS
@@ -514,7 +522,7 @@ export default function Agents() {
               <div>
                 <h3 className="font-bold text-base flex items-center gap-2">
                   <SendHorizonal size={18} />
-                  Send Credentials via Twilio
+                  Send Credentials via EGAB
                 </h3>
                 <p className="text-xs text-green-100">
                   Recipient: {smsModalAgent.name} ({smsModalAgent.phone})
@@ -573,17 +581,11 @@ export default function Agents() {
               <div className="bg-gray-50 border border-dashed border-gray-200 rounded-lg p-3 text-xs space-y-1">
                 <span className="font-semibold text-gray-700 block">SMS Message Preview:</span>
                 <p className="font-mono text-gray-800 break-words">
-                  {(
-                    getTwilioConfig(smsModalAgent.stateId || user.stateId || 27)
-                      .sms_login_template ||
-                    "Hello {{firstname}}, your EagleEye login credentials: Phone: {{phone}}, Password: {{password}}. Keep this safe."
-                  )
-                    .replace(
-                      /\{\{firstname\}\}/gi,
-                      smsModalAgent.firstName || smsModalAgent.name.split(" ")[0] || "",
-                    )
-                    .replace(/\{\{phone\}\}/gi, smsModalAgent.phone)
-                    .replace(/\{\{password\}\}/gi, smsPassword || "(as registered)")}
+                  {buildLoginSms({
+                    firstname: smsModalAgent.firstName || smsModalAgent.name.split(" ")[0] || "",
+                    phone: smsModalAgent.phone,
+                    password: smsPassword || "(as registered)",
+                  })}
                 </p>
               </div>
 
@@ -603,7 +605,7 @@ export default function Agents() {
                   className="flex-1 py-2 px-3 bg-[#004d25] hover:bg-[#00381b] text-white rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50"
                 >
                   {sendingSms ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                  Send via Twilio
+                  Send via EGAB
                 </button>
               </div>
             </div>

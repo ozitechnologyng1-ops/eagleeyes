@@ -301,8 +301,8 @@ export default function AgentModal({
     if (!pwd || pwd.trim().length === 0) {
       return "Password is required";
     }
-    if (pwd.length < 6) {
-      return "Password must be at least 6 characters long";
+    if (pwd.length < 6 || pwd.length > 12) {
+      return "Password must be between 6 and 12 characters";
     }
     const lower = pwd.toLowerCase();
     if (commonWeakPasswords.has(lower)) {
@@ -374,8 +374,8 @@ export default function AgentModal({
       }
       if (!isDev) {
         // Full strength check only in production
-        if (password.length < 6) {
-          setPasswordError("Password must be at least 6 characters long");
+        if (password.length < 6 || password.length > 12) {
+          setPasswordError("Password must be between 6 and 12 characters");
           return;
         }
         const pwdError = validatePasswordStrength(password);
@@ -399,8 +399,8 @@ export default function AgentModal({
       }
       if (!isDev) {
         // Full strength check only in production
-        if (password.length < 6) {
-          setPasswordError("Password must be at least 6 characters long");
+        if (password.length < 6 || password.length > 12) {
+          setPasswordError("Password must be between 6 and 12 characters");
           return;
         }
         const pwdError = validatePasswordStrength(password);
@@ -580,7 +580,7 @@ export default function AgentModal({
       if (!isAccountVerified) {
         toast(
           "Agent registered! Remember to complete bank details in the Payment tab before stipend disbursement.",
-          { duration: 5000, icon: "💡" },
+          { duration: 5000 },
         );
       }
     } finally {

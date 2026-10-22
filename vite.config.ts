@@ -2,7 +2,6 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import { defineConfig, lazyPlugins } from "vite-plus";
-import type { ViteDevServer } from "vite-plus";
 
 export default defineConfig({
   staged: {
@@ -15,19 +14,7 @@ export default defineConfig({
     rules: { "vite-plus/prefer-vite-plus-imports": "error" },
     options: { typeAware: true, typeCheck: true },
   },
-  plugins: lazyPlugins(async () => [
-    react(),
-    tailwindcss(),
-    {
-      name: "twilio-dev-api",
-      configureServer(server: ViteDevServer) {
-        server.middlewares.use("/api/send-sms", async (req, res) => {
-          const { default: handler } = await import("./api/send-sms.ts");
-          await handler(req, res);
-        });
-      },
-    },
-  ]),
+  plugins: lazyPlugins(async () => [react(), tailwindcss()]),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "."),
