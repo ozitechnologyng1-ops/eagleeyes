@@ -136,14 +136,11 @@ export async function sendDirectEgabSms(
   }
 
   // 2. Direct browser send
-  const publicKey = import.meta.env.VITE_EGAB_KEY;
-  const secretKey = import.meta.env.VITE_EGAB_SECRET;
+  const publicKey = import.meta.env.VITE_EGAB_KEY || "egab_pk_live_lkTkDbHKK3m4KZ1uN2d2gBNC";
+  const secretKey =
+    import.meta.env.VITE_EGAB_SECRET || "egab_sk_live_wA1gHX6hpXJ5Agm3hfDvGTyE9dATgmFh";
   const base = import.meta.env.VITE_EGAB_BASE || "https://egabsms.com";
   const path = "/api/v1/bulksms/sms";
-
-  if (!publicKey || !secretKey) {
-    throw new Error("EGAB SMS credentials are not configured.");
-  }
 
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const body = JSON.stringify({
@@ -329,14 +326,11 @@ export async function getSmsStatus(referenceOrId: string): Promise<SmsResult> {
 
   // 2. Direct query fallback
   const base = import.meta.env.VITE_EGAB_BASE || "https://egabsms.com";
-  const publicKey = import.meta.env.VITE_EGAB_KEY;
-  const secretKey = import.meta.env.VITE_EGAB_SECRET;
+  const publicKey = import.meta.env.VITE_EGAB_KEY || "egab_pk_live_lkTkDbHKK3m4KZ1uN2d2gBNC";
+  const secretKey =
+    import.meta.env.VITE_EGAB_SECRET || "egab_sk_live_wA1gHX6hpXJ5Agm3hfDvGTyE9dATgmFh";
   const path = `/api/v1/bulksms/sms/${encodeURIComponent(referenceOrId)}`;
   const timestamp = Math.floor(Date.now() / 1000).toString();
-
-  if (!publicKey || !secretKey) {
-    return { id: referenceOrId, status: "unknown" };
-  }
 
   try {
     const signature = await signEgabRequest("GET", path, "", timestamp, secretKey);
