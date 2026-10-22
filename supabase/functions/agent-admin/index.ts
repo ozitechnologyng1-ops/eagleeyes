@@ -12,6 +12,62 @@ Deno.serve(async (req: Request) => {
       headers: { ...headers, "Content-Type": "application/json" },
     });
   try {
+    if (body.action === "delete") {
+      if (
+        typeof body.id !== "string" ||
+        !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(body.id)
+      )
+        return reply({ error: "Invalid agent" }, 400);
+
+      const caller = session.agent;
+      if (!caller || (caller.role !== "national_admin" && caller.role !== "state_admin")) {
+        return reply({ error: "Only National and State Admins can delete agents" }, 403);
+      }
+
+      if (caller.id === body.id) {
+        return reply({ error: "You cannot delete your own account" }, 400);
+      }
+
+      const { data: target, error: targetErr } = await client
+        .from("agents")
+        .select("id, role, state_id, name")
+        .eq("id", body.id)
+        .maybeSingle();
+
+      if (targetErr || !target) {
+        return reply({ error: "Agent not found" }, 404);
+      }
+
+      if (caller.role === "state_admin") {
+        if (target.role === "national_admin" || target.role === "state_admin") {
+          return reply({ error: "State Admins cannot delete National or State Admins" }, 403);
+        }
+        if (caller.state_id == null || target.state_id !== caller.state_id) {
+          return reply({ error: "State Admins can only delete agents in their own state" }, 403);
+        }
+      }
+
+      await client
+        .from("treasury_allocations")
+        .update({ updated_by: null })
+        .eq("updated_by", target.id);
+      await client
+        .from("whatsapp_instances")
+        .update({ assigned_agent_id: null })
+        .eq("assigned_agent_id", target.id);
+      await client
+        .from("whatsapp_group_monitors")
+        .update({ added_by_agent_id: null })
+        .eq("added_by_agent_id", target.id);
+
+      const { error: deleteErr } = await client.from("agents").delete().eq("id", target.id);
+      if (deleteErr) {
+        return reply({ error: deleteErr.message || "Failed to delete agent" }, 500);
+      }
+
+      return reply({ success: true, deletedId: target.id });
+    }
+
     if (body.action !== "create" && body.action !== "update")
       return reply({ error: "Invalid action" }, 400);
     if (

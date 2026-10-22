@@ -3,7 +3,13 @@ import { supabase } from "../lib/supabase";
 import { VISION_AI_PROMPT } from "../lib/prompts";
 import toast from "react-hot-toast";
 import { getVoterScope } from "../lib/voterScope";
-import { loginAgent, logoutAgent, restoreAgent, writeAgent } from "../lib/agentAuth";
+import {
+  deleteAgentApi,
+  loginAgent,
+  logoutAgent,
+  restoreAgent,
+  writeAgent,
+} from "../lib/agentAuth";
 import { sendRegistrationSms } from "../lib/smsService";
 import { readAgentSession, SESSION_CHANGED_EVENT, SESSION_KEY } from "../lib/agentSession";
 
@@ -168,6 +174,7 @@ interface AppState {
   addAgent: (agent: Omit<Agent, "id">) => Promise<void>;
   updateAgent: (id: string, updates: Partial<Agent>) => Promise<void>;
   updateAgentStatus: (id: string, status: Agent["status"]) => Promise<void>;
+  deleteAgent: (id: string) => Promise<void>;
   addLocation: (location: Omit<Location, "id">) => void;
   updateLocation: (id: string, updates: Partial<Location>) => void;
   getDescendantLocations: (locationId: string) => Location[];
@@ -1593,6 +1600,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const deleteAgent = async (id: string) => {
+    if (!user) throw new Error("Authentication required");
+    if (user.role !== "national_admin" && user.role !== "state_admin") {
+      throw new Error("Only National and State Admins are authorized to delete agents.");
+    }
+
+    try {
+      await deleteAgentApi(id);
+
+      setAgents((prev) => prev.filter((a) => a.id !== id));
+      await refreshDeploymentStats();
+      await refreshAgentStats();
+    } catch (err) {
+      console.error("Failed to delete agent from db", err);
+      throw err;
+    }
+  };
+
   const addLocation = (location: Omit<Location, "id">) => {
     setLocations((prev) => [
       ...prev,
@@ -1681,6 +1706,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         addAgent,
         updateAgent,
         updateAgentStatus,
+        deleteAgent,
         addLocation,
         updateLocation,
         getDescendantLocations,

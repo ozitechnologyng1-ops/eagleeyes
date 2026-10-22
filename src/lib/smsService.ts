@@ -241,6 +241,33 @@ export async function sendDirectEgabSms(
   }
 }
 
+/**
+ * Generates an agent password strictly between 6 and 12 characters (default 8 chars).
+ * Guaranteed to satisfy strength policies: contains uppercase letters, lowercase letters, and digits.
+ */
+export function generateAgentPassword(length = 8): string {
+  const targetLength = Math.max(6, Math.min(12, length));
+  const letters = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
+  const digits = "23456789";
+  const all = letters + digits;
+
+  const buf = new Uint8Array(targetLength);
+  crypto.getRandomValues(buf);
+
+  // Prefix with ADC (3 chars)
+  let pwd = "ADC";
+  // Guarantee digit
+  pwd += digits[buf[0] % digits.length];
+  // Guarantee lowercase letter
+  pwd += "abcdefghjkmnpqrstuvwxyz"[buf[1] % 23];
+
+  for (let i = pwd.length; i < targetLength; i++) {
+    pwd += all[buf[i] % all.length];
+  }
+
+  return pwd;
+}
+
 export function getLoginUrlForState(
   stateId?: number | string | null,
   stateName?: string | null,

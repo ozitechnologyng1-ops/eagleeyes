@@ -29,6 +29,7 @@ import {
   PaystackBank,
 } from "../lib/paystack";
 import { greenApiService, WhatsAppInstance } from "../lib/greenApi";
+import { generateAgentPassword } from "../lib/smsService";
 
 export const getAvailableRoles = (userRole: Role): { role: Role; label: string }[] => {
   switch (userRole) {
@@ -61,6 +62,7 @@ interface AgentModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (agent: Partial<Agent>) => Promise<void>;
+  onDelete?: (id: string) => Promise<void>;
   initialData?: Partial<Agent>;
   fixedLocation?: Location;
   userRole: Role;
@@ -70,6 +72,7 @@ export default function AgentModal({
   isOpen,
   onClose,
   onSave,
+  onDelete,
   initialData,
   fixedLocation,
   userRole,
@@ -78,6 +81,7 @@ export default function AgentModal({
   const availableRoles = getAvailableRoles(userRole);
   const [tab, setTab] = useState<"personal" | "bank" | "jurisdiction" | "whatsapp">("personal");
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeletingModal, setIsDeletingModal] = useState(false);
   const [waInstance, setWaInstance] = useState<WhatsAppInstance | null>(null);
   const [waQrData, setWaQrData] = useState<string | null>(null);
   const [waAuthCode, setWaAuthCode] = useState<string | null>(null);
@@ -588,6 +592,25 @@ export default function AgentModal({
     }
   };
 
+  const handleDeleteFromModal = async () => {
+    if (!initialData?.id || !onDelete) return;
+    const confirmed = window.confirm(
+      `Are you sure you want to permanently delete ${form.firstName || "this agent"}? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    setIsDeletingModal(true);
+    try {
+      await onDelete(initialData.id);
+      toast.success("Agent deleted successfully");
+      onClose();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to delete agent");
+    } finally {
+      setIsDeletingModal(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
@@ -854,9 +877,24 @@ export default function AgentModal({
                 // Registration mode: Password and Confirm Password with view/hide toggles
                 <div className="space-y-3 pt-1 border-t border-gray-100">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Password <span className="text-red-500">*</span>
-                    </label>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-sm font-medium text-gray-700">
+                        Password <span className="text-red-500">*</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const autoPwd = generateAgentPassword(8);
+                          setPassword(autoPwd);
+                          setConfirmPassword(autoPwd);
+                          setShowPassword(true);
+                          setPasswordError("");
+                        }}
+                        className="text-xs text-[#004d25] hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                      >
+                        <RefreshCw size={11} /> Auto Generate (8 chars)
+                      </button>
+                    </div>
                     <div className="relative">
                       <input
                         required
@@ -1049,9 +1087,24 @@ export default function AgentModal({
                   {isPasswordChangeEnabled ? (
                     <div className="space-y-3 bg-amber-50/50 p-3 rounded-lg border border-amber-100 animate-in fade-in duration-200">
                       <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                          New Password
-                        </label>
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="block text-xs font-medium text-gray-600">
+                            New Password
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const autoPwd = generateAgentPassword(8);
+                              setPassword(autoPwd);
+                              setConfirmPassword(autoPwd);
+                              setShowPassword(true);
+                              setPasswordError("");
+                            }}
+                            className="text-xs text-[#004d25] hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                          >
+                            <RefreshCw size={11} /> Auto Generate (8 chars)
+                          </button>
+                        </div>
                         <div className="relative">
                           <input
                             type={showPassword ? "text" : "password"}
@@ -1219,7 +1272,23 @@ export default function AgentModal({
                 </div>
               )}
 
-              <div className="pt-4 flex justify-end">
+              <div className="pt-4 flex justify-between items-center">
+                {initialData?.id &&
+                onDelete &&
+                (userRole === "national_admin" || userRole === "state_admin") ? (
+                  <button
+                    type="button"
+                    disabled={isDeletingModal || isSaving}
+                    onClick={handleDeleteFromModal}
+                    className="px-3 py-2 text-xs font-semibold text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                    title="Delete Agent"
+                  >
+                    <Trash2 size={14} />
+                    <span>{isDeletingModal ? "Deleting..." : "Delete Agent"}</span>
+                  </button>
+                ) : (
+                  <div />
+                )}
                 <button
                   type="button"
                   onClick={handleNextFromPersonal}
@@ -1447,6 +1516,20 @@ export default function AgentModal({
                 targetRole={form.role || "pu_agent"}
               />
               <div className="pt-4 flex gap-3">
+                {initialData?.id &&
+                  onDelete &&
+                  (userRole === "national_admin" || userRole === "state_admin") && (
+                    <button
+                      type="button"
+                      disabled={isDeletingModal || isSaving}
+                      onClick={handleDeleteFromModal}
+                      className="px-3 py-2 text-xs font-semibold text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer mr-auto"
+                      title="Delete Agent"
+                    >
+                      <Trash2 size={14} />
+                      <span>{isDeletingModal ? "Deleting..." : "Delete Agent"}</span>
+                    </button>
+                  )}
                 <button
                   type="button"
                   onClick={() => setTab("bank")}

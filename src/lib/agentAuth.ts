@@ -70,3 +70,11 @@ export async function writeAgent(
   if (!data.agent?.id) throw new Error("Invalid agent response");
   return { ...data.agent, smsSubmission: data.sms };
 }
+
+export async function deleteAgentApi(id: string) {
+  const data = await callAgentEndpoint("agent-admin", {
+    action: "delete",
+    id,
+  });
+  return data;
+}
