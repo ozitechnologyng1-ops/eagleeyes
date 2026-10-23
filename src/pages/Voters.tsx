@@ -29,10 +29,10 @@ import toast from "react-hot-toast";
 import { greenApiService } from "../lib/greenApi";
 
 import {
-  buildImageKitUrl,
-  getCachedImage,
-  setCachedImage,
-  enhanceImageViaCanvas,
+  // buildImageKitUrl,
+  // getCachedImage,
+  // setCachedImage,
+  // enhanceImageViaCanvas,
   cleanupExpiredImages,
   clearAllImageCache,
 } from "../lib/imageStorage";
@@ -115,6 +115,12 @@ export default function Voters() {
     setPhotoViewerOpen(true);
     setShowOriginalComparison(false);
 
+    // Show main image directly (ImageKit advancement commented out for now)
+    setRefinedPhoto(voter.image);
+    setIsRefiningPhoto(false);
+
+    /*
+    // ImageKit image advancement commented out for now
     // 1. Check local cache (5 days)
     const cached = getCachedImage(voter.id);
     if (cached) {
@@ -179,10 +185,18 @@ export default function Voters() {
     } finally {
       setIsRefiningPhoto(false);
     }
+    */
   };
 
   const handleReEnhancePhoto = async () => {
     if (!viewingVoter || !viewingVoter.image) return;
+    // Show main image directly (ImageKit advancement commented out for now)
+    setRefinedPhoto(viewingVoter.image);
+    setIsRefiningPhoto(false);
+    toast.success("Showing main photo");
+
+    /*
+    // ImageKit image advancement commented out for now
     setIsRefiningPhoto(true);
     try {
       const enhanced = await enhanceImageViaCanvas(viewingVoter.image, 480, 640);
@@ -195,6 +209,7 @@ export default function Voters() {
     } finally {
       setIsRefiningPhoto(false);
     }
+    */
   };
 
   // Name lookup cache for Ward and PU
@@ -1291,8 +1306,7 @@ export default function Voters() {
             <div className="p-6 flex-1 overflow-y-auto">
               <div className="text-center mb-6">
                 {(() => {
-                  const cachedPhoto = currentVoter ? getCachedImage(currentVoter.id) : null;
-                  const displayImg = cachedPhoto || currentVoter.image;
+                  const displayImg = currentVoter?.image;
                   return (
                     <div className="flex flex-col items-center">
                       <div
@@ -1320,12 +1334,7 @@ export default function Voters() {
                         <button
                           type="button"
                           onClick={() => handlePhotoClick(currentVoter)}
-                          className={cn(
-                            "inline-flex items-center px-3 py-1 text-xs font-semibold rounded-full border transition cursor-pointer mb-2",
-                            cachedPhoto
-                              ? "bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300"
-                              : "bg-gray-50 hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 border-gray-200 hover:border-emerald-300",
-                          )}
+                          className="inline-flex items-center px-3 py-1 text-xs font-semibold rounded-full border transition cursor-pointer mb-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300"
                           title="View photo"
                         >
                           <span>View Photo</span>

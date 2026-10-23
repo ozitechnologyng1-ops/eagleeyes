@@ -242,11 +242,11 @@ export async function sendDirectEgabSms(
 }
 
 /**
- * Generates an agent password strictly between 6 and 12 characters (default 8 chars).
+ * Generates an agent password strictly between 6 and 24 characters (default 8 chars).
  * Guaranteed to satisfy strength policies: contains uppercase letters, lowercase letters, and digits.
  */
 export function generateAgentPassword(length = 8): string {
-  const targetLength = Math.max(6, Math.min(12, length));
+  const targetLength = Math.max(6, Math.min(24, length));
   const letters = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
   const digits = "23456789";
   const all = letters + digits;

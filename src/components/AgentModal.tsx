@@ -305,8 +305,8 @@ export default function AgentModal({
     if (!pwd || pwd.trim().length === 0) {
       return "Password is required";
     }
-    if (pwd.length < 6 || pwd.length > 12) {
-      return "Password must be between 6 and 12 characters";
+    if (pwd.length < 6 || pwd.length > 24) {
+      return "Password must be between 6 and 24 characters";
     }
     const lower = pwd.toLowerCase();
     if (commonWeakPasswords.has(lower)) {
@@ -378,8 +378,8 @@ export default function AgentModal({
       }
       if (!isDev) {
         // Full strength check only in production
-        if (password.length < 6 || password.length > 12) {
-          setPasswordError("Password must be between 6 and 12 characters");
+        if (password.length < 6 || password.length > 24) {
+          setPasswordError("Password must be between 6 and 24 characters");
           return;
         }
         const pwdError = validatePasswordStrength(password);
@@ -403,8 +403,8 @@ export default function AgentModal({
       }
       if (!isDev) {
         // Full strength check only in production
-        if (password.length < 6 || password.length > 12) {
-          setPasswordError("Password must be between 6 and 12 characters");
+        if (password.length < 6 || password.length > 24) {
+          setPasswordError("Password must be between 6 and 24 characters");
           return;
         }
         const pwdError = validatePasswordStrength(password);

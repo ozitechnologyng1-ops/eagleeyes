@@ -59,7 +59,7 @@ export default function Payment() {
   const [adminBatchDocs, setAdminBatchDocs] = useState<UploadedFile[]>([]);
 
   const [showAllocationModal, setShowAllocationModal] = useState(false);
-  const [allocations, setAllocations] = useState({ lga: 50000, ward: 20000, pu: 10000 });
+  const [allocations, setAllocations] = useState({ lga: 0, ward: 0, pu: 0 });
   const [allocatedAmount, setAllocatedAmount] = useState(0);
   const [stateCounts, setStateCounts] = useState({ lga: 0, ward: 0, pu: 0 });
 
@@ -75,7 +75,7 @@ export default function Payment() {
   const [activeTab, setActiveTab] = useState<"lga_admin" | "ward_admin" | "pu_agent">("pu_agent");
 
   // Central Bank State
-  const treasuryBalance = 1000000;
+  const treasuryBalance = 0;
   const isCentralBank = user?.role === "state_admin" || user?.role === "national_admin";
   const isStateAdmin = isCentralBank;
 

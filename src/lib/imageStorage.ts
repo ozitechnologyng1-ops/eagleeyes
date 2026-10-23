@@ -34,8 +34,8 @@ export const FALLBACK_TRANSFORM = "w-480,h-640,c-at_max";
 
 export const DEFAULT_TRANSFORM = AI_TRANSFORM;
 
-// Supabase voter-images bucket prefix to strip
-const SUPABASE_VOTER_IMAGES_PREFIX = "/storage/v1/object/public/voter-images/";
+// Supabase voter-images bucket prefix to strip (temporarily unused while enhancement is bypassed)
+const _SUPABASE_VOTER_IMAGES_PREFIX = "/storage/v1/object/public/voter-images/";
 
 /**
  * Builds an ImageKit transformed URL from a Supabase storage URL or relative path.
@@ -43,16 +43,20 @@ const SUPABASE_VOTER_IMAGES_PREFIX = "/storage/v1/object/public/voter-images/";
  */
 export function buildImageKitUrl(
   imagePathOrUrl?: string | null,
-  transformParams: string = DEFAULT_TRANSFORM,
+  _transformParams: string = DEFAULT_TRANSFORM,
 ): string {
   if (!imagePathOrUrl || !imagePathOrUrl.trim()) return "";
   const clean = imagePathOrUrl.trim();
 
+  // ImageKit enhancement temporarily commented out - returning main/original image URL directly
+  return clean;
+
+  /*
   // Already an ImageKit URL
   if (clean.includes("ik.imagekit.io")) {
     if (clean.includes("tr=") || clean.includes("tr:")) return clean;
     const sep = clean.includes("?") ? "&" : "?";
-    return clean + sep + "tr=" + transformParams;
+    return clean + sep + "tr=" + _transformParams;
   }
 
   const base = IMAGEKIT_URL_ENDPOINT.replace(/\/+$/, "");
@@ -67,19 +71,20 @@ export function buildImageKitUrl(
         console.log(
           `[ImageKit] ${import.meta.env.DEV ? "🤖 DEV (AI upscale)" : "⚡ PROD (plain scale)"} → ${filename}`,
         );
-        return `${base}/${filename}?tr=${transformParams}`;
+        return `${base}/${filename}?tr=${_transformParams}`;
       }
       // Fallback: last path segment
       const parts = pathname.split("/").filter(Boolean);
       const filename = parts[parts.length - 1] || "";
-      return `${base}/${filename}?tr=${transformParams}`;
+      return `${base}/${filename}?tr=${_transformParams}`;
     } catch {
       return "";
     }
   }
 
   // Relative path
-  return `${base}/${clean.replace(/^\/+/, "")}?tr=${transformParams}`;
+  return `${base}/${clean.replace(/^\/+/, "")}?tr=${_transformParams}`;
+  */
 }
 
 /**
@@ -242,12 +247,16 @@ export async function enhanceImageViaCanvas(
  * Full pipeline: check cache → build ImageKit URL → canvas enhance → cache.
  */
 export async function getCachedOrFetchImage(
-  voterId: string | number,
+  _voterId: string | number,
   imageUrl?: string | null,
 ): Promise<string> {
   if (!imageUrl) return "";
 
-  const cached = getCachedImage(voterId);
+  // Image enhancement temporarily commented out - return main image directly
+  return imageUrl;
+
+  /*
+  const cached = getCachedImage(_voterId);
   if (cached) return cached;
 
   const transformedUrl = buildImageKitUrl(imageUrl);
@@ -255,11 +264,12 @@ export async function getCachedOrFetchImage(
 
   try {
     const enhanced = await enhanceImageViaCanvas(fetchUrl, 480, 640);
-    setCachedImage(voterId, enhanced, fetchUrl);
+    setCachedImage(_voterId, enhanced, fetchUrl);
     return enhanced;
   } catch {
     return fetchUrl;
   }
+  */
 }
 
 /**

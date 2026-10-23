@@ -228,7 +228,7 @@ export default function Agents() {
   );
 
   const generateTempPassword = () => {
-    // Generate a strong temporary password strictly between 6 and 12 characters (8 chars)
+    // Generate a strong temporary password strictly between 6 and 24 characters (8 chars)
     return generateAgentPassword(8);
   };
 
@@ -875,8 +875,8 @@ export default function Agents() {
                         type="text"
                         value={smsPassword}
                         onChange={(e) => setSmsPassword(e.target.value)}
-                        placeholder="Enter password (6-12 chars)..."
-                        maxLength={12}
+                        placeholder="Enter password (6-24 chars)..."
+                        maxLength={24}
                         className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 font-mono focus:bg-white focus:ring-2 focus:ring-[#004d25] outline-none"
                       />
                       <KeyRound
