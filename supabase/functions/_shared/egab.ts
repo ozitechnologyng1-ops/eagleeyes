@@ -149,7 +149,8 @@ export function createEgabClient(
       "X-Egab-Timestamp": timestamp,
       "X-Egab-Signature": await signEgab(method, path, raw, timestamp, config.secret),
       Accept: "application/json",
-      "User-Agent": "EagleEye/1.0",
+      // "User-Agent": "EagleEye/1.0",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     };
     if (method === "POST") {
       headers["Content-Type"] = "application/json";

@@ -26,7 +26,11 @@ Deno.serve(async (req: Request) => {
         if (error instanceof EgabError && error.status === 406) {
           // One unsigned read distinguishes transport filtering from signed-request filtering.
           const probe = await fetch(config.base + "/api/v1/bulksms/balance", {
-            headers: { Accept: "application/json", "User-Agent": "EagleEye/1.0" },
+            headers: {
+              Accept: "application/json",
+              // "User-Agent": "EagleEye/1.0",
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            },
             redirect: "error",
             signal: AbortSignal.timeout(15000),
           });

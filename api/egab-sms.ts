@@ -61,6 +61,7 @@ export default async function handler(req: any, res: any) {
           "X-Egab-Timestamp": timestamp,
           "X-Egab-Signature": signature,
           Accept: "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         },
       });
 
@@ -131,6 +132,7 @@ export default async function handler(req: any, res: any) {
         Accept: "application/json",
         "Content-Type": "application/json",
         "Idempotency-Key": idempotencyKey,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
       },
       body: payloadString,
       signal: AbortSignal.timeout(20000),
