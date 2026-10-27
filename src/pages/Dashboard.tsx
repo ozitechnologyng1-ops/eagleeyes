@@ -63,6 +63,8 @@ export default function Dashboard() {
     electionResults,
     addAgent,
     updateAgent,
+    voterStateFilter,
+    setVoterStateFilter,
   } = useApp();
   const [activeTab, setActiveTab] = useState<"canvassing" | "elections" | "voters" | "volunteers">(
     "canvassing",
@@ -106,19 +108,56 @@ export default function Dashboard() {
     }
   };
 
+  const [dbStates, setDbStates] = useState<{ id: number; name: string }[]>([]);
+
+  const states = React.useMemo(() => {
+    const fromLocs = locations
+      .filter((l) => l.type === "state")
+      .map((l) => ({
+        id: parseInt(l.id.replace("state_", ""), 10),
+        name: l.name,
+      }))
+      .filter((s) => !isNaN(s.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return fromLocs.length > 0 ? fromLocs : dbStates;
+  }, [locations, dbStates]);
+
+  useEffect(() => {
+    if (states.length === 0) {
+      supabase
+        .from("states")
+        .select("id, name")
+        .order("name")
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            setDbStates(data);
+          }
+        });
+    }
+  }, [states.length]);
+
+  const selectedStateName = React.useMemo(() => {
+    if (!voterStateFilter) return null;
+    return states.find((s) => s.id === voterStateFilter)?.name || null;
+  }, [states, voterStateFilter]);
+
   if (!user) return null;
 
   const allowedLocations = getDescendantLocations(user.locationId);
   const allowedLocationIds = allowedLocations.map((l) => l.id);
   const visibleAgents = agents.filter(
     (a) =>
-      allowedLocationIds.includes(a.locationId) && roleHierarchy[a.role] < roleHierarchy[user.role],
+      allowedLocationIds.includes(a.locationId) &&
+      (user.role === "national_admin" || user.role === "state_admin"
+        ? roleHierarchy[a.role] <= roleHierarchy[user.role]
+        : roleHierarchy[a.role] < roleHierarchy[user.role]),
   );
   return (
     <div className="space-y-6">
       <DashboardHeader
         user={user}
         locations={locations}
+        selectedStateName={selectedStateName}
         onOpenRegisterAgent={() => {
           setAgentModalLocation(null);
           setAgentModalInitialData(null);
@@ -126,9 +165,68 @@ export default function Dashboard() {
         }}
       />
 
+      {/* National Admin State Filter Bar */}
+      {user.role === "national_admin" && (
+        <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-[#004d25] flex items-center justify-center shrink-0">
+              <MapPin size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-gray-900">National State Filter</h3>
+                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-800">
+                  {selectedStateName
+                    ? `${selectedStateName} State Selected`
+                    : "All States (Federation)"}
+                </span>
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {selectedStateName
+                  ? `Filtering dashboard metrics, canvassing progress, and voter records to ${selectedStateName} State.`
+                  : "Showing consolidated metrics for all voters across the entire database."}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <label htmlFor="national-admin-state-filter" className="sr-only">
+              Filter by State
+            </label>
+            <select
+              id="national-admin-state-filter"
+              value={voterStateFilter || ""}
+              onChange={(e) => {
+                const val = e.target.value ? parseInt(e.target.value, 10) : null;
+                setVoterStateFilter(val);
+              }}
+              className="w-full sm:w-64 border border-gray-300 rounded-lg px-3 py-2 text-sm font-medium text-gray-800 bg-white focus:ring-2 focus:ring-[#004d25] focus:outline-none cursor-pointer"
+            >
+              <option value="">All States (Entire Federation)</option>
+              {states.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} State
+                </option>
+              ))}
+            </select>
+            {voterStateFilter && (
+              <button
+                type="button"
+                onClick={() => setVoterStateFilter(null)}
+                className="px-3 py-2 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg border border-rose-200 transition whitespace-nowrap cursor-pointer"
+                title="Reset to view all states"
+              >
+                Clear Filter
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Jurisdiction Deployment Summary based on user level */}
       <JurisdictionDeploymentSummary
         user={user}
+        voterStateFilter={voterStateFilter}
         onAddAgent={(loc, targetRole) => {
           setAgentModalLocation(loc);
           setAgentModalInitialData({ role: targetRole });
@@ -195,6 +293,7 @@ export default function Dashboard() {
           user={user}
           voters={voters}
           totalVotersCount={totalVotersCount}
+          selectedStateName={selectedStateName}
           onViewAllVoters={() => setActiveTab("voters")}
         />
       ) : activeTab === "volunteers" ? (
@@ -245,7 +344,7 @@ export default function Dashboard() {
   );
 }
 
-function DashboardHeader({ user, locations, onOpenRegisterAgent }: any) {
+function DashboardHeader({ user, locations, onOpenRegisterAgent, selectedStateName }: any) {
   const locationName =
     user.locationName || locations.find((l: any) => l.id === user.locationId)?.name || "National";
   const [pathParts, setPathParts] = useState<string[]>([]);
@@ -259,7 +358,7 @@ function DashboardHeader({ user, locations, onOpenRegisterAgent }: any) {
       const parts: string[] = [];
 
       if (user.role === "national_admin") {
-        setPathParts(["Nigeria"]);
+        setPathParts(selectedStateName ? ["Nigeria", `${selectedStateName} State`] : ["Nigeria"]);
         return;
       }
 
@@ -330,17 +429,23 @@ function DashboardHeader({ user, locations, onOpenRegisterAgent }: any) {
     return () => {
       isCancelled = true;
     };
-  }, [user, locations]);
+  }, [user, locations, selectedStateName]);
 
   return (
     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-5 rounded-2xl border border-gray-100 shadow-xs">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">
-          {user.role === "national_admin" ? "National Headquarters" : `${locationName} Dashboard`}
+          {user.role === "national_admin"
+            ? selectedStateName
+              ? `National HQ • ${selectedStateName} State`
+              : "National Headquarters"
+            : `${locationName} Dashboard`}
         </h1>
         <p className="text-sm text-gray-500 mt-0.5">
           {user.role === "national_admin"
-            ? "Nigeria Overview"
+            ? selectedStateName
+              ? `Filtered State Overview (${selectedStateName})`
+              : "Nigeria Overview (All States)"
             : `${user.role.replace("_", " ").toUpperCase()} • Jurisdiction Overview`}
         </p>
         {user.role === "pu_agent" && (
@@ -521,7 +626,14 @@ function NationalDashboard() {
   );
 }
 
-function CanvassingDashboard({ stats, user, voters, totalVotersCount, onViewAllVoters }: any) {
+function CanvassingDashboard({
+  stats,
+  user,
+  voters,
+  totalVotersCount,
+  selectedStateName,
+  onViewAllVoters,
+}: any) {
   const navigate = useNavigate();
   const COLORS = ["#004d25", "#d4af37", "#e11d48", "#6b7280"];
   const { canvassing } = stats;
@@ -531,14 +643,18 @@ function CanvassingDashboard({ stats, user, voters, totalVotersCount, onViewAllV
       ? "Voters in your Ward"
       : user?.role === "pu_agent"
         ? "Voters in your Polling Unit"
-        : "Total Registered Voters";
+        : selectedStateName
+          ? `Voters in ${selectedStateName} State`
+          : "Total Registered Voters (All States)";
 
   const listHeading =
     user?.role === "ward_admin"
       ? "Voters in your Ward"
       : user?.role === "pu_agent"
         ? "Voters in your Polling Unit"
-        : "Voters in your PU / Ward";
+        : selectedStateName
+          ? `Target Voters (${selectedStateName})`
+          : "Voters in your PU / Ward";
 
   if (isAgent) {
     return (
@@ -661,6 +777,7 @@ function CanvassingDashboard({ stats, user, voters, totalVotersCount, onViewAllV
         <StatCard
           title={votersHeading}
           value={totalVotersCount > 0 ? totalVotersCount.toLocaleString() : "0"}
+          subtitle={selectedStateName ? `${selectedStateName} State Registry` : undefined}
           icon={Users}
           colorClass="bg-blue-50 text-blue-600"
         />
@@ -1885,16 +2002,19 @@ function AgentQuickActions({ user }: any) {
 
 function JurisdictionDeploymentSummary({
   user,
+  voterStateFilter,
   onAddAgent,
   onEditAgent,
   refreshTrigger,
 }: {
   user: any;
+  voterStateFilter?: number | null;
   onAddAgent: (loc: Location, targetRole: Role) => void;
   onEditAgent: (agent: Partial<Agent>) => void;
   refreshTrigger: number;
 }) {
-  const [viewLevel, setViewLevel] = useState<"lga" | "ward" | "pu">(() => {
+  const [viewLevel, setViewLevel] = useState<"state" | "lga" | "ward" | "pu">(() => {
+    if (user.role === "national_admin") return "state";
     if (user.role === "ward_admin") return "pu";
     if (user.role === "lga_admin") return "ward";
     return "lga";
@@ -1924,17 +2044,27 @@ function JurisdictionDeploymentSummary({
   const [activeListTab, setActiveListTab] = useState<"vacant" | "assigned">("vacant");
   const [searchQuery, setSearchQuery] = useState("");
 
+  // Reset filters when national admin changes state filter
+  useEffect(() => {
+    if (user.role === "national_admin") {
+      setSelectedLgaFilter(null);
+      setSelectedWardFilter(null);
+    }
+  }, [voterStateFilter, user.role]);
+
   // Fetch LGAs for State/National admin
   useEffect(() => {
     if (!user) return;
     let q = supabase.from("local_governments").select("id, name");
-    if (user.stateId) {
-      q = q.eq("state_id", user.stateId);
+    const activeStateId =
+      user.role === "national_admin" ? voterStateFilter : user.stateId || voterStateFilter;
+    if (activeStateId) {
+      q = q.eq("state_id", activeStateId);
     }
     q.order("name").then(({ data }) => {
       if (data) setLgaList(data.map((l: any) => ({ id: l.id, name: l.name || `LGA #${l.id}` })));
     });
-  }, [user]);
+  }, [user, voterStateFilter]);
 
   // Fetch Wards when selected LGA changes
   useEffect(() => {
@@ -1963,45 +2093,61 @@ function JurisdictionDeploymentSummary({
       setLoading(true);
       try {
         const table =
-          user.role === "ward_admin" || viewLevel === "pu"
-            ? "polling_units"
-            : user.role === "lga_admin" || viewLevel === "ward"
-              ? "wards"
-              : "local_governments";
+          viewLevel === "state"
+            ? "states"
+            : user.role === "ward_admin" || viewLevel === "pu"
+              ? "polling_units"
+              : user.role === "lga_admin" || viewLevel === "ward"
+                ? "wards"
+                : "local_governments";
 
         const effectiveWard = selectedWardFilter || user.wardId;
         const effectiveLga = selectedLgaFilter || user.lgaId;
+        const activeStateId =
+          user.role === "national_admin" ? voterStateFilter : user.stateId || voterStateFilter;
         const targetRole: Role =
-          viewLevel === "pu" ? "pu_agent" : viewLevel === "ward" ? "ward_admin" : "lga_admin";
+          viewLevel === "state"
+            ? "state_admin"
+            : viewLevel === "pu"
+              ? "pu_agent"
+              : viewLevel === "ward"
+                ? "ward_admin"
+                : "lga_admin";
 
         // 1. Exact count of total units from Postgres
         let countQ = supabase.from(table).select("*", { count: "exact", head: true });
-        if (effectiveWard) {
+        if (viewLevel === "state") {
+          if (activeStateId) countQ = countQ.eq("id", activeStateId);
+        } else if (effectiveWard) {
           countQ = countQ.eq("ward_id", effectiveWard);
         } else if (effectiveLga) {
           countQ = countQ.eq("localgovernment_id", effectiveLga);
-        } else if (user.stateId) {
-          countQ = countQ.eq("state_id", user.stateId);
+        } else if (activeStateId) {
+          countQ = countQ.eq("state_id", activeStateId);
         }
 
         // 2. Exact assigned agents from Postgres
         let agentsQ = supabase.from("agents").select(AGENT_PUBLIC_COLUMNS).eq("role", targetRole);
-        if (effectiveWard) {
+        if (viewLevel === "state") {
+          if (activeStateId) agentsQ = agentsQ.eq("state_id", activeStateId);
+        } else if (effectiveWard) {
           agentsQ = agentsQ.eq("wards_id", effectiveWard);
         } else if (effectiveLga) {
           agentsQ = agentsQ.eq("local_governments_id", effectiveLga);
-        } else if (user.stateId) {
-          agentsQ = agentsQ.eq("state_id", user.stateId);
+        } else if (activeStateId) {
+          agentsQ = agentsQ.eq("state_id", activeStateId);
         }
 
         // 3. Units for display list (capped at 500 for high performance)
         let unitsQ = supabase.from(table).select("id, name");
-        if (effectiveWard) {
+        if (viewLevel === "state") {
+          if (activeStateId) unitsQ = unitsQ.eq("id", activeStateId);
+        } else if (effectiveWard) {
           unitsQ = unitsQ.eq("ward_id", effectiveWard);
         } else if (effectiveLga) {
           unitsQ = unitsQ.eq("localgovernment_id", effectiveLga);
-        } else if (user.stateId) {
-          unitsQ = unitsQ.eq("state_id", user.stateId);
+        } else if (activeStateId) {
+          unitsQ = unitsQ.eq("state_id", activeStateId);
         }
 
         const [countRes, agentsRes, unitsRes] = await Promise.all([
@@ -2022,8 +2168,11 @@ function JurisdictionDeploymentSummary({
           } else if (viewLevel === "ward") {
             const set = new Set(agents.map((a: any) => a.wards_id).filter(Boolean));
             uniqueAssignedUnitsCount = set.size;
-          } else {
+          } else if (viewLevel === "lga") {
             const set = new Set(agents.map((a: any) => a.local_governments_id).filter(Boolean));
+            uniqueAssignedUnitsCount = set.size;
+          } else {
+            const set = new Set(agents.map((a: any) => a.state_id).filter(Boolean));
             uniqueAssignedUnitsCount = set.size;
           }
 
@@ -2039,9 +2188,22 @@ function JurisdictionDeploymentSummary({
             coveragePercent: rate,
           });
 
-          const prefix = viewLevel === "pu" ? "pu" : viewLevel === "ward" ? "ward" : "lga";
+          const prefix =
+            viewLevel === "state"
+              ? "state"
+              : viewLevel === "pu"
+                ? "pu"
+                : viewLevel === "ward"
+                  ? "ward"
+                  : "lga";
           const defaultLabel =
-            viewLevel === "pu" ? "Polling Unit" : viewLevel === "ward" ? "Ward" : "LGA";
+            viewLevel === "state"
+              ? "State"
+              : viewLevel === "pu"
+                ? "Polling Unit"
+                : viewLevel === "ward"
+                  ? "Ward"
+                  : "LGA";
           const units = (unitsRes.data || []).map((u: any) => ({
             id: `${prefix}_${u.id}`,
             name: u.name || `${defaultLabel} #${u.id}`,
@@ -2062,7 +2224,7 @@ function JurisdictionDeploymentSummary({
     return () => {
       isCancelled = true;
     };
-  }, [user, refreshTrigger, viewLevel, selectedLgaFilter, selectedWardFilter]);
+  }, [user, refreshTrigger, viewLevel, selectedLgaFilter, selectedWardFilter, voterStateFilter]);
 
   if (user.role === "pu_agent") {
     return null;
@@ -2092,27 +2254,29 @@ function JurisdictionDeploymentSummary({
   const vacantList: { id: string; name: string; numId: number }[] = [];
 
   subUnits.forEach((unit) => {
-    let matchAgent: any = null;
+    let matchingAgents: any[] = [];
     if (viewLevel === "pu") {
-      matchAgent = unitAgents.find(
+      matchingAgents = unitAgents.filter(
         (a) => a.polling_units_id === unit.numId || a.jurisdiction_id === unit.id,
       );
     } else if (viewLevel === "ward") {
-      matchAgent = unitAgents.find(
+      matchingAgents = unitAgents.filter(
         (a) => a.wards_id === unit.numId || a.jurisdiction_id === unit.id,
       );
     } else if (viewLevel === "lga") {
-      matchAgent = unitAgents.find(
+      matchingAgents = unitAgents.filter(
         (a) => a.local_governments_id === unit.numId || a.jurisdiction_id === unit.id,
       );
     } else {
-      matchAgent = unitAgents.find(
+      matchingAgents = unitAgents.filter(
         (a) => a.state_id === unit.numId || a.jurisdiction_id === unit.id,
       );
     }
 
-    if (matchAgent) {
-      assignedList.push({ unit, agent: matchAgent });
+    if (matchingAgents.length > 0) {
+      matchingAgents.forEach((agent) => {
+        assignedList.push({ unit, agent });
+      });
     } else {
       vacantList.push(unit);
     }
@@ -2178,6 +2342,9 @@ function JurisdictionDeploymentSummary({
               className="flex-1 sm:w-56 text-xs border border-gray-300 rounded-lg px-3 py-2 font-bold text-gray-800 bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
             >
               {(user.role === "state_admin" || user.role === "national_admin") && (
+                <option value="state">States (State Admins)</option>
+              )}
+              {(user.role === "state_admin" || user.role === "national_admin") && (
                 <option value="lga">LGAs (LGA Admins)</option>
               )}
               <option value="ward">Wards (Ward Admins)</option>
@@ -2186,34 +2353,35 @@ function JurisdictionDeploymentSummary({
           </div>
 
           {/* LGA Filter */}
-          {(user.role === "state_admin" || user.role === "national_admin") && (
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <label
-                htmlFor="deployment-lga"
-                className="text-xs font-semibold text-gray-600 w-12 shrink-0"
-              >
-                LGA:
-              </label>
-              <select
-                id="deployment-lga"
-                name="deployment-lga"
-                value={selectedLgaFilter || ""}
-                onChange={(e) => {
-                  const val = e.target.value ? Number(e.target.value) : null;
-                  setSelectedLgaFilter(val);
-                  setSelectedWardFilter(null);
-                }}
-                className="flex-1 sm:w-56 text-xs border border-gray-300 rounded-lg px-3 py-2 font-medium text-gray-800 bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
-              >
-                <option value="">All LGAs in State</option>
-                {lgaList.map((lga) => (
-                  <option key={lga.id} value={lga.id}>
-                    {lga.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          {(user.role === "state_admin" || user.role === "national_admin") &&
+            viewLevel !== "state" && (
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <label
+                  htmlFor="deployment-lga"
+                  className="text-xs font-semibold text-gray-600 w-12 shrink-0"
+                >
+                  LGA:
+                </label>
+                <select
+                  id="deployment-lga"
+                  name="deployment-lga"
+                  value={selectedLgaFilter || ""}
+                  onChange={(e) => {
+                    const val = e.target.value ? Number(e.target.value) : null;
+                    setSelectedLgaFilter(val);
+                    setSelectedWardFilter(null);
+                  }}
+                  className="flex-1 sm:w-56 text-xs border border-gray-300 rounded-lg px-3 py-2 font-medium text-gray-800 bg-white focus:ring-2 focus:ring-[#004d25] outline-none cursor-pointer"
+                >
+                  <option value="">All LGAs in State</option>
+                  {lgaList.map((lga) => (
+                    <option key={lga.id} value={lga.id}>
+                      {lga.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
           {/* Ward Filter */}
           {(viewLevel === "ward" || viewLevel === "pu") &&
@@ -2336,7 +2504,9 @@ function JurisdictionDeploymentSummary({
               size={14}
               className={activeListTab === "assigned" ? "text-[#004d25]" : "text-gray-400"}
             />
-            <span>Assigned Agents ({exactMetrics.assigned.toLocaleString()})</span>
+            <span>
+              Assigned {childTypeLabel}s ({exactMetrics.assigned.toLocaleString()})
+            </span>
           </button>
         </div>
 
@@ -2423,7 +2593,7 @@ function JurisdictionDeploymentSummary({
         <div className="divide-y divide-gray-100 border border-gray-100 rounded-xl overflow-hidden max-h-80 overflow-y-auto">
           {filteredAssigned.map(({ unit, agent }) => (
             <div
-              key={unit.id}
+              key={`${unit.id}_${agent.id}`}
               className="p-3.5 hover:bg-gray-50/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 transition-colors"
             >
               <div className="flex items-center gap-3 min-w-0">

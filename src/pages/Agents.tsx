@@ -173,6 +173,7 @@ export default function Agents() {
     updateAgentStatus,
     deleteAgent,
     refreshDeploymentStats,
+    voterStateFilter,
   } = useApp();
   const deployment = stats.deployment || {};
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -195,7 +196,7 @@ export default function Agents() {
     if (!user || user.id === target.id) return false;
     if (user.role === "national_admin") return true;
     if (user.role === "state_admin") {
-      if (target.role === "national_admin" || target.role === "state_admin") return false;
+      if (target.role === "national_admin") return false;
       return user.stateId ? target.stateId === user.stateId : true;
     }
     return false;
@@ -324,9 +325,11 @@ export default function Agents() {
         query = query.eq("wards_id", user.wardId);
       } else if (user.role === "pu_agent" && user.puId) {
         query = query.eq("polling_units_id", user.puId);
+      } else if (user.role === "national_admin" && voterStateFilter) {
+        query = query.or(`state_id.eq.${voterStateFilter},role.eq.national_admin`);
       }
 
-      const { data, error } = await query.order("name").limit(200);
+      const { data, error } = await query.order("name").limit(1000);
       if (error) throw error;
 
       setAgents(
@@ -363,7 +366,7 @@ export default function Agents() {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, voterStateFilter]);
 
   React.useEffect(() => {
     Promise.resolve(fetchLocalAgents()).catch((error: unknown) =>
@@ -376,11 +379,20 @@ export default function Agents() {
 
   if (!user) return null;
 
+  const isAgentVisible = (targetRole: Role) => {
+    if (!user) return false;
+    if (user.role === "national_admin" || user.role === "state_admin") {
+      return roleHierarchy[targetRole] <= roleHierarchy[user.role];
+    }
+    return roleHierarchy[targetRole] < roleHierarchy[user.role];
+  };
+
   const availableTabs = React.useMemo(() => {
     if (!user) return [];
     if (user.role === "national_admin") {
       return [
         { id: "all", label: "All Agents" },
+        { id: "national_admin", label: "National Admins" },
         { id: "state_admin", label: "State Admins" },
         { id: "lga_admin", label: "LGA Coordinators" },
         { id: "ward_admin", label: "Ward Admins" },
@@ -390,6 +402,7 @@ export default function Agents() {
     if (user.role === "state_admin") {
       return [
         { id: "all", label: "All Agents" },
+        { id: "state_admin", label: "State Admins" },
         { id: "lga_admin", label: "LGA Coordinators" },
         { id: "ward_admin", label: "Ward Admins" },
         { id: "pu_agent", label: "Polling Unit Agents" },
@@ -418,7 +431,7 @@ export default function Agents() {
     });
 
     agents.forEach((a) => {
-      if (user && roleHierarchy[a.role] < roleHierarchy[user.role]) {
+      if (isAgentVisible(a.role)) {
         counts.all = (counts.all || 0) + 1;
         if (counts[a.role] !== undefined) {
           counts[a.role] = (counts[a.role] || 0) + 1;
@@ -432,7 +445,7 @@ export default function Agents() {
   // Apply hierarchical, tab, and search filters to the locally loaded agents
   const filteredAgents = agents.filter((a) => {
     // 1. Hierarchy Check
-    if (roleHierarchy[a.role] >= roleHierarchy[user!.role]) return false;
+    if (!isAgentVisible(a.role)) return false;
 
     // 2. Role Tab Filter
     if (selectedRoleTab !== "all" && a.role !== selectedRoleTab) return false;
@@ -643,12 +656,10 @@ export default function Agents() {
                   >
                     <td className="px-6 py-4">
                       <div className="font-medium text-gray-900">{agent.name}</div>
-                      <div className="text-gray-500 text-xs flex items-center gap-1.5 flex-wrap">
+                      <div className="text-gray-500 text-xs flex items-center gap-1.5 whitespace-nowrap">
                         <span>{agent.phone}</span>
                         {user.role === "national_admin" &&
-                          (agent.role === "lga_admin" ||
-                            agent.role === "ward_admin" ||
-                            agent.role === "pu_agent") &&
+                          agent.role !== "national_admin" &&
                           getStateNameForAgent(agent) && (
                             <span className="text-gray-500 font-medium capitalize">
                               • {getStateNameForAgent(agent).toLowerCase()}

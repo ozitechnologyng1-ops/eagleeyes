@@ -35,6 +35,7 @@ export const getAvailableRoles = (userRole: Role): { role: Role; label: string }
   switch (userRole) {
     case "national_admin":
       return [
+        { role: "national_admin", label: "National Admin" },
         { role: "state_admin", label: "State Admin" },
         { role: "lga_admin", label: "LGA Coordinator" },
         { role: "ward_admin", label: "Ward Admin" },
@@ -42,8 +43,9 @@ export const getAvailableRoles = (userRole: Role): { role: Role; label: string }
       ];
     case "state_admin":
       return [
-        { role: "ward_admin", label: "Ward Admin" },
+        { role: "state_admin", label: "State Admin" },
         { role: "lga_admin", label: "LGA Coordinator" },
+        { role: "ward_admin", label: "Ward Admin" },
         { role: "pu_agent", label: "Polling Unit Agent" },
       ];
     case "lga_admin":
@@ -233,10 +235,22 @@ export default function AgentModal({
         else if (userRole === "national_admin") defaultRole = "state_admin";
       }
 
+      let prefilledPhone = initialData?.phone || "";
+      if (prefilledPhone) {
+        let clean = prefilledPhone.replace(/\D/g, "");
+        if (clean.startsWith("234")) {
+          clean = "0" + clean.slice(3);
+        }
+        if (clean.length > 0 && !clean.startsWith("0")) {
+          clean = "0" + clean;
+        }
+        prefilledPhone = clean;
+      }
+
       setForm({
         firstName: prefilledFirst,
         lastName: prefilledLast,
-        phone: initialData?.phone || "",
+        phone: prefilledPhone,
         picture: prefilledPic,
         bankName: initialData?.bankName || "",
         accountName: initialData?.accountName || "",
@@ -1929,7 +1943,8 @@ function JurisdictionSelector({
 
         // Calculate and sync assigned location ID based on targetRole
         let finalLocId = "";
-        if (targetRole === "state_admin" && st) finalLocId = `state_${st}`;
+        if (targetRole === "national_admin") finalLocId = "nat1";
+        else if (targetRole === "state_admin" && st) finalLocId = `state_${st}`;
         else if (targetRole === "lga_admin" && lg) finalLocId = `lga_${lg}`;
         else if (targetRole === "ward_admin" && wd) finalLocId = `ward_${wd}`;
         else if (pu) finalLocId = `pu_${pu}`;
@@ -2125,30 +2140,38 @@ function JurisdictionSelector({
   return (
     <div className="space-y-4">
       {/* State Selection */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          State{" "}
-          {isStateDisabled && (
-            <span className="text-xs text-gray-400 font-normal">(Locked to your jurisdiction)</span>
-          )}
-        </label>
-        <select
-          value={selectedState}
-          onChange={handleStateChange}
-          disabled={isStateDisabled}
-          className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#004d25] disabled:bg-gray-100 disabled:text-gray-600 text-sm bg-white"
-        >
-          <option value="">Select State...</option>
-          {states.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
-        </select>
-      </div>
+      {targetRole === "national_admin" ? (
+        <div className="p-3 bg-emerald-50 rounded-lg text-xs text-emerald-800 font-medium">
+          Jurisdiction: National (Federal Republic of Nigeria)
+        </div>
+      ) : (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            State{" "}
+            {isStateDisabled && (
+              <span className="text-xs text-gray-400 font-normal">
+                (Locked to your jurisdiction)
+              </span>
+            )}
+          </label>
+          <select
+            value={selectedState}
+            onChange={handleStateChange}
+            disabled={isStateDisabled}
+            className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#004d25] disabled:bg-gray-100 disabled:text-gray-600 text-sm bg-white"
+          >
+            <option value="">Select State...</option>
+            {states.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
-      {/* LGA Selection (hidden for State Admin target role) */}
-      {targetRole !== "state_admin" && (
+      {/* LGA Selection (hidden for State Admin & National Admin target roles) */}
+      {!["state_admin", "national_admin"].includes(targetRole) && (
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Local Government Area (LGA){" "}

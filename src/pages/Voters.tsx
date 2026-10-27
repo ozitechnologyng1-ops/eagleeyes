@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from "react";
-import { useApp, Voter, VoterNote } from "../context/AppContext";
+import { useApp, Voter, VoterNote, Agent } from "../context/AppContext";
 import {
   Search,
   X,
   Check,
   UserCircle,
+  UserPlus,
   ChevronLeft,
   ChevronRight,
   MessageCircle,
@@ -27,6 +28,7 @@ import { cn, getFriendlyErrorMessage } from "../lib/utils";
 import { supabase } from "../lib/supabase";
 import toast from "react-hot-toast";
 import { greenApiService } from "../lib/greenApi";
+import AgentModal from "../components/AgentModal";
 
 import {
   // buildImageKitUrl,
@@ -46,13 +48,82 @@ export default function Voters() {
     votersPage,
     isLoadingVoters,
     fetchVotersPage,
+    voterStateFilter,
+    setVoterStateFilter,
     voterLgaFilter,
     setVoterLgaFilter,
     voterWardFilter,
     setVoterWardFilter,
     voterPuFilter,
     setVoterPuFilter,
+    addAgent,
   } = useApp();
+
+  const isNationalOrStateAdmin = user?.role === "national_admin" || user?.role === "state_admin";
+  const [showRegisterAgentModal, setShowRegisterAgentModal] = useState(false);
+  const [registerAgentInitialData, setAgentInitialData] = useState<Partial<Agent> | null>(null);
+
+  const handleOpenRegisterAsAgent = (voter: Voter, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!isNationalOrStateAdmin) {
+      toast.error("Only state and national agents can register voters as agents.");
+      return;
+    }
+
+    const rawName = (voter.name || "").trim();
+    const nameParts = rawName ? rawName.split(/\s+/) : [];
+    const firstName = nameParts[0] || "";
+    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(" ") : "";
+
+    // Normalize phone number to standard 11-digit Nigerian mobile format starting with 0
+    let cleanPhone = (voter.phone || "").replace(/\D/g, "");
+    if (cleanPhone.startsWith("234")) {
+      cleanPhone = "0" + cleanPhone.slice(3);
+    }
+    if (cleanPhone.length > 0 && !cleanPhone.startsWith("0")) {
+      cleanPhone = "0" + cleanPhone;
+    }
+
+    // Determine locationId from voter's jurisdiction hierarchy
+    const locId = voter.puNumberId
+      ? `pu_${voter.puNumberId}`
+      : voter.wardId
+        ? `ward_${voter.wardId}`
+        : voter.lgaId
+          ? `lga_${voter.lgaId}`
+          : voter.stateId
+            ? `state_${voter.stateId}`
+            : user?.stateId
+              ? `state_${user.stateId}`
+              : "";
+
+    setAgentInitialData({
+      name: voter.name,
+      firstName,
+      lastName,
+      phone: cleanPhone,
+      picture: voter.image || "",
+      locationId: locId,
+      stateId: voter.stateId || user?.stateId || null,
+      lgaId: voter.lgaId || null,
+      wardId: voter.wardId || null,
+      puId: voter.puNumberId || (voter.puId ? parseInt(voter.puId, 10) || null : null),
+      role: "pu_agent",
+    });
+    setShowRegisterAgentModal(true);
+  };
+
+  const handleSaveAgentFromVoter = async (agentData: Partial<Agent>) => {
+    try {
+      await addAgent(agentData as Omit<Agent, "id">);
+      toast.success(`${agentData.firstName || "Agent"} registered successfully as agent!`);
+      setShowRegisterAgentModal(false);
+      setAgentInitialData(null);
+    } catch (err: any) {
+      toast.error(getFriendlyErrorMessage(err) || "Failed to register agent");
+      throw err;
+    }
+  };
 
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedVoter, setSelectedVoter] = useState<Voter | null>(null);
@@ -60,6 +131,7 @@ export default function Voters() {
   const [showNoteSuccess, setShowNoteSuccess] = useState(false);
 
   // Jurisdiction filter options
+  const [states, setStates] = useState<{ id: number; name: string }[]>([]);
   const [lgas, setLgas] = useState<{ id: number; name: string }[]>([]);
   const [wards, setWards] = useState<{ id: number; name: string; ward_number?: string }[]>([]);
   const [pollingUnits, setPollingUnits] = useState<
@@ -67,6 +139,10 @@ export default function Voters() {
   >([]);
 
   // Selected filter values
+  const [selectedState, setSelectedState] = useState<number | null>(() => {
+    if (user?.role === "state_admin") return user.stateId || null;
+    return voterStateFilter;
+  });
   const [selectedLga, setSelectedLga] = useState<number | null>(() => {
     if (user?.role === "lga_admin" || user?.role === "ward_admin") return user.lgaId || null;
     return voterLgaFilter;
@@ -79,6 +155,26 @@ export default function Voters() {
     if (user?.role === "pu_agent") return user.puId || user.lagosPollingUnitId || null;
     return voterPuFilter;
   });
+
+  // Sync state filter for national admin
+  useEffect(() => {
+    if (user?.role === "national_admin") {
+      setSelectedState(voterStateFilter);
+    }
+  }, [voterStateFilter, user?.role]);
+
+  // Load states for national admin
+  useEffect(() => {
+    if (user?.role === "national_admin") {
+      supabase
+        .from("states")
+        .select("id, name")
+        .order("name")
+        .then(({ data }) => {
+          if (data && data.length > 0) setStates(data);
+        });
+    }
+  }, [user?.role]);
 
   // AI Refined Photo viewer & caching state (480px x 640px)
   const [photoViewerOpen, setPhotoViewerOpen] = useState(false);
@@ -95,9 +191,14 @@ export default function Voters() {
   // Ensure voters are fetched on mount if not already loaded or when jurisdiction filters change
   useEffect(() => {
     Promise.resolve(
-      fetchVotersPage(1, { lgaId: selectedLga, wardId: selectedWard, puId: selectedPu }),
+      fetchVotersPage(1, {
+        stateId: selectedState,
+        lgaId: selectedLga,
+        wardId: selectedWard,
+        puId: selectedPu,
+      }),
     ).catch((error: unknown) => console.error("Async operation failed in Voters", error));
-  }, [user?.id, user?.stateId]);
+  }, [user?.id, user?.stateId, selectedState]);
 
   // Manual clear cache handler for development & testing
   const handleClearAllPhotoCache = () => {
@@ -219,14 +320,17 @@ export default function Voters() {
   // 1. Fetch LGAs for State/National Admin
   useEffect(() => {
     if (!user) return;
+    const effectiveState = selectedState || (user.role === "state_admin" ? user.stateId : null);
+    if (!effectiveState && user.role !== "national_admin") return;
     let query = supabase.from("local_governments").select("id, name");
-    if (user.stateId) {
-      query = query.eq("state_id", user.stateId);
+    if (effectiveState) {
+      query = query.eq("state_id", effectiveState);
     }
     query.order("name").then(({ data }) => {
       if (data) setLgas(data);
+      else setLgas([]);
     });
-  }, [user]);
+  }, [user, selectedState]);
 
   // 2. Fetch Wards based on selected LGA or user's assigned LGA
   useEffect(() => {
@@ -351,6 +455,21 @@ export default function Voters() {
   }, [voters, wardNames, puNames]);
 
   // Filter change handlers
+  const handleStateChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value ? parseInt(e.target.value, 10) : null;
+    setSelectedState(val);
+    setSelectedLga(null);
+    setSelectedWard(null);
+    setSelectedPu(null);
+    setVoterStateFilter(val);
+    setVoterLgaFilter(null);
+    setVoterWardFilter(null);
+    setVoterPuFilter(null);
+    Promise.resolve(
+      fetchVotersPage(1, { stateId: val, lgaId: null, wardId: null, puId: null }),
+    ).catch((error: unknown) => console.error("Async operation failed in Voters", error));
+  };
+
   const handleLgaChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value ? parseInt(e.target.value, 10) : null;
     setSelectedLga(val);
@@ -359,9 +478,9 @@ export default function Voters() {
     setVoterLgaFilter(val);
     setVoterWardFilter(null);
     setVoterPuFilter(null);
-    Promise.resolve(fetchVotersPage(1, { lgaId: val, wardId: null, puId: null })).catch(
-      (error: unknown) => console.error("Async operation failed in Voters", error),
-    );
+    Promise.resolve(
+      fetchVotersPage(1, { stateId: selectedState, lgaId: val, wardId: null, puId: null }),
+    ).catch((error: unknown) => console.error("Async operation failed in Voters", error));
   };
 
   const handleWardChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -370,9 +489,9 @@ export default function Voters() {
     setSelectedPu(null);
     setVoterWardFilter(val);
     setVoterPuFilter(null);
-    Promise.resolve(fetchVotersPage(1, { lgaId: selectedLga, wardId: val, puId: null })).catch(
-      (error: unknown) => console.error("Async operation failed in Voters", error),
-    );
+    Promise.resolve(
+      fetchVotersPage(1, { stateId: selectedState, lgaId: selectedLga, wardId: val, puId: null }),
+    ).catch((error: unknown) => console.error("Async operation failed in Voters", error));
   };
 
   const handlePuChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -382,6 +501,7 @@ export default function Voters() {
     setVoterPuFilter(val);
     Promise.resolve(
       fetchVotersPage(1, {
+        stateId: selectedState,
         lgaId: selectedLga,
         wardId: selectedWard,
         puId: val,
@@ -1003,7 +1123,33 @@ export default function Voters() {
               Jurisdiction Filters
             </span>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div
+            className={cn(
+              "grid gap-3",
+              user?.role === "national_admin"
+                ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"
+                : "grid-cols-1 sm:grid-cols-3",
+            )}
+          >
+            {/* State Filter (National Admin) */}
+            {user?.role === "national_admin" && (
+              <div>
+                <label className="block text-[11px] font-semibold text-gray-600 mb-1">State</label>
+                <select
+                  value={selectedState || ""}
+                  onChange={handleStateChange}
+                  className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-white focus:ring-2 focus:ring-[#004d25] focus:outline-none cursor-pointer"
+                >
+                  <option value="">All States</option>
+                  {states.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* LGA Filter (State & National Admins) */}
             <div>
               <label className="block text-[11px] font-semibold text-gray-600 mb-1">
@@ -1210,48 +1356,62 @@ export default function Voters() {
                       )}
 
                       {/* Action Icons: Aligned to Far Right */}
-                      {voter.phone && (
-                        <div
-                          className="flex items-center gap-1.5"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {/* WhatsApp Outreach */}
-                          {!(hasWaInstance && isVoterNotOnWa(voter)) && (
-                            <button
-                              type="button"
-                              title={
-                                hasWaInstance
-                                  ? `Dispatch Campaign Flyer & Message (+₦${stateConfig?.earning_per_chat || 50})`
-                                  : `Open WhatsApp on phone (+₦${stateConfig?.earning_per_manual_wa || 15})`
-                              }
-                              onClick={(e) => handleOpenWaModal(voter, e)}
-                              disabled={sendingVoterId === voter.id}
-                              className={cn(
-                                "p-1.5 rounded-full transition-colors disabled:opacity-50 cursor-pointer",
-                                isVoterNotOnWa(voter)
-                                  ? "hover:bg-amber-50 text-amber-500 hover:text-amber-700"
-                                  : "hover:bg-green-50 text-green-600",
-                              )}
-                            >
-                              {sendingVoterId === voter.id ? (
-                                <Loader2 size={18} className="animate-spin text-green-600" />
-                              ) : (
-                                <MessageCircle size={18} />
-                              )}
-                            </button>
-                          )}
-
-                          {/* Call Voter */}
+                      <div
+                        className="flex items-center gap-1.5"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {/* Register Voter as Agent (State & National Admins only) */}
+                        {isNationalOrStateAdmin && (
                           <button
                             type="button"
-                            title={`Call Voter (+₦${stateConfig?.earning_per_call || 20} bounty)`}
-                            onClick={(e) => handleCallVoter(voter, e)}
+                            title={`Register ${voter.name} as Agent`}
+                            onClick={(e) => handleOpenRegisterAsAgent(voter, e)}
                             className="p-1.5 rounded-full hover:bg-emerald-50 text-emerald-700 dark:text-emerald-400 transition-colors cursor-pointer"
                           >
-                            <Phone size={18} />
+                            <UserPlus size={18} />
                           </button>
-                        </div>
-                      )}
+                        )}
+
+                        {voter.phone && (
+                          <>
+                            {/* WhatsApp Outreach */}
+                            {!(hasWaInstance && isVoterNotOnWa(voter)) && (
+                              <button
+                                type="button"
+                                title={
+                                  hasWaInstance
+                                    ? `Dispatch Campaign Flyer & Message (+₦${stateConfig?.earning_per_chat || 50})`
+                                    : `Open WhatsApp on phone (+₦${stateConfig?.earning_per_manual_wa || 15})`
+                                }
+                                onClick={(e) => handleOpenWaModal(voter, e)}
+                                disabled={sendingVoterId === voter.id}
+                                className={cn(
+                                  "p-1.5 rounded-full transition-colors disabled:opacity-50 cursor-pointer",
+                                  isVoterNotOnWa(voter)
+                                    ? "hover:bg-amber-50 text-amber-500 hover:text-amber-700"
+                                    : "hover:bg-green-50 text-green-600",
+                                )}
+                              >
+                                {sendingVoterId === voter.id ? (
+                                  <Loader2 size={18} className="animate-spin text-green-600" />
+                                ) : (
+                                  <MessageCircle size={18} />
+                                )}
+                              </button>
+                            )}
+
+                            {/* Call Voter */}
+                            <button
+                              type="button"
+                              title={`Call Voter (+₦${stateConfig?.earning_per_call || 20} bounty)`}
+                              onClick={(e) => handleCallVoter(voter, e)}
+                              className="p-1.5 rounded-full hover:bg-emerald-50 text-emerald-700 dark:text-emerald-400 transition-colors cursor-pointer"
+                            >
+                              <Phone size={18} />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </li>
                 );
@@ -1418,6 +1578,21 @@ export default function Voters() {
                         <span>Call</span>
                       </button>
                     </div>
+                  </div>
+                )}
+
+                {/* Register Voter as Agent Action (State & National Admins only) */}
+                {isNationalOrStateAdmin && (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenRegisterAsAgent(currentVoter)}
+                      className="w-full py-3 px-4 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold rounded-xl shadow-md flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-98 shadow-emerald-700/20"
+                      title="Register this voter as an election agent"
+                    >
+                      <UserPlus size={18} className="shrink-0" />
+                      <span>Register Voter as Agent</span>
+                    </button>
                   </div>
                 )}
 
@@ -1933,6 +2108,19 @@ export default function Voters() {
             </div>
           </div>
         </div>
+      )}
+      {/* Register Voter as Agent Modal */}
+      {isNationalOrStateAdmin && user && (
+        <AgentModal
+          isOpen={showRegisterAgentModal}
+          onClose={() => {
+            setShowRegisterAgentModal(false);
+            setAgentInitialData(null);
+          }}
+          onSave={handleSaveAgentFromVoter}
+          initialData={registerAgentInitialData || undefined}
+          userRole={user.role}
+        />
       )}
     </div>
   );

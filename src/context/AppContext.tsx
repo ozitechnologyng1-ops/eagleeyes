@@ -184,12 +184,15 @@ interface AppState {
   fetchVotersPage: (
     page: number,
     filters?: {
+      stateId?: number | null;
       lgaId?: number | null;
       wardId?: number | null;
       puId?: number | null;
       puid?: string | null;
     },
   ) => Promise<void>;
+  voterStateFilter: number | null;
+  setVoterStateFilter: (stateId: number | null) => void;
   voterLgaFilter: number | null;
   setVoterLgaFilter: (lgaId: number | null) => void;
   voterWardFilter: number | null;
@@ -209,6 +212,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [totalVotersCount, setTotalVotersCount] = useState<number>(0);
   const [votersPage, setVotersPage] = useState<number>(1);
   const [isLoadingVoters, setIsLoadingVoters] = useState<boolean>(false);
+  const [voterStateFilter, setVoterStateFilter] = useState<number | null>(null);
   const [voterLgaFilter, setVoterLgaFilter] = useState<number | null>(null);
   const [voterWardFilter, setVoterWardFilter] = useState<number | null>(null);
   const [voterPuFilter, setVoterPuFilter] = useState<number | null>(null);
@@ -222,13 +226,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [electionResults, setElectionResults] = useState<any[]>([]);
   const [stats, setStats] = useState<AppState["stats"]>({
     canvassing: {
-      canvassed: 1250430,
-      target: 2000000,
+      canvassed: 0,
+      target: 0,
       stances: [
-        { name: "ADC Supporter", count: 450300 },
-        { name: "Undecided", count: 320500 },
-        { name: "Opposition", count: 280200 },
-        { name: "Unreachable", count: 199430 },
+        { name: "ADC Supporter", count: 0 },
+        { name: "Undecided", count: 0 },
+        { name: "Opposition", count: 0 },
+        { name: "Unreachable", count: 0 },
       ],
     },
     agents: {
@@ -458,8 +462,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           .eq("role", role);
 
         if (user) {
-          // Strict hierarchy: An admin only sees counts for roles BELOW them
-          if (roleHierarchy[role] >= roleHierarchy[user.role]) {
+          // Hierarchy check: national and state admins see their own cadre and subordinate roles
+          const isRoleVisible =
+            user.role === "national_admin" || user.role === "state_admin"
+              ? roleHierarchy[role] <= roleHierarchy[user.role]
+              : roleHierarchy[role] < roleHierarchy[user.role];
+
+          if (!isRoleVisible) {
             return { role, count: 0, activeCount: 0 };
           }
 
@@ -534,6 +543,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return s !== "revoked";
         });
         const unique = new Set(validAgents.map((d: any) => d[distinctCol]));
+
         return { covered: unique.size, total: total || 0 };
       };
 
@@ -587,6 +597,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       } else if (user.role === "state_admin") {
         if (stateId) {
+          depStats.state = await getCoverage(
+            "states",
+            "state_admin",
+            "id",
+            stateId,
+            "state_id",
+            "state_id",
+          );
           depStats.lga = await getCoverage(
             "local_governments",
             "lga_admin",
@@ -694,6 +712,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (
       page: number,
       customFilters?: {
+        stateId?: number | null;
         lgaId?: number | null;
         wardId?: number | null;
         puId?: number | null;
@@ -713,15 +732,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const start = (page - 1) * pageSize;
         const end = start + pageSize - 1;
 
-        let votersQuery = supabase.from("voters").select("*");
-        if (scope.stateId) votersQuery = votersQuery.eq("state_id", scope.stateId);
-        if (scope.lgaId) votersQuery = votersQuery.eq("localgovernment_id", scope.lgaId);
-        if (scope.wardId) votersQuery = votersQuery.eq("ward_id", scope.wardId);
-
         const activePu = customFilters?.puId !== undefined ? customFilters.puId : voterPuFilter;
         const activeWard =
           customFilters?.wardId !== undefined ? customFilters.wardId : voterWardFilter;
         const activeLga = customFilters?.lgaId !== undefined ? customFilters.lgaId : voterLgaFilter;
+
+        const hasSubFilters = Boolean(
+          activePu ||
+          activeWard ||
+          activeLga ||
+          customFilters?.puid ||
+          scope.lgaId ||
+          scope.wardId ||
+          scope.puId,
+        );
+
+        let votersQuery = supabase.from("voters").select("*");
+        if (!hasSubFilters) {
+          votersQuery = votersQuery.order("id", { ascending: true });
+        }
+
+        const activeState =
+          customFilters?.stateId !== undefined
+            ? customFilters.stateId
+            : scope.stateId || voterStateFilter;
+        if (activeState) votersQuery = votersQuery.eq("state_id", activeState);
+        if (scope.lgaId) votersQuery = votersQuery.eq("localgovernment_id", scope.lgaId);
+        if (scope.wardId) votersQuery = votersQuery.eq("ward_id", scope.wardId);
 
         if (user?.role === "pu_agent") {
           if (scope.puid) {
@@ -790,6 +827,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       user?.puid,
       user?.lgaId,
       user?.wardId,
+      voterStateFilter,
       voterPuFilter,
       voterWardFilter,
       voterLgaFilter,
@@ -847,11 +885,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setLocations(geoLocations);
 
         // ── Voters (lightweight: skip full load for performance, count via RPC) ──
-        await fetchVotersPage(1);
+        await fetchVotersPage(1, {
+          stateId: voterStateFilter,
+          lgaId: voterLgaFilter,
+          wardId: voterWardFilter,
+          puId: voterPuFilter,
+        });
 
         // ── Exact voter count via Postgres RPC ──────────────────────────
         // Build scoped RPC params based on role hierarchy
-        const rpcParams: Record<string, any> = {};
+        const rpcParams: Record<string, any> = {
+          p_puid: null,
+        };
+        const effectiveStateId =
+          user?.role === "national_admin" ? voterStateFilter : user?.stateId || voterStateFilter;
+        if (effectiveStateId) {
+          rpcParams.p_state_id = effectiveStateId;
+        }
+
         if (user?.role === "pu_agent") {
           if (user?.puid) {
             rpcParams.p_puid = user.puid;
@@ -864,8 +915,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
           rpcParams.p_ward_id = voterWardFilter || user?.wardId;
         } else if (voterLgaFilter || (user?.role === "lga_admin" && user?.lgaId)) {
           rpcParams.p_lga_id = voterLgaFilter || user?.lgaId;
-        } else if (user?.stateId) {
-          rpcParams.p_state_id = user.stateId;
         }
 
         const { data: countData, error: countErr } = await supabase.rpc(
@@ -925,6 +974,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     user?.lagosPollingUnitId,
     user?.puId,
     user?.puid,
+    voterStateFilter,
     voterLgaFilter,
     voterWardFilter,
     voterPuFilter,
@@ -1686,6 +1736,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         votersPage,
         isLoadingVoters,
         fetchVotersPage,
+        voterStateFilter,
+        setVoterStateFilter,
         voterLgaFilter,
         setVoterLgaFilter,
         voterWardFilter,
