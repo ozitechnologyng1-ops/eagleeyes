@@ -1,6 +1,7 @@
 export const defaultAgentOrigins = [
   "https://ogunadc.com",
   "https://www.ogunadc.com",
+  "https://eagleeyess.vercel.app",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "http://localhost:5174",
