@@ -2039,7 +2039,9 @@ function JurisdictionDeploymentSummary({
   }>({ total: 0, assigned: 0, vacant: 0, coveragePercent: 0 });
 
   const [loading, setLoading] = useState(true);
-  const [subUnits, setSubUnits] = useState<{ id: string; name: string; numId: number }[]>([]);
+  const [subUnits, setSubUnits] = useState<
+    { id: string; name: string; rawName?: string; lgaName?: string | null; numId: number }[]
+  >([]);
   const [unitAgents, setUnitAgents] = useState<any[]>([]);
   const [activeListTab, setActiveListTab] = useState<"vacant" | "assigned">("vacant");
   const [searchQuery, setSearchQuery] = useState("");
@@ -2118,12 +2120,17 @@ function JurisdictionDeploymentSummary({
         let countQ = supabase.from(table).select("*", { count: "exact", head: true });
         if (viewLevel === "state") {
           if (activeStateId) countQ = countQ.eq("id", activeStateId);
-        } else if (effectiveWard) {
-          countQ = countQ.eq("ward_id", effectiveWard);
-        } else if (effectiveLga) {
-          countQ = countQ.eq("localgovernment_id", effectiveLga);
-        } else if (activeStateId) {
-          countQ = countQ.eq("state_id", activeStateId);
+        } else if (viewLevel === "lga") {
+          if (effectiveLga) countQ = countQ.eq("id", effectiveLga);
+          else if (activeStateId) countQ = countQ.eq("state_id", activeStateId);
+        } else if (viewLevel === "ward") {
+          if (effectiveWard) countQ = countQ.eq("id", effectiveWard);
+          else if (effectiveLga) countQ = countQ.eq("localgovernment_id", effectiveLga);
+          else if (activeStateId) countQ = countQ.eq("state_id", activeStateId);
+        } else if (viewLevel === "pu") {
+          if (effectiveWard) countQ = countQ.eq("ward_id", effectiveWard);
+          else if (effectiveLga) countQ = countQ.eq("localgovernment_id", effectiveLga);
+          else if (activeStateId) countQ = countQ.eq("state_id", activeStateId);
         }
 
         // 2. Exact assigned agents from Postgres
@@ -2139,15 +2146,26 @@ function JurisdictionDeploymentSummary({
         }
 
         // 3. Units for display list (capped at 500 for high performance)
-        let unitsQ = supabase.from(table).select("id, name");
+        let unitsQ = supabase
+          .from(table)
+          .select(
+            viewLevel === "ward" || viewLevel === "pu"
+              ? "id, name, localgovernment_id"
+              : "id, name",
+          );
         if (viewLevel === "state") {
           if (activeStateId) unitsQ = unitsQ.eq("id", activeStateId);
-        } else if (effectiveWard) {
-          unitsQ = unitsQ.eq("ward_id", effectiveWard);
-        } else if (effectiveLga) {
-          unitsQ = unitsQ.eq("localgovernment_id", effectiveLga);
-        } else if (activeStateId) {
-          unitsQ = unitsQ.eq("state_id", activeStateId);
+        } else if (viewLevel === "lga") {
+          if (effectiveLga) unitsQ = unitsQ.eq("id", effectiveLga);
+          else if (activeStateId) unitsQ = unitsQ.eq("state_id", activeStateId);
+        } else if (viewLevel === "ward") {
+          if (effectiveWard) unitsQ = unitsQ.eq("id", effectiveWard);
+          else if (effectiveLga) unitsQ = unitsQ.eq("localgovernment_id", effectiveLga);
+          else if (activeStateId) unitsQ = unitsQ.eq("state_id", activeStateId);
+        } else if (viewLevel === "pu") {
+          if (effectiveWard) unitsQ = unitsQ.eq("ward_id", effectiveWard);
+          else if (effectiveLga) unitsQ = unitsQ.eq("localgovernment_id", effectiveLga);
+          else if (activeStateId) unitsQ = unitsQ.eq("state_id", activeStateId);
         }
 
         const [countRes, agentsRes, unitsRes] = await Promise.all([
@@ -2181,12 +2199,48 @@ function JurisdictionDeploymentSummary({
           const rate =
             totalUnitsCount > 0 ? Math.round((assignedUnitsCount / totalUnitsCount) * 100) : 0;
 
-          setExactMetrics({
-            total: totalUnitsCount,
-            assigned: assignedUnitsCount,
-            vacant: vacantUnitsCount,
-            coveragePercent: rate,
-          });
+          if (viewLevel === "lga" && activeStateId && !selectedLgaFilter) {
+            try {
+              const { data: summaryData, error: summaryErr } = await supabase.rpc(
+                "get_dashboard_summary",
+                { p_state_id: activeStateId },
+              );
+              if (!summaryErr && summaryData && summaryData.length > 0) {
+                const summary = summaryData[0];
+                const totalLgas = summary.total_lgas || 0;
+                const assignedCount = summary.assigned_count || 0;
+                const vacantCount = summary.vacant_count || 0;
+                const rate = totalLgas > 0 ? Math.round((assignedCount / totalLgas) * 100) : 0;
+                setExactMetrics({
+                  total: totalLgas,
+                  assigned: assignedCount,
+                  vacant: vacantCount,
+                  coveragePercent: rate,
+                });
+              } else {
+                setExactMetrics({
+                  total: totalUnitsCount,
+                  assigned: assignedUnitsCount,
+                  vacant: vacantUnitsCount,
+                  coveragePercent: rate,
+                });
+              }
+            } catch {
+              setExactMetrics({
+                total: totalUnitsCount,
+                assigned: assignedUnitsCount,
+                vacant: vacantUnitsCount,
+                coveragePercent: rate,
+              });
+            }
+          } else {
+            setExactMetrics({
+              total: totalUnitsCount,
+              assigned: assignedUnitsCount,
+              vacant: vacantUnitsCount,
+              coveragePercent: rate,
+            });
+          }
 
           const prefix =
             viewLevel === "state"
@@ -2204,11 +2258,28 @@ function JurisdictionDeploymentSummary({
                 : viewLevel === "ward"
                   ? "Ward"
                   : "LGA";
-          const units = (unitsRes.data || []).map((u: any) => ({
-            id: `${prefix}_${u.id}`,
-            name: u.name || `${defaultLabel} #${u.id}`,
-            numId: u.id,
-          }));
+
+          const lgaMap = new Map<number, string>();
+          lgaList.forEach((l) => lgaMap.set(l.id, l.name));
+          if (lgaMap.size === 0 && (viewLevel === "ward" || viewLevel === "pu")) {
+            const { data: lgas } = await supabase.from("local_governments").select("id, name");
+            (lgas || []).forEach((l: any) => lgaMap.set(l.id, l.name));
+          }
+
+          const units = (unitsRes.data || []).map((u: any) => {
+            const lgaName = u.localgovernment_id ? lgaMap.get(u.localgovernment_id) : null;
+            const displayName =
+              viewLevel === "ward" && lgaName
+                ? `${u.name} (${lgaName})`
+                : u.name || `${defaultLabel} #${u.id}`;
+            return {
+              id: `${prefix}_${u.id}`,
+              name: displayName,
+              rawName: u.name || `${defaultLabel} #${u.id}`,
+              lgaName: lgaName || null,
+              numId: u.id,
+            };
+          });
           setSubUnits(units);
         }
       } catch (err) {
@@ -2250,8 +2321,17 @@ function JurisdictionDeploymentSummary({
           : "state_admin";
 
   // Match subUnits with agents
-  const assignedList: { unit: { id: string; name: string; numId: number }; agent: any }[] = [];
-  const vacantList: { id: string; name: string; numId: number }[] = [];
+  const assignedList: {
+    unit: { id: string; name: string; rawName?: string; lgaName?: string | null; numId: number };
+    agent: any;
+  }[] = [];
+  const vacantList: {
+    id: string;
+    name: string;
+    rawName?: string;
+    lgaName?: string | null;
+    numId: number;
+  }[] = [];
 
   subUnits.forEach((unit) => {
     let matchingAgents: any[] = [];
@@ -2284,10 +2364,17 @@ function JurisdictionDeploymentSummary({
 
   // Filtered lists for search
   const q = (searchQuery || "").toLowerCase();
-  const filteredVacant = vacantList.filter((u) => (u.name || "").toLowerCase().includes(q));
+  const filteredVacant = vacantList.filter(
+    (u) =>
+      (u.name || "").toLowerCase().includes(q) ||
+      (u.rawName || "").toLowerCase().includes(q) ||
+      (u.lgaName || "").toLowerCase().includes(q),
+  );
   const filteredAssigned = assignedList.filter(
     (item) =>
       (item.unit?.name || "").toLowerCase().includes(q) ||
+      (item.unit?.rawName || "").toLowerCase().includes(q) ||
+      (item.unit?.lgaName || "").toLowerCase().includes(q) ||
       (item.agent?.name || "").toLowerCase().includes(q) ||
       Boolean(item.agent?.phone && item.agent.phone.includes(searchQuery)),
   );
@@ -2551,7 +2638,16 @@ function JurisdictionDeploymentSummary({
                     <UserX size={15} />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <h5 className="font-bold text-sm text-gray-900 leading-snug">{unit.name}</h5>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h5 className="font-bold text-sm text-gray-900 leading-snug">
+                        {unit.rawName || unit.name}
+                      </h5>
+                      {unit.lgaName && (
+                        <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                          {unit.lgaName}
+                        </span>
+                      )}
+                    </div>
                     <span className="text-[11px] text-gray-500">
                       ID: #{unit.numId} • No agent assigned
                     </span>
@@ -2616,7 +2712,12 @@ function JurisdictionDeploymentSummary({
                     </span>
                   </div>
                   <div className="flex flex-wrap items-center gap-3 text-[11px] text-gray-500 mt-0.5">
-                    <span className="font-medium text-gray-700">{unit.name}</span>
+                    <span className="font-medium text-gray-700">{unit.rawName || unit.name}</span>
+                    {unit.lgaName && (
+                      <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                        {unit.lgaName}
+                      </span>
+                    )}
                     {agent.phone && (
                       <span className="flex items-center gap-1 text-gray-400">
                         <Phone size={11} /> {agent.phone}

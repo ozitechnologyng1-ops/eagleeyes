@@ -132,12 +132,15 @@ Deno.serve(async (req: Request) => {
           .maybeSingle();
 
         if (!conv) {
-          // Attempt to match voter record by phone
-          const { data: matchedVoter } = await supabase
-            .from("voters")
-            .select("id, first_name, last_name")
-            .ilike("phone_number", `%${senderPhone.slice(-10)}%`)
-            .maybeSingle();
+          // Attempt to match voter record by phone using the indexed search RPC
+          const phoneSearch = senderPhone.slice(-10);
+          const { data: matchedVoters } = await supabase.rpc("search_voters_fast", {
+            p_state_id: inst.state_id || null,
+            p_search_term: phoneSearch,
+            p_limit: 1,
+            p_last_id: 0,
+          });
+          const matchedVoter = matchedVoters && matchedVoters.length > 0 ? matchedVoters[0] : null;
 
           const { data: newConv } = await supabase
             .from("whatsapp_conversations")
