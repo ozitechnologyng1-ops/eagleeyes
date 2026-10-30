@@ -23,12 +23,15 @@ import {
   Eye,
   RefreshCw,
   Trash2,
+  Zap,
+  Users,
 } from "lucide-react";
 import { cn, getFriendlyErrorMessage } from "../lib/utils";
 import { supabase } from "../lib/supabase";
 import toast from "react-hot-toast";
 import { greenApiService } from "../lib/greenApi";
 import AgentModal from "../components/AgentModal";
+import { formatVoterProgress } from "../lib/voterRegister";
 
 import {
   // buildImageKitUrl,
@@ -56,6 +59,13 @@ export default function Voters() {
     setVoterWardFilter,
     voterPuFilter,
     setVoterPuFilter,
+    voterTotalCount,
+    voterLoadedCount,
+    voterSearchLatencyMs,
+    voterLoadError,
+    isLoadingVoterCount,
+    voterCountError,
+    voterHasNextPage,
     addAgent,
   } = useApp();
 
@@ -126,6 +136,9 @@ export default function Voters() {
   };
 
   const [searchTerm, setSearchTerm] = useState("");
+  const [voterStanceFilter, setVoterStanceFilter] = useState<
+    "all" | "ADC Supporter" | "Undecided" | "Opposition"
+  >("all");
   const [selectedVoter, setSelectedVoter] = useState<Voter | null>(null);
   const [noteText, setNoteText] = useState("");
   const [showNoteSuccess, setShowNoteSuccess] = useState(false);
@@ -188,18 +201,36 @@ export default function Voters() {
     cleanupExpiredImages();
   }, []);
 
-  // Ensure voters are fetched on mount if not already loaded or when jurisdiction filters change
   useEffect(() => {
-    Promise.resolve(
-      fetchVotersPage(1, {
-        stateId: selectedState,
-        lgaId: selectedLga,
-        wardId: selectedWard,
-        puId: selectedPu,
-      }),
-    ).catch((error: unknown) => console.error("Async operation failed in Voters", error));
-  }, [user?.id, user?.stateId, selectedState]);
-
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => {
+        void fetchVotersPage(1, {
+          stateId: selectedState,
+          lgaId: selectedLga,
+          wardId: selectedWard,
+          puId: selectedPu,
+          puid: pollingUnits.find((pu) => pu.id === selectedPu)?.puId || null,
+          searchTerm: searchTerm.trim() || null,
+          signal: controller.signal,
+          status: voterStanceFilter !== "all" ? voterStanceFilter : null,
+        });
+      },
+      searchTerm.trim() ? 250 : 0,
+    );
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [
+    fetchVotersPage,
+    searchTerm,
+    voterStanceFilter,
+    selectedState,
+    selectedLga,
+    selectedWard,
+    selectedPu,
+  ]);
   // Manual clear cache handler for development & testing
   const handleClearAllPhotoCache = () => {
     const removedCount = clearAllImageCache();
@@ -465,9 +496,6 @@ export default function Voters() {
     setVoterLgaFilter(null);
     setVoterWardFilter(null);
     setVoterPuFilter(null);
-    Promise.resolve(
-      fetchVotersPage(1, { stateId: val, lgaId: null, wardId: null, puId: null }),
-    ).catch((error: unknown) => console.error("Async operation failed in Voters", error));
   };
 
   const handleLgaChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -478,9 +506,6 @@ export default function Voters() {
     setVoterLgaFilter(val);
     setVoterWardFilter(null);
     setVoterPuFilter(null);
-    Promise.resolve(
-      fetchVotersPage(1, { stateId: selectedState, lgaId: val, wardId: null, puId: null }),
-    ).catch((error: unknown) => console.error("Async operation failed in Voters", error));
   };
 
   const handleWardChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -489,25 +514,12 @@ export default function Voters() {
     setSelectedPu(null);
     setVoterWardFilter(val);
     setVoterPuFilter(null);
-    Promise.resolve(
-      fetchVotersPage(1, { stateId: selectedState, lgaId: selectedLga, wardId: val, puId: null }),
-    ).catch((error: unknown) => console.error("Async operation failed in Voters", error));
   };
 
   const handlePuChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value ? parseInt(e.target.value, 10) : null;
-    const puObj = pollingUnits.find((p) => p.id === val);
     setSelectedPu(val);
     setVoterPuFilter(val);
-    Promise.resolve(
-      fetchVotersPage(1, {
-        stateId: selectedState,
-        lgaId: selectedLga,
-        wardId: selectedWard,
-        puId: val,
-        puid: puObj?.puId || null,
-      }),
-    ).catch((error: unknown) => console.error("Async operation failed in Voters", error));
   };
 
   // Ensure currentVoter has resolved Ward and PU names in the details modal
@@ -738,9 +750,6 @@ export default function Voters() {
   const [voterReachFilter, setVoterReachFilter] = useState<
     "all" | "on_whatsapp" | "not_whatsapp" | "canvassed"
   >("all");
-  const [voterStanceFilter, setVoterStanceFilter] = useState<
-    "all" | "ADC Supporter" | "Undecided" | "Opposition"
-  >("all");
   const [canvassedSet, setCanvassedSet] = useState<Set<string>>(() => {
     try {
       const saved = localStorage.getItem("eagleeye_canvassed_voters");
@@ -873,18 +882,17 @@ export default function Voters() {
   };
 
   // Sort & filter voters by search term, stance, and reach status
+  const voterProgress = formatVoterProgress(votersPage, voterLoadedCount, voterTotalCount);
+  const voterCountText = isLoadingVoters
+    ? "Loading voters…"
+    : voterLoadError
+      ? "Count unavailable"
+      : voterTotalCount === null
+        ? `${voterProgress} voters · ${isLoadingVoterCount ? "counting total…" : "total unavailable"}`
+        : `${voterProgress} voters`;
+
   const filteredVoters = voters
     .filter((v) => {
-      const matchSearch =
-        (v.name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (v.phone || "").toLowerCase().includes(searchTerm.toLowerCase());
-      if (!matchSearch) return false;
-
-      // Stance Filter: All / Supporters / Undecided / Opposition
-      if (voterStanceFilter !== "all") {
-        if (v.status !== voterStanceFilter) return false;
-      }
-
       // Reach Filter: All / On WhatsApp / Not on WhatsApp / Canvassed
       // Only returns voters whose WhatsApp presence has been verified via API
       if (voterReachFilter === "on_whatsapp") {
@@ -1117,11 +1125,27 @@ export default function Voters() {
       {/* Jurisdiction Filters (LGA, Ward, PU) */}
       {user?.role !== "pu_agent" && (
         <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200 shadow-xs mb-4">
-          <div className="flex items-center gap-2 mb-2.5 pb-2 border-b border-gray-100">
-            <MapPin size={15} className="text-[#004d25]" />
-            <span className="text-xs font-bold text-gray-800 uppercase tracking-wider">
-              Jurisdiction Filters
-            </span>
+          <div className="flex items-center gap-2 mb-2.5 pb-2 border-b border-gray-100 flex-wrap justify-between">
+            <div className="flex items-center gap-2">
+              <MapPin size={15} className="text-[#004d25]" />
+              <span className="text-xs font-bold text-gray-800 uppercase tracking-wider">
+                Jurisdiction Filters
+              </span>
+            </div>
+            {voterTotalCount !== null && voterTotalCount > 0 && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-[#004d25] border border-emerald-200 shadow-2xs">
+                <Users size={12} />
+                <span>
+                  {selectedPu
+                    ? `PU Total: ${voterCountText}`
+                    : selectedWard
+                      ? `Ward Total: ${voterCountText}`
+                      : selectedLga
+                        ? `LGA Total: ${voterCountText}`
+                        : `State Total: ${voterCountText}`}
+                </span>
+              </span>
+            )}
           </div>
           <div
             className={cn(
@@ -1152,9 +1176,11 @@ export default function Voters() {
 
             {/* LGA Filter (State & National Admins) */}
             <div>
-              <label className="block text-[11px] font-semibold text-gray-600 mb-1">
-                Local Government (LGA)
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-semibold text-gray-600">
+                  Local Government (LGA)
+                </label>
+              </div>
               {user?.role === "national_admin" || user?.role === "state_admin" ? (
                 <select
                   value={selectedLga || ""}
@@ -1176,11 +1202,18 @@ export default function Voters() {
                   className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-500 bg-gray-50 cursor-not-allowed"
                 />
               )}
+              {selectedLga && !selectedWard && (
+                <span className="mt-1.5 inline-flex text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                  {voterCountText}
+                </span>
+              )}
             </div>
 
             {/* Ward Filter */}
             <div>
-              <label className="block text-[11px] font-semibold text-gray-600 mb-1">Ward</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-semibold text-gray-600">Ward</label>
+              </div>
               {user?.role === "ward_admin" ? (
                 <input
                   type="text"
@@ -1209,13 +1242,20 @@ export default function Voters() {
                   })}
                 </select>
               )}
+              {selectedWard && !selectedPu && (
+                <span className="mt-1.5 inline-flex text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                  {voterCountText}
+                </span>
+              )}
             </div>
 
             {/* Polling Unit Filter */}
             <div>
-              <label className="block text-[11px] font-semibold text-gray-600 mb-1">
-                Polling Unit (PU)
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-semibold text-gray-600">
+                  Polling Unit (PU)
+                </label>
+              </div>
               <select
                 value={selectedPu || ""}
                 onChange={handlePuChange}
@@ -1237,10 +1277,38 @@ export default function Voters() {
                   );
                 })}
               </select>
+              {selectedPu && (
+                <span className="mt-1.5 inline-flex text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                  {voterCountText}
+                </span>
+              )}
             </div>
           </div>
         </div>
       )}
+
+      <p className="mb-3 text-sm font-medium text-gray-700" role="status" aria-live="polite">
+        {voterCountText}
+        {voterCountError && !isLoadingVoters && !isLoadingVoterCount && (
+          <button
+            type="button"
+            className="ml-2 text-xs text-[#004d25] underline cursor-pointer"
+            onClick={() =>
+              void fetchVotersPage(votersPage, {
+                stateId: selectedState,
+                lgaId: selectedLga,
+                wardId: selectedWard,
+                puId: selectedPu,
+                puid: pollingUnits.find((pu) => pu.id === selectedPu)?.puId || null,
+                searchTerm: searchTerm.trim() || null,
+                status: voterStanceFilter !== "all" ? voterStanceFilter : null,
+              })
+            }
+          >
+            Retry total
+          </button>
+        )}
+      </p>
 
       {/* Search Bar & Reach/Stance Filters */}
       <div className="flex flex-col lg:flex-row gap-2.5 mb-4">
@@ -1251,8 +1319,25 @@ export default function Voters() {
             placeholder="Search by Name or Phone..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#004d25] focus:border-transparent text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+            className="w-full pl-10 pr-32 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#004d25] focus:border-transparent text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
           />
+          {/* Subtle Latency HUD in search input */}
+          <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center pointer-events-none">
+            {isLoadingVoters ? (
+              <span className="inline-flex items-center gap-1 text-[11px] font-mono font-medium text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded">
+                <Loader2 size={11} className="animate-spin text-emerald-600" />
+                <span>searching...</span>
+              </span>
+            ) : voterSearchLatencyMs !== null ? (
+              <span
+                className="inline-flex items-center gap-1 text-[11px] font-mono font-semibold text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800/50 px-2 py-0.5 rounded shadow-2xs"
+                title="Time to load this voter page; the total is counted separately"
+              >
+                <Zap size={11} className="text-emerald-600 fill-emerald-600" />
+                <span>result in {voterSearchLatencyMs} ms</span>
+              </span>
+            ) : null}
+          </div>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
@@ -1296,6 +1381,31 @@ export default function Voters() {
                 Fetching voter data for your jurisdiction. Please wait a moment.
               </p>
             </div>
+          ) : voterLoadError ? (
+            <div
+              className="flex flex-col items-center justify-center min-h-[300px] text-center p-8"
+              role="alert"
+            >
+              <h3 className="text-lg font-medium text-gray-900 mb-2">Please try again</h3>
+              <p className="text-sm text-gray-600 max-w-md">{voterLoadError.message}</p>
+              <button
+                type="button"
+                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-[#004d25] px-4 py-2 text-sm font-semibold text-white cursor-pointer"
+                onClick={() =>
+                  void fetchVotersPage(voterLoadError.page, {
+                    stateId: selectedState,
+                    lgaId: selectedLga,
+                    wardId: selectedWard,
+                    puId: selectedPu,
+                    puid: pollingUnits.find((pu) => pu.id === selectedPu)?.puId || null,
+                    searchTerm: searchTerm.trim() || null,
+                    status: voterStanceFilter !== "all" ? voterStanceFilter : null,
+                  })
+                }
+              >
+                <RefreshCw size={16} /> Try again
+              </button>
+            </div>
           ) : filteredVoters.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center p-8">
               <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center text-gray-300 mb-4">
@@ -1303,7 +1413,7 @@ export default function Voters() {
               </div>
               <h3 className="text-lg font-medium text-gray-900 mb-1">No voters found</h3>
               <p className="text-gray-500">
-                {searchTerm ? "No voters match your search criteria." : "Voters to be added soon."}
+                No voters match the selected filters. Try a different name or adjust the filters.
               </p>
             </div>
           ) : (
@@ -1420,11 +1530,29 @@ export default function Voters() {
           )}
         </div>
         <div className="p-4 border-t border-gray-100 text-sm text-gray-500 bg-gray-50 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div>Showing {filteredVoters.length} voters</div>
+          <div className="font-medium text-gray-700 flex items-center gap-2">
+            <span>{voterCountText}</span>
+            {voterSearchLatencyMs !== null && (
+              <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                <Zap size={11} className="text-emerald-600 fill-emerald-600" />
+                <span>{voterSearchLatencyMs} ms</span>
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={() => fetchVotersPage(votersPage - 1)}
-              disabled={votersPage === 1 || isLoadingVoters}
+              onClick={() => {
+                void fetchVotersPage(votersPage - 1, {
+                  stateId: selectedState,
+                  lgaId: selectedLga,
+                  wardId: selectedWard,
+                  puId: selectedPu,
+                  puid: pollingUnits.find((pu) => pu.id === selectedPu)?.puId || null,
+                  searchTerm: searchTerm.trim() || null,
+                  status: voterStanceFilter !== "all" ? voterStanceFilter : null,
+                });
+              }}
+              disabled={votersPage === 1 || isLoadingVoters || Boolean(voterLoadError)}
               className="p-1.5 border border-gray-300 rounded hover:bg-white disabled:opacity-50 transition-colors"
               title="Previous Page"
             >
@@ -1434,8 +1562,18 @@ export default function Voters() {
               Page {votersPage}
             </span>
             <button
-              onClick={() => fetchVotersPage(votersPage + 1)}
-              disabled={voters.length < 500 || isLoadingVoters}
+              onClick={() => {
+                void fetchVotersPage(votersPage + 1, {
+                  stateId: selectedState,
+                  lgaId: selectedLga,
+                  wardId: selectedWard,
+                  puId: selectedPu,
+                  puid: pollingUnits.find((pu) => pu.id === selectedPu)?.puId || null,
+                  searchTerm: searchTerm.trim() || null,
+                  status: voterStanceFilter !== "all" ? voterStanceFilter : null,
+                });
+              }}
+              disabled={!voterHasNextPage || isLoadingVoters || Boolean(voterLoadError)}
               className="p-1.5 border border-gray-300 rounded hover:bg-white disabled:opacity-50 transition-colors"
               title="Next Page"
             >

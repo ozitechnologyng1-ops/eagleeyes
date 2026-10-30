@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabase";
 import { VISION_AI_PROMPT } from "../lib/prompts";
 import toast from "react-hot-toast";
 import { getVoterScope } from "../lib/voterScope";
+import { queryVoterRegister, type VoterFilters, type VoterPage } from "../lib/voterRegister";
 import {
   deleteAgentApi,
   loginAgent,
@@ -157,6 +158,13 @@ interface AppState {
   endAllMockElections: () => void;
   setActiveElectionGroup: (group: ElectionGroup) => void;
   totalVotersCount: number;
+  voterTotalCount: number | null;
+  isLoadingVoterCount: boolean;
+  voterCountError: boolean;
+  voterHasNextPage: boolean;
+  voterLoadedCount: number;
+  voterSearchLatencyMs: number | null;
+  voterLoadError: { message: string; page: number } | null;
   electionResults: Record<string, any>;
   login: (phone: string, password: string) => Promise<void>;
   logout: () => void;
@@ -189,8 +197,21 @@ interface AppState {
       wardId?: number | null;
       puId?: number | null;
       puid?: string | null;
+      searchTerm?: string | null;
+      status?: string | null;
+      party?: string | null;
+      lastId?: number;
+      signal?: AbortSignal;
     },
-  ) => Promise<void>;
+  ) => Promise<
+    | {
+        total_count: number | null;
+        loaded_count: number;
+        voters: Voter[];
+        durationMs: number;
+      }
+    | undefined
+  >;
   voterStateFilter: number | null;
   setVoterStateFilter: (stateId: number | null) => void;
   voterLgaFilter: number | null;
@@ -210,12 +231,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [sessionRestoreFailed, setSessionRestoreFailed] = useState(false);
 
   const [totalVotersCount, setTotalVotersCount] = useState<number>(0);
+  const [voterTotalCount, setVoterTotalCount] = useState<number | null>(null);
+  const [isLoadingVoterCount, setIsLoadingVoterCount] = useState(false);
+  const [voterCountError, setVoterCountError] = useState(false);
+  const [voterHasNextPage, setVoterHasNextPage] = useState(false);
+  const [voterLoadedCount, setVoterLoadedCount] = useState<number>(0);
+  const [voterSearchLatencyMs, setVoterSearchLatencyMs] = useState<number | null>(null);
+  const [voterLoadError, setVoterLoadError] = useState<{ message: string; page: number } | null>(
+    null,
+  );
   const [votersPage, setVotersPage] = useState<number>(1);
   const [isLoadingVoters, setIsLoadingVoters] = useState<boolean>(false);
   const [voterStateFilter, setVoterStateFilter] = useState<number | null>(null);
   const [voterLgaFilter, setVoterLgaFilter] = useState<number | null>(null);
   const [voterWardFilter, setVoterWardFilter] = useState<number | null>(null);
   const [voterPuFilter, setVoterPuFilter] = useState<number | null>(null);
+  const voterRequestRef = React.useRef(0);
+  const voterControllerRef = React.useRef<AbortController | null>(null);
+  const voterQueryStateRef = React.useRef<{
+    key: string;
+    total: number | null;
+    countedAt: number;
+    cursors: Record<number, number>;
+  }>({ key: "", total: null, countedAt: 0, cursors: { 1: 0 } });
   const [locations, setLocations] = useState<Location[]>([
     { id: "nat1", type: "national", name: "Nigeria", parentId: null },
   ]);
@@ -711,115 +749,130 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const fetchVotersPage = React.useCallback(
     async (
       page: number,
-      customFilters?: {
-        stateId?: number | null;
-        lgaId?: number | null;
-        wardId?: number | null;
-        puId?: number | null;
-        puid?: string | null;
-      },
+      customFilters?: VoterFilters & { lastId?: number; signal?: AbortSignal },
     ) => {
+      const requestId = ++voterRequestRef.current;
+      voterControllerRef.current?.abort();
+      const controller = new AbortController();
+      voterControllerRef.current = controller;
+      const callerSignal = customFilters?.signal;
+      const abort = () => controller.abort();
+      callerSignal?.addEventListener("abort", abort, { once: true });
+      if (callerSignal?.aborted) controller.abort();
+      const sessionToken = readAgentSession()?.token;
+      const isCurrent = () =>
+        requestId === voterRequestRef.current &&
+        !controller.signal.aborted &&
+        readAgentSession()?.token === sessionToken;
       const scope = getVoterScope(user);
+      setVoterLoadError(null);
+      setVoterCountError(false);
       if (!scope) {
         setVoters([]);
         setTotalVotersCount(0);
+        setVoterTotalCount(null);
+        setVoterLoadedCount(0);
+        setVoterSearchLatencyMs(null);
+        setVoterHasNextPage(false);
+        setIsLoadingVoters(false);
+        setIsLoadingVoterCount(false);
+        voterQueryStateRef.current = { key: "", total: null, countedAt: 0, cursors: { 1: 0 } };
+        callerSignal?.removeEventListener("abort", abort);
         return;
       }
+      const filters: VoterFilters = {
+        stateId: customFilters?.stateId !== undefined ? customFilters.stateId : voterStateFilter,
+        lgaId: customFilters?.lgaId !== undefined ? customFilters.lgaId : voterLgaFilter,
+        wardId: customFilters?.wardId !== undefined ? customFilters.wardId : voterWardFilter,
+        puId: customFilters?.puId !== undefined ? customFilters.puId : voterPuFilter,
+        puid: customFilters?.puid || null,
+        searchTerm: customFilters?.searchTerm?.trim() || null,
+        status: customFilters?.status || null,
+        party: customFilters?.party || null,
+      };
+      const key = JSON.stringify([user?.id, user?.role, sessionToken, scope, filters]);
+      if (voterQueryStateRef.current.key !== key) {
+        voterQueryStateRef.current = { key, total: null, countedAt: 0, cursors: { 1: 0 } };
+      }
+      const queryState = voterQueryStateRef.current;
+      if (page === 1) queryState.cursors = { 1: 0 };
+      const knownTotal =
+        page > 1 && queryState.total !== null && Date.now() - queryState.countedAt < 30000
+          ? queryState.total
+          : undefined;
+      setVoterTotalCount(knownTotal ?? null);
+      setVoterHasNextPage(false);
       setIsLoadingVoters(true);
-      setVotersPage(page);
-      try {
-        const pageSize = 500;
-        const start = (page - 1) * pageSize;
-        const end = start + pageSize - 1;
-
-        const activePu = customFilters?.puId !== undefined ? customFilters.puId : voterPuFilter;
-        const activeWard =
-          customFilters?.wardId !== undefined ? customFilters.wardId : voterWardFilter;
-        const activeLga = customFilters?.lgaId !== undefined ? customFilters.lgaId : voterLgaFilter;
-
-        const hasSubFilters = Boolean(
-          activePu ||
-          activeWard ||
-          activeLga ||
-          customFilters?.puid ||
-          scope.lgaId ||
-          scope.wardId ||
-          scope.puId,
-        );
-
-        let votersQuery = supabase.from("voters").select("*");
-        if (!hasSubFilters) {
-          votersQuery = votersQuery.order("id", { ascending: true });
+      setIsLoadingVoterCount(knownTotal === undefined);
+      const startTime = performance.now();
+      let mapped: Voter[] = [];
+      let durationMs = 0;
+      const onPage = (result: VoterPage) => {
+        if (!isCurrent()) {
+          controller.abort();
+          return;
         }
-
-        const activeState =
-          customFilters?.stateId !== undefined
-            ? customFilters.stateId
-            : scope.stateId || voterStateFilter;
-        if (activeState) votersQuery = votersQuery.eq("state_id", activeState);
-        if (scope.lgaId) votersQuery = votersQuery.eq("localgovernment_id", scope.lgaId);
-        if (scope.wardId) votersQuery = votersQuery.eq("ward_id", scope.wardId);
-
-        if (user?.role === "pu_agent") {
-          if (scope.puid) {
-            votersQuery = scope.puId
-              ? votersQuery.or(`puid.eq.${scope.puid},polling_unit_id.eq.${scope.puId}`)
-              : votersQuery.eq("puid", scope.puid);
-          } else if (scope.puId) {
-            votersQuery = votersQuery.eq("polling_unit_id", scope.puId);
-          }
-        } else if (customFilters?.puid) {
-          votersQuery = activePu
-            ? votersQuery.or(`puid.eq.${customFilters.puid},polling_unit_id.eq.${activePu}`)
-            : votersQuery.eq("puid", customFilters.puid);
-        } else if (activePu) {
-          votersQuery = votersQuery.eq("polling_unit_id", activePu);
-        } else if (activeWard) {
-          votersQuery = votersQuery.eq("ward_id", activeWard);
-        } else if (activeLga) {
-          votersQuery = votersQuery.eq("localgovernment_id", activeLga);
-        }
-
-        const { data: votersData, error: votersError } = await votersQuery.range(start, end);
-        if (votersError) {
-          console.error(
-            "Voters query error:",
-            votersError.message,
-            votersError.details,
-            votersError.hint,
-          );
-        }
-
-        if (votersData && votersData.length > 0) {
-          setVoters(
-            votersData.map((v: any) => ({
-              id: String(v.id),
-              name: `${v.first_name || ""} ${v.last_name || ""}`.trim() || "Unknown",
-              vin: v.puid || "",
-              puId: v.puid || "",
-              phone: v.phone_number,
-              dob: v.dob,
-              image: v.image || "",
-              status: (v.status || "Undecided") as Voter["status"],
-              locationId: v.polling_unit_id ? `pu_${v.polling_unit_id}` : "nat1",
-              stateId: v.state_id,
-              lgaId: v.localgovernment_id || null,
-              wardId: v.ward_id || null,
-              puNumberId: v.polling_unit_id || null,
-              notes: v.notes || [],
-              contact_logs: v.contact_logs || [],
-            })),
-          );
-        } else {
-          setVoters([]);
-        }
-      } catch (err) {
-        console.error("Failed to fetch voters", err);
-      } finally {
+        durationMs = Math.max(1, Math.round(performance.now() - startTime));
+        mapped = result.voters.map((v) => ({
+          id: String(v.id),
+          name: `${v.first_name || ""} ${v.last_name || ""}`.trim() || "Unknown",
+          vin: v.puid || "",
+          puId: v.puid || "",
+          phone: v.phone_number,
+          dob: v.dob,
+          image: v.image || "",
+          status: (v.status || "Undecided") as Voter["status"],
+          locationId: v.polling_unit_id ? `pu_${v.polling_unit_id}` : "nat1",
+          stateId: v.state_id,
+          lgaId: v.localgovernment_id || null,
+          wardId: v.ward_id || null,
+          puNumberId: v.polling_unit_id || null,
+          notes: v.notes || [],
+          contact_logs: v.contact_logs || [],
+        }));
+        if (result.voters.length)
+          queryState.cursors[page + 1] = Number(result.voters[result.voters.length - 1].id);
+        setVoters(mapped);
+        setVotersPage(page);
+        setVoterLoadedCount(mapped.length);
+        setVoterHasNextPage(result.hasNextPage);
+        setVoterSearchLatencyMs(durationMs);
         setIsLoadingVoters(false);
+      };
+      try {
+        const result = await queryVoterRegister(supabase, scope, filters, page, controller.signal, {
+          afterId: queryState.cursors[page],
+          knownTotal,
+          onPage,
+        });
+        if (!isCurrent()) return;
+        setVoterTotalCount(result.total);
+        setVoterCountError(result.countError !== null);
+        queryState.total = result.total;
+        if (result.total !== null && knownTotal === undefined) queryState.countedAt = Date.now();
+        if (result.countError) console.warn("Voter count unavailable", result.countError);
+        return {
+          total_count: result.total,
+          loaded_count: mapped.length,
+          voters: mapped,
+          durationMs,
+        };
+      } catch (err) {
+        if (!isCurrent()) return;
+        setVoterLoadError({ message: "Something went wrong. Please try again in a moment.", page });
+        setVoterTotalCount(null);
+        console.error("Failed to fetch voters", err);
+        toast.error("Something went wrong. Please try again.");
+      } finally {
+        callerSignal?.removeEventListener("abort", abort);
+        if (requestId === voterRequestRef.current) {
+          setIsLoadingVoters(false);
+          setIsLoadingVoterCount(false);
+        }
       }
     },
     [
+      user?.id,
       user?.stateId,
       user?.role,
       user?.lagosPollingUnitId,
@@ -833,9 +886,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       voterLgaFilter,
     ],
   );
-
   useEffect(() => {
     if (!getVoterScope(user)) return;
+    const controller = new AbortController();
+    const initialVoterRequest = voterRequestRef.current;
     const fetchSupabaseData = async () => {
       try {
         /* 
@@ -853,7 +907,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const geoLocations: Location[] = [nationalNode];
 
         // 1. Try dedicated geographic tables first
-        const { data: statesData } = await supabase.from("states").select("*");
+        const { data: statesData } = await supabase
+          .from("states")
+          .select("*")
+          .abortSignal(controller.signal);
+        if (controller.signal.aborted) return;
         if (statesData && statesData.length > 0) {
           statesData.forEach((s: any) => {
             geoLocations.push({
@@ -867,7 +925,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         const { data: lgData } = await supabase
           .from("local_governments")
-          .select("id,name,state_id");
+          .select("id,name,state_id")
+          .abortSignal(controller.signal);
+        if (controller.signal.aborted) return;
         if (lgData && lgData.length > 0) {
           lgData.forEach((l: any) => {
             geoLocations.push({
@@ -885,12 +945,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setLocations(geoLocations);
 
         // ── Voters (lightweight: skip full load for performance, count via RPC) ──
-        await fetchVotersPage(1, {
-          stateId: voterStateFilter,
-          lgaId: voterLgaFilter,
-          wardId: voterWardFilter,
-          puId: voterPuFilter,
-        });
+        if (initialVoterRequest === voterRequestRef.current)
+          await fetchVotersPage(1, {
+            stateId: voterStateFilter,
+            lgaId: voterLgaFilter,
+            wardId: voterWardFilter,
+            puId: voterPuFilter,
+            signal: controller.signal,
+          });
+
+        if (controller.signal.aborted) return;
 
         // ── Exact voter count via Postgres RPC ──────────────────────────
         // Build scoped RPC params based on role hierarchy
@@ -917,20 +981,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
           rpcParams.p_lga_id = voterLgaFilter || user?.lgaId;
         }
 
-        const { data: countData, error: countErr } = await supabase.rpc(
-          "get_voters_count",
-          rpcParams,
-        );
+        const { data: countData, error: countErr } = await supabase
+          .rpc("get_voters_count", rpcParams)
+          .abortSignal(controller.signal);
+        if (controller.signal.aborted) return;
         let currentTarget = 0;
         if (!countErr && countData !== null) {
           currentTarget = countData as number;
           setTotalVotersCount(currentTarget);
         }
 
-        const { data: stanceData, error: stanceErr } = await supabase.rpc(
-          "get_voter_status_counts",
-          rpcParams,
-        );
+        const { data: stanceData, error: stanceErr } = await supabase
+          .rpc("get_voter_status_counts", rpcParams)
+          .abortSignal(controller.signal);
+        if (controller.signal.aborted) return;
         if (!stanceErr && stanceData) {
           const stances = [
             { name: "ADC Supporter", count: 0 },
@@ -943,10 +1007,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
             if (index !== -1) stances[index].count = Number(row.count);
           });
 
-          const { data: canvassedCountData } = await supabase.rpc(
-            "get_canvassed_voters_count",
-            rpcParams,
-          );
+          const { data: canvassedCountData } = await supabase
+            .rpc("get_canvassed_voters_count", rpcParams)
+            .abortSignal(controller.signal);
+          if (controller.signal.aborted) return;
           const canvassed = canvassedCountData !== null ? Number(canvassedCountData) : 0;
 
           setStats((prev) => ({
@@ -959,12 +1023,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }));
         }
       } catch (err) {
-        console.error("Failed to load Supabase data", err);
+        if (!controller.signal.aborted) console.error("Failed to load Supabase data", err);
       }
     };
     Promise.resolve(fetchSupabaseData()).catch((error: unknown) =>
       console.error("Async operation failed in AppContext", error),
     );
+    return () => controller.abort();
   }, [
     user?.id,
     user?.role,
@@ -1069,6 +1134,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    voterControllerRef.current?.abort();
+    voterQueryStateRef.current = { key: "", total: null, countedAt: 0, cursors: { 1: 0 } };
     setUser(null);
     void logoutAgent().catch(() =>
       toast.error("Signed out locally; server session could not be revoked."),
@@ -1146,6 +1213,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const updateVoterStatus = async (id: string, status: Voter["status"]) => {
+    voterQueryStateRef.current.countedAt = 0;
     setVoters((prev) => prev.map((v) => (String(v.id) === String(id) ? { ...v, status } : v)));
 
     try {
@@ -1181,6 +1249,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const updateVoterDetails = async (id: string, updates: Partial<Voter>) => {
+    voterQueryStateRef.current.countedAt = 0;
     setVoters((prev) => prev.map((v) => (String(v.id) === String(id) ? { ...v, ...updates } : v)));
 
     try {
@@ -1732,6 +1801,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         isMockMode,
         activeElectionGroup,
         totalVotersCount,
+        voterTotalCount,
+        isLoadingVoterCount,
+        voterCountError,
+        voterHasNextPage,
+        voterLoadedCount,
+        voterSearchLatencyMs,
+        voterLoadError,
         electionResults,
         votersPage,
         isLoadingVoters,
