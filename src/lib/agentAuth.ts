@@ -66,8 +66,28 @@ export async function writeAgent(
     id,
     values,
     notifySms,
+    smsTransport: "browser",
   });
   if (!data.agent?.id) throw new Error("Invalid agent response");
+  if (data.smsDispatch) {
+    try {
+      const res = await fetch(data.smsDispatch.url, {
+        method: data.smsDispatch.method,
+        headers: data.smsDispatch.headers,
+        body: data.smsDispatch.body,
+      });
+      const resJson = await res.json().catch(() => null);
+      if (resJson?.data?.reference) {
+        data.sms = {
+          ...data.sms,
+          reference: resJson.data.reference,
+          status: resJson.data.status || "pending",
+        };
+      }
+    } catch (dispatchErr) {
+      console.warn("[Browser SMS Dispatch Warning]:", dispatchErr);
+    }
+  }
   return { ...data.agent, smsSubmission: data.sms };
 }
 

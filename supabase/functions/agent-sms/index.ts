@@ -2,6 +2,7 @@ import { authorizeAgentRequest } from "../_shared/agent-session.ts";
 import { createSmsService, loginMessage, smsStore } from "../_shared/agent-sms.ts";
 import { canManageAgent, verifyPassword } from "../_shared/agent-security.ts";
 import { EgabConfigError, EgabError, egabConfig, createEgabClient } from "../_shared/egab.ts";
+import { prepareBrowserSms } from "../_shared/browser-sms.ts";
 
 Deno.serve(async (req: Request) => {
   // Reuse the existing ten-per-minute admin rate limit without changing auth/RLS.
@@ -71,6 +72,18 @@ Deno.serve(async (req: Request) => {
     if (body.action === "test" && typeof body.to === "string" && typeof body.id === "string") {
       if (!["national_admin", "state_admin"].includes(session.agent.role))
         return reply({ error: "Administrator access required" }, 403);
+      if (body.smsTransport === "browser") {
+        const prepared = await prepareBrowserSms(
+          smsStore(client),
+          (key) => Deno.env.get(key),
+          body.id,
+          session.agent.id,
+          null,
+          body.to,
+          "EagleEye SMS configuration test.",
+        );
+        return reply({ sms: prepared.sms, smsDispatch: prepared.dispatch });
+      }
       return reply({
         sms: await sms.submit(
           body.id,

@@ -1,3 +1,4 @@
+import { prepareBrowserSms } from "../_shared/browser-sms.ts";
 import { authorizeAgentRequest } from "../_shared/agent-session.ts";
 import { hashPassword } from "../_shared/agent-security.ts";
 import { createSmsService, loginMessage, smsStore } from "../_shared/agent-sms.ts";
@@ -103,6 +104,7 @@ Deno.serve(async (req: Request) => {
         error.code === "28000" ? 401 : error.code === "42501" ? 403 : 400,
       );
     let sms;
+    let smsDispatch;
     if (registrationPassword && data?.id && (body.action === "create" || body.notifySms === true)) {
       const id = crypto.randomUUID();
       try {
@@ -113,19 +115,32 @@ Deno.serve(async (req: Request) => {
           req,
           Deno.env.get("AGENT_ALLOWED_ORIGINS"),
         );
-        sms = await createSmsService(smsStore(client), (key) => Deno.env.get(key)).submit(
-          id,
-          session.agent.id,
-          data.id,
-          String(data.phone),
-          message,
-          true,
-        );
+        if (body.smsTransport === "browser") {
+          const prepared = await prepareBrowserSms(
+            smsStore(client),
+            (key) => Deno.env.get(key),
+            id,
+            session.agent.id,
+            data.id,
+            String(data.phone),
+            message,
+          );
+          sms = prepared.sms;
+          smsDispatch = prepared.dispatch;
+        } else
+          sms = await createSmsService(smsStore(client), (key) => Deno.env.get(key)).submit(
+            id,
+            session.agent.id,
+            data.id,
+            String(data.phone),
+            message,
+            true,
+          );
       } catch {
         sms = { id, status: "unavailable", code: "SMS_UNAVAILABLE" };
       }
     }
-    return reply({ agent: data, sms });
+    return reply({ agent: data, sms, smsDispatch });
   } catch {
     return reply({ error: "Request temporarily unavailable" }, 503);
   }

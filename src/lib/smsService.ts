@@ -146,6 +146,8 @@ export async function sendDirectEgabSms(
   const body = JSON.stringify({
     to: targetPhone,
     message,
+    sender_id: "eAlert",
+    message_category: "transactional",
   });
 
   console.log("[EGAB SMS] Direct Outbound Request:", {

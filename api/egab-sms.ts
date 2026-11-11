@@ -105,6 +105,8 @@ export default async function handler(req: any, res: any) {
   const payloadString = JSON.stringify({
     to: targetPhone,
     message,
+    sender_id: "eAlert",
+    message_category: "transactional",
   });
 
   const bodyHash = crypto.createHash("sha256").update(payloadString).digest("hex");
