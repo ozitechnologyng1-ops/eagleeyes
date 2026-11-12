@@ -4,6 +4,8 @@ import { useApp } from "../context/AppContext";
 import { cn } from "../lib/utils";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
+import { supabase } from "../lib/supabase";
+import { assignedPuId, REGISTERED_PARTIES, resultMathValid } from "../lib/resultCapture";
 
 type Step =
   | "select_pu"
@@ -15,18 +17,22 @@ type Step =
   | "success";
 
 export default function ResultCapture() {
-  const { user, locations, submitResult, activeElectionGroup, analyzeResultImage, isMockMode } =
-    useApp();
+  const { user, submitResult, activeElectionGroup, analyzeResultImage, isMockMode } = useApp();
   const navigate = useNavigate();
 
   // Skip PU selection if user is a pu_agent
   const initialStep: Step = user?.role === "pu_agent" ? "select_election" : "select_pu";
   const [step, setStep] = useState<Step>(initialStep);
 
-  const initialPu =
-    user?.role === "pu_agent" ? locations.find((l) => l.id === user.locationId)?.name || "" : "";
+  const initialPu = user?.role === "pu_agent" ? assignedPuId(user) : "";
   const [selectedPu, setSelectedPu] = useState(initialPu);
   const [searchPu, setSearchPu] = useState("");
+  const [puOptions, setPuOptions] = useState<{ id: number; name: string; puId: string | null }[]>(
+    [],
+  );
+  const [puLoading, setPuLoading] = useState(false);
+  const [puError, setPuError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedElection, setSelectedElection] = useState("");
 
   const nationalElections = [
@@ -66,18 +72,55 @@ export default function ResultCapture() {
     aiNotes: "",
   });
 
-  const partyList = [
-    "adc",
-    "apc",
-    "pdp",
-    "lp",
-    "nnpp",
-    "sdp",
-    "apga",
-    "zlp",
-    "ypp",
-    "prp",
-  ] as const;
+  const partyList = REGISTERED_PARTIES;
+  const selectedPuName =
+    user?.role === "pu_agent"
+      ? user.locationName || `PU ${selectedPu}`
+      : puOptions.find((pu) => String(pu.id) === selectedPu)?.name || `PU ${selectedPu}`;
+
+  useEffect(() => {
+    if (user?.role === "pu_agent") {
+      setSelectedPu(assignedPuId(user));
+      setStep((current) => (current === "select_pu" ? "select_election" : current));
+    }
+  }, [user?.role, user?.puId, user?.lagosPollingUnitId]);
+
+  useEffect(() => {
+    if (!user || user.role === "pu_agent" || isMockMode || step !== "select_pu") return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setPuLoading(true);
+      setPuError("");
+      const missingScope =
+        (user.role === "state_admin" && !user.stateId) ||
+        (user.role === "lga_admin" && !user.lgaId) ||
+        (user.role === "ward_admin" && !user.wardId);
+      if (missingScope) {
+        setPuOptions([]);
+        setPuError("Your account has no polling-unit jurisdiction assigned.");
+        setPuLoading(false);
+        return;
+      }
+      let query = supabase.from("polling_units").select('id, name, "puId"').order("id").limit(40);
+      if (user.role === "state_admin") query = query.eq("state_id", user.stateId);
+      if (user.role === "lga_admin") query = query.eq("localgovernment_id", user.lgaId);
+      if (user.role === "ward_admin") query = query.eq("ward_id", user.wardId);
+      const search = searchPu
+        .trim()
+        .replace(/[%_,()]/g, "")
+        .slice(0, 80);
+      if (search) query = query.ilike("name", `%${search}%`);
+      const { data, error } = await query.abortSignal(controller.signal);
+      if (controller.signal.aborted) return;
+      setPuOptions(data || []);
+      setPuError(error ? "Could not load polling units. Please try searching again." : "");
+      setPuLoading(false);
+    }, 250);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [user, isMockMode, step, searchPu]);
 
   // Image state
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -92,13 +135,6 @@ export default function ResultCapture() {
     },
     [imagePreview],
   );
-
-  const puList = [
-    "PU 001 - Town Hall",
-    "PU 002 - Primary School",
-    "PU 003 - Market Square",
-    "PU 004 - Health Center",
-  ];
 
   const scanImage = async (file: File) => {
     setScanError("");
@@ -166,7 +202,7 @@ export default function ResultCapture() {
 
   const getPartyVotes = (party: string) => {
     const found = results.political_party_results?.find(
-      (p) => p.party?.toLowerCase() === party.toLowerCase(),
+      (p) => p.party?.trim().toLowerCase() === party.toLowerCase(),
     );
     return found ? found.votes_in_figures : 0;
   };
@@ -175,7 +211,9 @@ export default function ResultCapture() {
     const num = parseInt(value) || 0;
     setResults((prev) => {
       let newParties = [...(prev.political_party_results || [])];
-      const index = newParties.findIndex((p) => p.party?.toLowerCase() === party.toLowerCase());
+      const index = newParties.findIndex(
+        (p) => p.party?.trim().toLowerCase() === party.toLowerCase(),
+      );
       if (index >= 0) {
         newParties[index] = { ...newParties[index], votes_in_figures: num };
       } else {
@@ -187,23 +225,24 @@ export default function ResultCapture() {
 
   const handleFieldChange = (field: keyof typeof results, value: string) => {
     const num = parseInt(value) || 0;
-    setResults((prev) => ({ ...prev, [field]: num }));
+    setResults((prev) => ({
+      ...prev,
+      [field]: num,
+      ...(field === "total_number_of_used_ballots" ? { total_votes_cast: num } : {}),
+    }));
   };
 
-  const isMathValid = () => {
-    const sumParties = partyList.reduce((sum, party) => sum + getPartyVotes(party), 0);
-    const item8 = results.total_number_of_used_ballots || results.total_votes_cast;
-    const sumForm =
-      results.number_of_spoiled_ballot_papers +
-      results.number_of_rejected_ballots +
-      results.number_of_valid_votes;
-
-    return sumParties === results.number_of_valid_votes && sumForm === item8;
-  };
+  const isMathValid = () => resultMathValid(results);
 
   const isOverVoting = () => results.total_votes_cast > results.number_of_accredited_voters;
 
   const handleSubmit = async () => {
+    if (!selectedPu) {
+      toast.error("Select a polling unit before submitting.");
+      return;
+    }
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     let finalTags = [...results.tags];
     let finalStatus = "verified";
 
@@ -229,8 +268,14 @@ export default function ResultCapture() {
         imageFile,
       );
       setStep("success");
-    } catch {
-      toast.error("Failed to submit result.");
+    } catch (error: any) {
+      toast.error(
+        error?.code === "42501"
+          ? "This account cannot submit for the selected polling unit. Check your assignment or sign in again."
+          : "Result submission failed. Please retry; your photo and figures are still here.",
+      );
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -309,22 +354,29 @@ export default function ResultCapture() {
               />
             </div>
             <div className="space-y-2">
-              {puList
-                .filter((pu) => pu.toLowerCase().includes(searchPu.toLowerCase()))
-                .map((pu) => (
+              {puError && (
+                <p role="alert" className="text-sm text-red-700">
+                  {puError}
+                </p>
+              )}
+              {puLoading && <p className="text-sm text-gray-500">Loading polling units...</p>}
+              {(isMockMode ? [{ id: 1, name: "PU 001 - Town Hall", puId: null }] : puOptions).map(
+                (pu) => (
                   <button
-                    key={pu}
-                    onClick={() => setSelectedPu(pu)}
+                    key={pu.id}
+                    onClick={() => setSelectedPu(String(pu.id))}
                     className={cn(
                       "w-full text-left px-4 py-3 rounded-lg border transition-colors",
-                      selectedPu === pu
+                      selectedPu === String(pu.id)
                         ? "bg-green-50 border-[#004d25] text-[#004d25] font-semibold"
                         : "border-gray-200 hover:bg-gray-50",
                     )}
                   >
-                    {pu}
+                    {pu.name}
+                    {pu.puId ? ` (${pu.puId})` : ""}
                   </button>
-                ))}
+                ),
+              )}
             </div>
             <button
               disabled={!selectedPu}
@@ -339,7 +391,7 @@ export default function ResultCapture() {
         {step === "select_election" && (
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex-1">
             <h2 className="text-lg font-semibold mb-4">Select Election Type</h2>
-            <p className="text-sm text-gray-500 mb-4">For: {selectedPu}</p>
+            <p className="text-sm text-gray-500 mb-4">For: {selectedPuName}</p>
             <div className="space-y-2">
               {electionTypes.map((election) => (
                 <button
@@ -386,7 +438,7 @@ export default function ResultCapture() {
                 <X size={24} />
               </button>
               <div className="bg-black/50 text-white px-3 py-1 rounded-full text-sm font-medium backdrop-blur-sm">
-                {selectedPu} - {electionTypes.find((e) => e.id === selectedElection)?.name}
+                {selectedPuName} - {electionTypes.find((e) => e.id === selectedElection)?.name}
               </div>
             </div>
 
@@ -709,9 +761,10 @@ export default function ResultCapture() {
               <div className="p-4 border-t border-gray-100 bg-gray-50 rounded-b-xl">
                 <button
                   onClick={handleSubmit}
+                  disabled={isSubmitting}
                   className="w-full bg-[#004d25] text-white font-semibold py-3 rounded-lg hover:bg-[#006331] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2"
                 >
-                  <Upload size={20} /> Submit Verified Result
+                  <Upload size={20} /> {isSubmitting ? "Submitting..." : "Submit Result"}
                 </button>
               </div>
             </div>
@@ -725,7 +778,7 @@ export default function ResultCapture() {
             </div>
             <h2 className="text-3xl font-bold text-gray-900 mb-2">Upload Successful!</h2>
             <p className="text-gray-500 mb-8 max-w-md">
-              The result for <strong>{selectedPu}</strong> has been securely transmitted to the
+              The result for <strong>{selectedPuName}</strong> has been securely transmitted to the
               National Database.
             </p>
             <button
