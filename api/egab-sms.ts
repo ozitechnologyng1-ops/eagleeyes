@@ -35,17 +35,33 @@ export default async function handler(req: any, res: any) {
   }
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-  const supabaseKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_ANON_KEY;
+  const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   // --- GET: Check delivery status ---
   if (req.method === "GET") {
-    const reference = req.query?.reference as string;
-    if (!reference) {
+    const requestedReference = req.query?.reference;
+    if (typeof requestedReference !== "string" || !/^[0-9a-f-]{36}$/i.test(requestedReference)) {
       return res.status(400).json({ error: "Missing required 'reference' query parameter" });
     }
+
+    if (!supabaseUrl || !supabaseKey)
+      return res.status(503).json({ error: "SMS status storage is not configured" });
+
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data: stored, error: lookupError } = await supabase
+      .from("sms_logs")
+      .select("id,reference")
+      .or(`id.eq.${requestedReference},reference.eq.${requestedReference}`)
+      .limit(1)
+      .maybeSingle();
+    if (lookupError) {
+      console.error("[EGAB SMS] Status lookup failed", lookupError.message);
+      return res.status(503).json({ error: "SMS status storage is unavailable" });
+    }
+    if (!stored?.reference) return res.status(404).json({ error: "SMS reference not found" });
+    const reference = stored.reference;
 
     const path = `/api/v1/bulksms/sms/${encodeURIComponent(reference)}`;
     const timestamp = Math.floor(Date.now() / 1000).toString();
@@ -66,18 +82,18 @@ export default async function handler(req: any, res: any) {
       });
 
       const resJson = await upstream.json().catch(() => null);
-      if (resJson?.data?.status && supabaseUrl && supabaseKey) {
-        try {
-          const supabase = createClient(supabaseUrl, supabaseKey);
-          await supabase
-            .from("sms_logs")
-            .update({
-              status: resJson.data.status,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("reference", reference);
-        } catch (dbErr) {
-          console.warn("[Vercel /api/egab-sms] Status DB update error:", dbErr);
+      if (upstream.ok && resJson?.data?.status) {
+        const { data: updated, error: updateError } = await supabase
+          .from("sms_logs")
+          .update({
+            status: resJson.data.status,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", stored.id)
+          .select("id");
+        if (updateError || !updated?.length) {
+          console.error("[EGAB SMS] Status sync failed", updateError?.message || "No row updated");
+          return res.status(503).json({ error: "SMS status could not be saved" });
         }
       }
       return res.status(upstream.status).json(resJson || { error: "Invalid status response" });
@@ -162,7 +178,7 @@ export default async function handler(req: any, res: any) {
   if (supabaseUrl && supabaseKey) {
     try {
       const supabase = createClient(supabaseUrl, supabaseKey);
-      await supabase.from("sms_logs").insert({
+      const { error: insertError } = await supabase.from("sms_logs").insert({
         id: idempotencyKey,
         recipient: targetPhone,
         message,
@@ -181,7 +197,7 @@ export default async function handler(req: any, res: any) {
           raw_response: egabResponse || responseText.slice(0, 300),
         },
       });
-      console.log("[Vercel /api/egab-sms] Tracked in Supabase sms_logs table.");
+      if (insertError) console.warn("[EGAB SMS] Log insert failed", insertError.message);
     } catch (dbErr) {
       console.warn("[Vercel /api/egab-sms] DB Tracking Warning:", dbErr);
     }

@@ -21,6 +21,8 @@ On Windows, `node_modules\\.bin\\vp.cmd` can be used if `vp` is not on `PATH`.
 
 Configure `VITE_CLIENT_BRAND` as `lagos` or `ogun` to override hostname branding. Otherwise the hostname selects the state, with default Eagle Eye branding for unknown hosts. `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` select the Supabase project; use only a public/publishable client key. Do not place service-role keys or private API secrets in `VITE_` variables. The current SMS and image-scanning flows still need a server-side credential review before production use.
 
+EGAB returns `pending` when it accepts an SMS. To keep `sms_logs.status` current, configure the Vercel server variables `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, and `EGAB_WEBHOOK_SECRET`. In the EGAB dashboard, register `https://eagleeyess.vercel.app/api/egab-delivery` for `bulksms.message.delivered` and `bulksms.message.failed`; copy the webhook signing secret shown there into `EGAB_WEBHOOK_SECRET`. This webhook secret is separate from `EGAB_SECRET`. The signed webhook updates the matching log row when EGAB reports a final outcome. The existing Check delivery status action also reads EGAB by message reference and saves the returned status. Never place either secret in a `VITE_` variable.
+
 See [migration findings](docs/MIGRATION.md) and [test coverage](docs/TESTING.md) for current results and limits. The repository includes Vercel and Netlify routing configuration, but this evaluation copy has not been deployed.
 
 ## Voter register
