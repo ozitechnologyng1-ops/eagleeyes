@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { supabase } from "../lib/supabase";
-import { VISION_AI_PROMPT } from "../lib/prompts";
 import toast from "react-hot-toast";
 import { getVoterScope } from "../lib/voterScope";
 import { queryVoterRegister, type VoterFilters, type VoterPage } from "../lib/voterRegister";
@@ -1487,44 +1486,68 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const analyzeResultImage = async (file: File): Promise<{ results: any; ai_used?: string }> => {
     try {
-      const fileToBase64 = async (f: File) => {
-        return new Promise<string>((resolve) => {
+      if (!["image/jpeg", "image/png", "image/webp"].includes(file.type))
+        throw new Error("Choose a JPEG, PNG, or WebP photo.");
+      let scanFile: Blob = file;
+      if (file.size > 3_000_000) {
+        const bitmap = await createImageBitmap(file);
+        try {
+          for (const [maxSide, quality] of [
+            [2200, 0.85],
+            [1800, 0.75],
+            [1400, 0.65],
+          ]) {
+            const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.round(bitmap.width * scale);
+            canvas.height = Math.round(bitmap.height * scale);
+            const context = canvas.getContext("2d");
+            if (!context) throw new Error("Image processing is unavailable on this device.");
+            context.fillStyle = "white";
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+            const compressed = await new Promise<Blob | null>((resolve) =>
+              canvas.toBlob(resolve, "image/jpeg", quality),
+            );
+            if (!compressed) throw new Error("Unable to prepare this photo for scanning.");
+            scanFile = compressed;
+            if (scanFile.size <= 3_000_000) break;
+          }
+        } finally {
+          bitmap.close();
+        }
+      }
+      if (scanFile.size > 3_000_000)
+        throw new Error("This photo is too large to scan. Choose a smaller image.");
+      const fileToBase64 = async (blob: Blob) => {
+        return new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onloadend = () => {
             const base64Data = (reader.result as string).split(",")[1];
-            resolve(base64Data);
+            if (base64Data) resolve(base64Data);
+            else reject(new Error("Unable to read this photo."));
           };
-          reader.readAsDataURL(f);
+          reader.onerror = () => reject(new Error("Unable to read this photo."));
+          reader.readAsDataURL(blob);
         });
       };
-
-      const imageBase64 = await fileToBase64(file);
-
-      const { data, error } = await supabase.functions.invoke("analyze-result", {
-        body: {
-          imageBase64,
-          mimeType: file.type,
-          promptText: VISION_AI_PROMPT,
-        },
+      const token = readAgentSession()?.token;
+      if (!token) throw new Error("Sign in before scanning a result.");
+      const response = await fetch("/api/analyze-result", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-agent-session": token },
+        body: JSON.stringify({
+          imageBase64: await fileToBase64(scanFile),
+          mimeType: scanFile.type,
+        }),
+        signal: AbortSignal.timeout(60_000),
       });
-
-      if (error) {
-        // supabase-js hides the actual Edge Function response body inside the error.context if it's a 4xx error.
-        let errMsg = error.message;
-
-        // Try to dig out the JSON { error: "msg" } we threw from Edge Function
-        if (error.context && typeof error.context.json === "function") {
-          try {
-            const errData = await error.context.json();
-            if (errData.error) errMsg = errData.error;
-          } catch {}
-        }
-        throw new Error(errMsg || "Edge Function failure");
-      }
-
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.results)
+        throw new Error(data?.error || "Image analysis failed. Retry with the same photo.");
       return { results: data.results, ai_used: data.ai_used };
     } catch (err: any) {
-      console.error("AI Analysis failed:", err);
+      console.error("AI analysis failed:", err instanceof Error ? err.name : "UnknownError");
       throw err;
     }
   };

@@ -1,11 +1,18 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Camera, Upload, CheckCircle, AlertTriangle, ChevronRight, Search, X } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { cn } from "../lib/utils";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 
-type Step = "select_pu" | "select_election" | "camera" | "scanning" | "verify" | "success";
+type Step =
+  | "select_pu"
+  | "select_election"
+  | "camera"
+  | "scanning"
+  | "scan_error"
+  | "verify"
+  | "success";
 
 export default function ResultCapture() {
   const { user, locations, submitResult, activeElectionGroup, analyzeResultImage, isMockMode } =
@@ -76,6 +83,15 @@ export default function ResultCapture() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>("");
   const [aiProvider, setAiProvider] = useState<string | null>(null);
+  const [scanError, setScanError] = useState("");
+  const [scanSucceeded, setScanSucceeded] = useState(false);
+
+  useEffect(
+    () => () => {
+      if (imagePreview) URL.revokeObjectURL(imagePreview);
+    },
+    [imagePreview],
+  );
 
   const puList = [
     "PU 001 - Town Hall",
@@ -84,13 +100,14 @@ export default function ResultCapture() {
     "PU 004 - Health Center",
   ];
 
-  const processImage = async (file: File) => {
-    setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
+  const scanImage = async (file: File) => {
+    setScanError("");
+    setScanSucceeded(false);
     setStep("scanning");
 
     if (isMockMode) {
       setTimeout(() => {
+        setScanSucceeded(true);
         setStep("verify");
       }, 2500);
       return;
@@ -120,16 +137,22 @@ export default function ResultCapture() {
           aiNotes: data.results.aiNotes || "",
         }));
         setAiProvider(data.ai_used || null);
+        setScanSucceeded(true);
         toast.success("Image analyzed successfully!");
+        setStep("verify");
       } else {
-        toast.error("Failed to extract data properly.");
+        throw new Error("No result figures were found. Retry with this photo or retake it.");
       }
     } catch (err: any) {
-      console.error(err);
-      toast.error(err.message || "Error connecting to Vision AI. Please check API keys.");
-    } finally {
-      setStep("verify");
+      setScanError(err instanceof Error ? err.message : "Image analysis failed. Please retry.");
+      setStep("scan_error");
     }
+  };
+
+  const processImage = async (file: File) => {
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+    await scanImage(file);
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -137,6 +160,7 @@ export default function ResultCapture() {
       Promise.resolve(processImage(e.target.files[0])).catch((error: unknown) =>
         console.error("Async operation failed in ResultCapture", error),
       );
+      e.target.value = "";
     }
   };
 
@@ -255,8 +279,8 @@ export default function ResultCapture() {
           </button>
           <ChevronRight size={16} />
           <button
-            onClick={() => selectedElection && setStep("verify")}
-            disabled={!selectedElection || step === "select_election" || step === "select_pu"}
+            onClick={() => scanSucceeded && setStep("verify")}
+            disabled={!scanSucceeded}
             className={cn(
               "disabled:opacity-50 hover:text-gray-900 disabled:cursor-not-allowed",
               step === "verify" ? "text-[#004d25] font-semibold" : "",
@@ -417,6 +441,39 @@ export default function ResultCapture() {
             <h2 className="text-2xl font-bold text-gray-900 mb-2">Analyzing Document...</h2>
             <p className="text-gray-500">EagleEye AI is extracting results from the EC8A form.</p>
           </div>
+        )}
+
+        {step === "scan_error" && (
+          <section className="bg-white rounded-xl shadow-sm border border-red-200 flex-1 p-6">
+            <h2 className="text-xl font-semibold text-gray-900">Could not read this result</h2>
+            <p role="alert" className="mt-2 text-sm text-red-700">
+              {scanError}
+            </p>
+            {imagePreview && (
+              <img
+                src={imagePreview}
+                alt="Captured form to retry"
+                className="mt-5 max-h-96 w-full object-contain bg-gray-100 rounded-lg"
+              />
+            )}
+            <div className="flex gap-3 mt-5">
+              <button
+                type="button"
+                onClick={() => imageFile && void scanImage(imageFile)}
+                disabled={!imageFile}
+                className="flex-1 bg-[#004d25] text-white font-semibold py-3 rounded-lg disabled:opacity-50"
+              >
+                Retry scan
+              </button>
+              <button
+                type="button"
+                onClick={() => setStep("camera")}
+                className="flex-1 border border-gray-300 text-gray-800 font-semibold py-3 rounded-lg"
+              >
+                Retake photo
+              </button>
+            </div>
+          </section>
         )}
 
         {step === "verify" && (
