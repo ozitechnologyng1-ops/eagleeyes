@@ -1,11 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import {
+  createAnalyzeResultHandler,
+  validImage,
+  validateResult,
+} from "../../supabase/functions/analyze-result/handler";
 
-const { rpc } = vi.hoisted(() => ({ rpc: vi.fn() }));
-vi.mock("@supabase/supabase-js", () => ({ createClient: () => ({ rpc }) }));
-
-import handler, { validateResult } from "../../api/analyze-result";
-
-const token = "a".repeat(64);
 const imageBase64 = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(100)]).toString(
   "base64",
 );
@@ -21,94 +20,135 @@ const result = {
   political_party_results: [{ party: "ADC", votes_in_figures: 78 }],
 };
 
-function response() {
-  const res = {
-    statusCode: 200,
-    body: null as unknown,
-    setHeader: vi.fn(),
-    status(code: number) {
-      this.statusCode = code;
-      return this;
-    },
-    json(body: unknown) {
-      this.body = body;
-      return this;
-    },
-  };
-  return res;
-}
-
-function request(overrides: Record<string, unknown> = {}) {
-  return {
+const request = () =>
+  new Request("https://example.supabase.co/functions/v1/analyze-result", {
     method: "POST",
-    headers: { "x-agent-session": token },
-    body: { imageBase64, mimeType: "image/jpeg" },
-    ...overrides,
-  };
-}
-
-beforeEach(() => {
-  vi.stubEnv("SUPABASE_URL", "https://example.supabase.co");
-  vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_synthetic");
-  vi.stubEnv("OPEN_AI", "sk-synthetic");
-  rpc.mockImplementation(async (name: string) =>
-    name === "agent_session_resolve"
-      ? { data: { id: "agent", status: "Active" }, error: null }
-      : { data: true, error: null },
-  );
-});
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-  vi.unstubAllGlobals();
-  vi.clearAllMocks();
-});
-
-describe("result image analysis", () => {
-  it("rejects unauthenticated and invalid image requests before calling OpenAI", async () => {
-    const fetcher = vi.fn();
-    vi.stubGlobal("fetch", fetcher);
-    const unauthorized = response();
-    await handler(request({ headers: {} }), unauthorized);
-    expect(unauthorized.statusCode).toBe(401);
-    const invalid = response();
-    await handler(request({ body: { imageBase64, mimeType: "image/png" } }), invalid);
-    expect(invalid.statusCode).toBe(400);
-    expect(fetcher).not.toHaveBeenCalled();
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ imageBase64, mimeType: "image/jpeg" }),
   });
+const authorized = vi.fn(async () => ({
+  headers: { "Access-Control-Allow-Origin": "https://ogunadc.com" },
+  body: { imageBase64, mimeType: "image/jpeg" },
+}));
 
-  it("enforces the existing agent scan limit", async () => {
-    rpc.mockImplementation(async (name: string) =>
-      name === "agent_session_resolve"
-        ? { data: { id: "agent", status: "Active" }, error: null }
-        : { data: false, error: null },
+describe("Supabase result analysis", () => {
+  it("rejects unauthorized and invalid image requests before provider calls", async () => {
+    const fetcher = vi.fn();
+    const denied = createAnalyzeResultHandler(
+      async () => new Response(null, { status: 401 }),
+      () => "test-key",
+      fetcher as typeof fetch,
     );
-    const fetcher = vi.fn();
-    vi.stubGlobal("fetch", fetcher);
-    const res = response();
-    await handler(request(), res);
-    expect(res.statusCode).toBe(429);
+    expect((await denied(request())).status).toBe(401);
+    const invalid = createAnalyzeResultHandler(
+      async () => ({
+        headers: {},
+        body: {
+          imageBase64: "invalid",
+          mimeType: "image/jpeg",
+        },
+      }),
+      () => "test-key",
+      fetcher as typeof fetch,
+    );
+    expect((await invalid(request())).status).toBe(400);
     expect(fetcher).not.toHaveBeenCalled();
+    expect(validImage(imageBase64, "image/jpeg")).toBe(true);
+    expect(() => validateResult({ ...result, number_of_valid_votes: null })).toThrow();
   });
 
-  it("sends the photo to OpenAI without storing a response and validates the figures", async () => {
-    const fetcher = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        output: [{ content: [{ type: "output_text", text: JSON.stringify(result) }] }],
-      }),
-    });
-    vi.stubGlobal("fetch", fetcher);
-    const res = response();
-    await handler(request(), res);
-    expect(res.statusCode).toBe(200);
-    expect(res.body).toMatchObject({
+  it("uses OpenAI first without storing the response", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          output: [{ content: [{ type: "output_text", text: JSON.stringify(result) }] }],
+        }),
+        { status: 200 },
+      ),
+    );
+    const handler = createAnalyzeResultHandler(
+      authorized,
+      () => "test-openai",
+      fetcher as typeof fetch,
+      () => "test-groq",
+      () => "test-gemini",
+    );
+    const response = await handler(request());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
       ai_used: "gpt-4.1",
-      results: { number_of_valid_votes: 78, local_government: null },
+      results: {
+        number_of_valid_votes: 78,
+        local_government: null,
+      },
     });
-    const outbound = JSON.parse(fetcher.mock.calls[0][1].body);
-    expect(outbound.store).toBe(false);
-    expect(outbound.input[0].content[1].type).toBe("input_image");
-    expect(() => validateResult({ ...result, number_of_valid_votes: null })).toThrow();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fetcher.mock.calls[0][1].body);
+    expect(body.store).toBe(false);
+    expect(body.input[0].content[1].type).toBe("input_image");
+  });
+
+  it("falls back to Groq when OpenAI returns 401", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: "invalid_api_key" } }), {
+          status: 401,
+          headers: { "x-request-id": "synthetic-request-id" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: JSON.stringify(result) } }],
+          }),
+          { status: 200 },
+        ),
+      );
+    const handler = createAnalyzeResultHandler(
+      authorized,
+      () => "test-openai",
+      fetcher as typeof fetch,
+      () => "test-groq",
+    );
+    const response = await handler(request());
+    expect(response.status).toBe(200);
+    expect((await response.json()).ai_used).toBe("llama-4-scout");
+    expect(fetcher.mock.calls[1][0]).toContain("api.groq.com");
+  });
+
+  it("falls back to Gemini and reports failure only after all providers fail", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("{}", { status: 401 }))
+      .mockResolvedValueOnce(new Response("{}", { status: 429 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+          }),
+          { status: 200 },
+        ),
+      );
+    const handler = createAnalyzeResultHandler(
+      authorized,
+      () => "test-openai",
+      fetcher as typeof fetch,
+      () => "test-groq",
+      () => "test-gemini",
+    );
+    const response = await handler(request());
+    expect(response.status).toBe(200);
+    expect((await response.json()).ai_used).toBe("gemini-3.1-flash-lite");
+    expect(fetcher.mock.calls[2][0]).toContain("gemini-3.1-flash-lite-preview");
+
+    const failing = createAnalyzeResultHandler(
+      authorized,
+      () => "test-openai",
+      vi.fn().mockResolvedValue(new Response("{}", { status: 401 })) as typeof fetch,
+    );
+    const failed = await failing(request());
+    expect(failed.status).toBe(502);
+    expect(await failed.json()).toMatchObject({ reason: "all_providers_failed" });
   });
 });

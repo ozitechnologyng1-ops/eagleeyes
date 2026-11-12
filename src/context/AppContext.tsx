@@ -1533,18 +1533,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
       };
       const token = readAgentSession()?.token;
       if (!token) throw new Error("Sign in before scanning a result.");
-      const response = await fetch("/api/analyze-result", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-agent-session": token },
-        body: JSON.stringify({
+      const { data, error } = await supabase.functions.invoke("analyze-result", {
+        headers: { "x-agent-session": token },
+        body: {
           imageBase64: await fileToBase64(scanFile),
           mimeType: scanFile.type,
-        }),
+        },
         signal: AbortSignal.timeout(60_000),
       });
-      const data = await response.json().catch(() => null);
-      if (!response.ok || !data?.results)
-        throw new Error(data?.error || "Image analysis failed. Retry with the same photo.");
+      if (error) {
+        const details =
+          error.context instanceof Response ? await error.context.json().catch(() => null) : null;
+        throw new Error(details?.error || "Image analysis failed. Retry with the same photo.");
+      }
+      if (!data?.results) throw new Error("Image analysis returned no results. Retry this photo.");
       return { results: data.results, ai_used: data.ai_used };
     } catch (err: any) {
       console.error("AI analysis failed:", err instanceof Error ? err.name : "UnknownError");
