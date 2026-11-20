@@ -187,7 +187,10 @@ interface AppState {
   addLocation: (location: Omit<Location, "id">) => void;
   updateLocation: (id: string, updates: Partial<Location>) => void;
   getDescendantLocations: (locationId: string) => Location[];
-  analyzeResultImage: (file: File) => Promise<{ results: any; ai_used?: string }>;
+  analyzeResultImage: (
+    file: File,
+    electionType: string,
+  ) => Promise<{ results: any; ai_used?: string }>;
   votersPage: number;
   isLoadingVoters: boolean;
   fetchVotersPage: (
@@ -1536,7 +1539,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await refreshElectionStats();
   };
 
-  const analyzeResultImage = async (file: File): Promise<{ results: any; ai_used?: string }> => {
+  const analyzeResultImage = async (
+    file: File,
+    electionType: string,
+  ): Promise<{ results: any; ai_used?: string }> => {
     try {
       if (!["image/jpeg", "image/png", "image/webp"].includes(file.type))
         throw new Error("Choose a JPEG, PNG, or WebP photo.");
@@ -1590,6 +1596,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         body: {
           imageBase64: await fileToBase64(scanFile),
           mimeType: scanFile.type,
+          electionType,
         },
         signal: AbortSignal.timeout(60_000),
       });

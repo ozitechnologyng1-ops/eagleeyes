@@ -17,8 +17,9 @@ type Result = Pick<
   | "results_json"
 >;
 
-type Lga = { id: number; name: string; state_id: number };
+type Lga = { id: number; name: string; state_id: number; total_pus?: number };
 type Totals = {
+  totalPus: number;
   submissions: number;
   registered: number;
   accredited: number;
@@ -46,6 +47,7 @@ const rowNumber =
 const lgaColumn = "sticky left-12 z-10 min-w-44 border-r-2 border-r-emerald-200";
 
 const emptyTotals = (): Totals => ({
+  totalPus: 0,
   submissions: 0,
   registered: 0,
   accredited: 0,
@@ -61,7 +63,9 @@ export function summarizeLgaResults(lgas: Lga[], results: Result[]) {
   const grandTotal = emptyTotals();
   for (const lga of lgas) {
     const key = `${lga.state_id}:${lga.id}`;
-    rows.set(key, { ...emptyTotals(), key, name: lga.name, stateId: lga.state_id });
+    const totalPus = lga.total_pus ?? 0;
+    rows.set(key, { ...emptyTotals(), totalPus, key, name: lga.name, stateId: lga.state_id });
+    grandTotal.totalPus += totalPus;
   }
 
   for (const result of results) {
@@ -137,10 +141,11 @@ async function fetchSummaryLgas(
   const lgas: Lga[] = [];
   let cursor = 0;
   while (canRead()) {
-    let query = supabase.from("local_governments").select("id,name,state_id");
-    if (stateId) query = query.eq("state_id", stateId);
-    if (lgaId) query = query.eq("id", lgaId);
-    const { data, error } = await query
+    const { data, error } = await supabase
+      .rpc("election_lga_polling_unit_totals", {
+        p_state_id: stateId ?? null,
+        p_lga_id: lgaId ?? null,
+      })
       .gt("id", cursor)
       .order("id")
       .limit(PAGE_SIZE)
@@ -184,7 +189,7 @@ export async function fetchLgaResultSummary(
 }
 
 const summaryMetrics = [
-  "Submissions",
+  "Total PU / Total submitted",
   "Registered",
   "Accredited",
   "Valid",
@@ -198,7 +203,7 @@ function summaryHeaders(parties: readonly string[]) {
 
 function summaryFigures(total: Totals, parties: readonly string[]) {
   return [
-    total.submissions,
+    `${total.totalPus}/${total.submissions}`,
     total.registered,
     total.accredited,
     total.valid,
@@ -439,7 +444,7 @@ export function LiveResultsSheet({
                 </th>
                 {figures(row).map((value, column) => (
                   <td key={headers[column + 1]} className={`${cell} text-right tabular-nums`}>
-                    {numberFormat.format(value)}
+                    {typeof value === "number" ? numberFormat.format(value) : value}
                   </td>
                 ))}
               </tr>
@@ -454,7 +459,7 @@ export function LiveResultsSheet({
                 </th>
                 {figures(snapshot.grandTotal).map((value, column) => (
                   <td key={headers[column + 1]} className={`${cell} text-right tabular-nums`}>
-                    {numberFormat.format(value)}
+                    {typeof value === "number" ? numberFormat.format(value) : value}
                   </td>
                 ))}
               </tr>

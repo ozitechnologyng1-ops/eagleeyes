@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
+  normalizeCe8aCode,
+  validateCe8aAssignment,
+} from "../../supabase/functions/analyze-result/form-identity";
+import {
   createAnalyzeResultHandler,
   validImage,
   validateResult,
@@ -8,6 +12,40 @@ import {
 const imageBase64 = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(100)]).toString(
   "base64",
 );
+
+it("matches the printed CE8A code and election without requiring an exact polling-unit name", () => {
+  const assignment = { code: "24-01-07-017", state: "Lagos", lga: "AGEGE", ward: "KEKE" };
+  const form = {
+    election_title: "2023 GOVERNORSHIP ELECTION",
+    state: "Lagos State",
+    local_government_area: "Agege",
+    registration_area: "Keke",
+    polling_unit_code: "024-1-7-017",
+    polling_unit: "A name with different spelling",
+  };
+  expect(normalizeCe8aCode(form.polling_unit_code)).toBe(assignment.code);
+  expect(validateCe8aAssignment(form, "governorship", assignment)).toBeNull();
+  expect(
+    validateCe8aAssignment(
+      { ...form, polling_unit_code: "24-01-07-018" },
+      "governorship",
+      assignment,
+    ),
+  ).toMatch(/doesn’t match your polling unit/);
+  expect(
+    validateCe8aAssignment(
+      { ...form, registration_area: "Other ward" },
+      "governorship",
+      assignment,
+    ),
+  ).toMatch(/doesn’t match your polling unit/);
+  expect(validateCe8aAssignment(form, "presidential", assignment)).toMatch(
+    /doesn’t match your selection/,
+  );
+  expect(
+    validateCe8aAssignment({ ...form, polling_unit_code: null }, "governorship", assignment),
+  ).toMatch(/couldn’t read the polling-unit code/);
+});
 const result = {
   number_of_voters_on_register: 100,
   number_of_accredited_voters: 80,

@@ -88,6 +88,8 @@ export default function ResultCapture() {
     local_government: 0,
     registration_area: "",
     polling_unit: "",
+    polling_unit_code: "",
+    election_title: "",
     number_of_voters_on_register: 0, // 1
     number_of_accredited_voters: 0, // 2
     number_of_ballot_papers_issued: 0, // 3
@@ -206,6 +208,8 @@ export default function ResultCapture() {
   const [aiProvider, setAiProvider] = useState<string | null>(null);
   const [scanError, setScanError] = useState("");
   const [scanSucceeded, setScanSucceeded] = useState(false);
+  const [verifiedScanKey, setVerifiedScanKey] = useState<string>();
+  const scanMatchesSelection = scanSucceeded && verifiedScanKey === submissionKey;
 
   useEffect(
     () => () => {
@@ -221,6 +225,7 @@ export default function ResultCapture() {
 
     if (isMockMode) {
       setTimeout(() => {
+        setVerifiedScanKey(submissionKey);
         setScanSucceeded(true);
         setStep("verify");
       }, 2500);
@@ -228,13 +233,17 @@ export default function ResultCapture() {
     }
 
     try {
-      const data = await analyzeResultImage(file);
+      const data = await analyzeResultImage(file, selectedElection);
       if (data && data.results) {
         setResults((prev) => ({
           ...prev,
           state: data.results.state || "",
           local_government_area: data.results.local_government_area || "",
           local_government: data.results.local_government || 0,
+          registration_area: data.results.registration_area || "",
+          polling_unit: data.results.polling_unit || "",
+          polling_unit_code: data.results.polling_unit_code || "",
+          election_title: data.results.election_title || "",
           number_of_voters_on_register: data.results.number_of_voters_on_register || 0,
           number_of_accredited_voters: data.results.number_of_accredited_voters || 0,
           number_of_ballot_papers_issued: data.results.number_of_ballot_papers_issued || 0,
@@ -251,6 +260,7 @@ export default function ResultCapture() {
           aiNotes: data.results.aiNotes || "",
         }));
         setAiProvider(data.ai_used || null);
+        setVerifiedScanKey(submissionKey);
         setScanSucceeded(true);
         toast.success("Image analyzed successfully!");
         setStep("verify");
@@ -317,6 +327,10 @@ export default function ResultCapture() {
   const handleSubmit = async () => {
     if (!selectedPu) {
       toast.error("Select a polling unit before submitting.");
+      return;
+    }
+    if (!scanMatchesSelection) {
+      toast.error("Please scan the form for this polling unit and election again.");
       return;
     }
     if (isSubmitting) return;
@@ -410,8 +424,8 @@ export default function ResultCapture() {
           </button>
           <ChevronRight size={16} />
           <button
-            onClick={() => scanSucceeded && setStep("verify")}
-            disabled={!scanSucceeded}
+            onClick={() => scanMatchesSelection && setStep("verify")}
+            disabled={!scanMatchesSelection}
             className={cn(
               "disabled:opacity-50 hover:text-gray-900 disabled:cursor-not-allowed",
               step === "verify" ? "text-[#004d25] font-semibold" : "",
@@ -482,7 +496,10 @@ export default function ResultCapture() {
               {electionTypes.map((election) => (
                 <button
                   key={election.id}
-                  onClick={() => setSelectedElection(election.id)}
+                  onClick={() => {
+                    if (election.id !== selectedElection) setScanSucceeded(false);
+                    setSelectedElection(election.id);
+                  }}
                   className={cn(
                     "w-full text-left px-4 py-3 rounded-lg border transition-colors",
                     selectedElection === election.id
@@ -734,6 +751,22 @@ export default function ResultCapture() {
               </div>
 
               <div className="p-4 flex-1 overflow-y-auto space-y-4">
+                {results.election_title && (
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-lg bg-gray-50 p-3 text-sm text-gray-700">
+                    <dt className="font-semibold">Election</dt>
+                    <dd>{results.election_title}</dd>
+                    <dt className="font-semibold">LGA</dt>
+                    <dd>{results.local_government_area || "Not read"}</dd>
+                    <dt className="font-semibold">Ward</dt>
+                    <dd>{results.registration_area || "Not read"}</dd>
+                    {results.polling_unit_code && (
+                      <>
+                        <dt className="font-semibold">PU code</dt>
+                        <dd>{results.polling_unit_code}</dd>
+                      </>
+                    )}
+                  </dl>
+                )}
                 {results.aiNotes && (
                   <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-3 rounded-lg flex items-start gap-2 text-sm">
                     <AlertTriangle size={18} className="shrink-0 mt-0.5" />

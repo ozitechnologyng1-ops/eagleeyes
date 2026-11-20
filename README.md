@@ -40,3 +40,9 @@ Existing agent sessions and database row-level security remain required. No data
 ## Agent registration
 
 State admins can register polling-unit agents from the Voters tab within their assigned state. An agent phone number can be used on only one account. If the person is already registered in that state, edit their existing entry in the Agents tab.
+
+## Election results
+
+The Live Results Sheet and its CSV and PDF exports show **Total PU / Total submitted** by LGA. The first figure is the full LGA polling-unit directory count. The second reflects the selected election and jurisdiction filters. The sheet uses the `election_lga_polling_unit_totals` function in `supabase/security/13-lga-polling-unit-totals.forward.sql`.
+
+For polling-unit agents, `analyze-result` compares the printed election title and polling-unit code with the selected election and the agent’s assigned unit. It also checks printed state, LGA and ward names when the scanner reads them. The polling-unit display name is optional. The frontend and `analyze-result` must be released together because the scanner needs the selected election from the client. These checks run during scanning, while the result table continues to enforce its existing assignment and uniqueness rules.

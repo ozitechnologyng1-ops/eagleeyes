@@ -8,25 +8,41 @@ import {
 } from "./LiveResultsSheet";
 
 it("exports the same LGA rows and totals and keeps each PDF section narrow", () => {
-  const summary = summarizeLgaResults([{ id: 1, name: "Ikeja", state_id: 24 }], []);
+  const summary = summarizeLgaResults(
+    [{ id: 1, name: "Eti-Osa", state_id: 24, total_pus: 725 }],
+    [
+      {
+        id: "result",
+        state_id: 24,
+        local_governments_id: 1,
+        total_valid: 10,
+        total_rejected: 1,
+        total_cast: 11,
+        results_json: null,
+      },
+    ],
+  );
   const table = lgaSummaryTable(summary);
   expect(table[0].slice(0, 7)).toEqual([
     "LGA",
-    "Submissions",
+    "Total PU / Total submitted",
     "Registered",
     "Accredited",
     "Valid",
     "Rejected",
     "Total cast",
   ]);
-  expect(table.slice(1).map((row) => row[0])).toEqual(["Ikeja", "Grand total"]);
+  expect(table.slice(1).map((row) => row.slice(0, 2))).toEqual([
+    ["Eti-Osa", "725/1"],
+    ["Grand total", "725/1"],
+  ]);
   const sections = lgaSummaryPrintSections(table);
   expect(sections.length).toBeGreaterThan(1);
   expect(sections.every(({ rows }) => rows.every((row) => row.length <= 10))).toBe(true);
   expect(sections.flatMap(({ rows }) => rows[0].slice(1))).toEqual(table[0].slice(1));
-  expect(sections.every(({ rows }) => rows[1][0] === "Ikeja" && rows[2][0] === "Grand total")).toBe(
-    true,
-  );
+  expect(
+    sections.every(({ rows }) => rows[1][0] === "Eti-Osa" && rows[2][0] === "Grand total"),
+  ).toBe(true);
 });
 
 it("restores the election and jurisdiction filters from a copied sheet URL", () => {
