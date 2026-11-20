@@ -129,6 +129,106 @@ export const RESULT_ELECTIONS = ["presidential", "senate", "house", "governorshi
 
 type SheetFilters = Omit<Selection, "locations">;
 
+async function fetchSummaryLgas(
+  { stateId, lgaId }: Pick<SheetFilters, "stateId" | "lgaId">,
+  signal: AbortSignal,
+  canRead: () => boolean,
+) {
+  const lgas: Lga[] = [];
+  let cursor = 0;
+  while (canRead()) {
+    let query = supabase.from("local_governments").select("id,name,state_id");
+    if (stateId) query = query.eq("state_id", stateId);
+    if (lgaId) query = query.eq("id", lgaId);
+    const { data, error } = await query
+      .gt("id", cursor)
+      .order("id")
+      .limit(PAGE_SIZE)
+      .abortSignal(signal);
+    if (error) throw error;
+    if (!data?.length) return lgas;
+    lgas.push(...data);
+    cursor = data[data.length - 1].id;
+  }
+  throw new Error("Results request cancelled.");
+}
+
+export async function fetchLgaResultSummary(
+  filters: SheetFilters,
+  signal: AbortSignal,
+  canRead: () => boolean,
+  directory?: Lga[],
+) {
+  const { election, stateId, lgaId, wardId, puId } = filters;
+  const lgas = directory ?? (await fetchSummaryLgas(filters, signal, canRead));
+  const results: Result[] = [];
+  let afterId: string | undefined;
+  while (canRead()) {
+    let query = supabase
+      .from("election_results")
+      .select("id,state_id,local_governments_id,total_valid,total_rejected,total_cast,results_json")
+      .eq("election_type", election);
+    if (stateId) query = query.eq("state_id", stateId);
+    if (lgaId) query = query.eq("local_governments_id", lgaId);
+    if (wardId) query = query.eq("wards_id", wardId);
+    if (puId) query = query.eq("polling_units_id", String(puId));
+    if (afterId) query = query.gt("id", afterId);
+    const { data, error } = await query.order("id").limit(PAGE_SIZE).abortSignal(signal);
+    if (error) throw error;
+    if (!canRead()) break;
+    if (!data?.length) return summarizeLgaResults(lgas, results);
+    results.push(...data);
+    afterId = data[data.length - 1].id;
+  }
+  throw new Error("Results request cancelled.");
+}
+
+const summaryMetrics = [
+  "Submissions",
+  "Registered",
+  "Accredited",
+  "Valid",
+  "Rejected",
+  "Total cast",
+];
+
+function summaryHeaders(parties: readonly string[]) {
+  return ["LGA", ...summaryMetrics, ...parties.map((party) => `${party} votes`)];
+}
+
+function summaryFigures(total: Totals, parties: readonly string[]) {
+  return [
+    total.submissions,
+    total.registered,
+    total.accredited,
+    total.valid,
+    total.rejected,
+    total.cast,
+    ...parties.map((party) => total.parties.get(party) ?? 0),
+  ];
+}
+
+export function lgaSummaryTable(summary: ReturnType<typeof summarizeLgaResults>) {
+  return [
+    summaryHeaders(summary.parties),
+    ...summary.rows.map((row) => [row.name, ...summaryFigures(row, summary.parties)]),
+    ["Grand total", ...summaryFigures(summary.grandTotal, summary.parties)],
+  ];
+}
+
+export function lgaSummaryPrintSections(table: ReturnType<typeof lgaSummaryTable>) {
+  const metricEnd = summaryMetrics.length + 1;
+  const sections = [{ title: "Ballot totals", rows: table.map((row) => row.slice(0, metricEnd)) }];
+  const partiesPerSection = 9;
+  for (let start = metricEnd; start < table[0].length; start += partiesPerSection) {
+    sections.push({
+      title: `Party votes ${sections.length}`,
+      rows: table.map((row) => [row[0], ...row.slice(start, start + partiesPerSection)]),
+    });
+  }
+  return sections;
+}
+
 export function liveResultsSheetHref(pathname: string, filters: SheetFilters) {
   const params = new URLSearchParams({ view: "live-results", election: filters.election });
   for (const key of ["stateId", "lgaId", "wardId", "puId"] as const) {
@@ -213,48 +313,15 @@ export function LiveResultsSheet({
       if (!canRead()) return;
       setRefreshing(true);
       try {
-        if (!directory) {
-          const lgas: Lga[] = [];
-          let cursor = 0;
-          while (canRead()) {
-            let query = supabase.from("local_governments").select("id,name,state_id");
-            if (stateId) query = query.eq("state_id", stateId);
-            if (lgaId) query = query.eq("id", lgaId);
-            const { data, error } = await query
-              .gt("id", cursor)
-              .order("id")
-              .limit(PAGE_SIZE)
-              .abortSignal(signal);
-            if (error) throw error;
-            if (!data?.length) break;
-            lgas.push(...data);
-            cursor = data[data.length - 1].id;
-          }
-          directory = lgas;
-        }
-
-        const results: Result[] = [];
-        let afterId: string | undefined;
-        while (canRead()) {
-          let query = supabase
-            .from("election_results")
-            .select(
-              "id,state_id,local_governments_id,total_valid,total_rejected,total_cast,results_json",
-            )
-            .eq("election_type", election);
-          if (stateId) query = query.eq("state_id", stateId);
-          if (lgaId) query = query.eq("local_governments_id", lgaId);
-          if (wardId) query = query.eq("wards_id", wardId);
-          if (puId) query = query.eq("polling_units_id", String(puId));
-          if (afterId) query = query.gt("id", afterId);
-          const { data, error } = await query.order("id").limit(PAGE_SIZE).abortSignal(signal);
-          if (error) throw error;
-          if (!data?.length) break;
-          results.push(...data);
-          afterId = data[data.length - 1].id;
-        }
+        directory ??= await fetchSummaryLgas({ stateId, lgaId }, signal, canRead);
+        const summary = await fetchLgaResultSummary(
+          { election, stateId, lgaId, wardId, puId },
+          signal,
+          canRead,
+          directory,
+        );
         if (canRead()) {
-          setSnapshot({ ...summarizeLgaResults(directory, results), checkedAt: new Date() });
+          setSnapshot({ ...summary, checkedAt: new Date() });
           setFailed(false);
         }
       } catch {
@@ -274,26 +341,8 @@ export function LiveResultsSheet({
   }, [election, stateId, lgaId, wardId, puId, refreshVersion, sessionToken, onClose]);
 
   const parties = snapshot?.parties ?? REGISTERED_PARTIES;
-  const headers = [
-    "LGA",
-    "Submissions",
-    "Registered",
-    "Accredited",
-    "Valid",
-    "Rejected",
-    "Total cast",
-    ...parties.map((party) => `${party} votes`),
-  ];
-  const figures = (total: Totals) => [
-    total.submissions,
-    total.registered,
-    total.accredited,
-    total.valid,
-    total.rejected,
-    total.cast,
-    ...parties.map((party) => total.parties.get(party) ?? 0),
-  ];
-
+  const headers = summaryHeaders(parties);
+  const figures = (total: Totals) => summaryFigures(total, parties);
   return (
     <main className="fixed inset-0 z-[100] flex flex-col bg-white text-slate-900">
       <header className="flex shrink-0 items-start justify-between gap-3 bg-[#004d25] px-4 py-3 text-white sm:px-6">

@@ -1,9 +1,33 @@
 import { expect, it } from "vite-plus/test";
 import {
   liveResultsSheetHref,
+  lgaSummaryPrintSections,
+  lgaSummaryTable,
   readLiveResultsSelection,
   summarizeLgaResults,
 } from "./LiveResultsSheet";
+
+it("exports the same LGA rows and totals and keeps each PDF section narrow", () => {
+  const summary = summarizeLgaResults([{ id: 1, name: "Ikeja", state_id: 24 }], []);
+  const table = lgaSummaryTable(summary);
+  expect(table[0].slice(0, 7)).toEqual([
+    "LGA",
+    "Submissions",
+    "Registered",
+    "Accredited",
+    "Valid",
+    "Rejected",
+    "Total cast",
+  ]);
+  expect(table.slice(1).map((row) => row[0])).toEqual(["Ikeja", "Grand total"]);
+  const sections = lgaSummaryPrintSections(table);
+  expect(sections.length).toBeGreaterThan(1);
+  expect(sections.every(({ rows }) => rows.every((row) => row.length <= 10))).toBe(true);
+  expect(sections.flatMap(({ rows }) => rows[0].slice(1))).toEqual(table[0].slice(1));
+  expect(sections.every(({ rows }) => rows[1][0] === "Ikeja" && rows[2][0] === "Grand total")).toBe(
+    true,
+  );
+});
 
 it("restores the election and jurisdiction filters from a copied sheet URL", () => {
   const selection = {

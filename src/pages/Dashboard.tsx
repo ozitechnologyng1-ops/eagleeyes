@@ -51,10 +51,14 @@ import { supabase } from "../lib/supabase";
 import Voters from "./Voters";
 import Volunteers from "./Volunteers";
 import { clearAllImageCache } from "../lib/imageStorage";
-import { resultCsv, resultExportTable, type ExportResult } from "../lib/resultExport";
+import { resultCsv } from "../lib/resultExport";
+import { readAgentSession } from "../lib/agentSession";
 import {
   LiveResultsSheet,
   RESULT_ELECTIONS,
+  fetchLgaResultSummary,
+  lgaSummaryPrintSections,
+  lgaSummaryTable,
   liveResultsSheetHref,
   readLiveResultsSelection,
 } from "../components/LiveResultsSheet";
@@ -1089,89 +1093,140 @@ function ElectionsDashboard({ stats, electionResults, user, locations }: any) {
 
   const availableElections = RESULT_ELECTIONS;
 
+  const sheetFilters = {
+    election: selectedElection,
+    stateId: user.role === "state_admin" ? user.stateId : (filters.stateId ?? voterStateFilter),
+    lgaId: filters.lgaId,
+    wardId: filters.wardId,
+    puId: filters.puId,
+  };
+
   const exportResults = async (format: "csv" | "pdf") => {
     if (user.role !== "national_admin" && user.role !== "state_admin") return;
     setShowExportMenu(false);
-    const printWindow = format === "pdf" ? window.open("", "_blank") : null;
-    if (format === "pdf" && !printWindow) {
-      toast.error("Allow the export window to open, then try again.");
-      return;
-    }
-    const stateId = user.role === "state_admin" ? user.stateId : filters.stateId;
+    const { stateId } = sheetFilters;
     if (user.role === "state_admin" && !stateId) {
       toast.error("Your account has no assigned state.");
       return;
     }
+    const token = readAgentSession()?.token;
+    if (!token) {
+      toast.error("Sign in to export election results.");
+      return;
+    }
+    const canRead = () => readAgentSession()?.token === token;
+    let printFrame: HTMLIFrameElement | undefined;
     setResultActionBusy(true);
     try {
-      const rows: ExportResult[] = [];
-      for (let offset = 0; ; offset += 500) {
-        let query = supabase
-          .from("election_results")
-          .select(
-            "id,election_type,state_id,local_governments_id,wards_id,polling_units_id,agent_id,created_at,status,total_valid,total_rejected,total_cast,image_url,results_json",
-          )
-          .eq("election_type", selectedElection)
-          .order("id")
-          .range(offset, offset + 499);
-        if (stateId) query = query.eq("state_id", stateId);
-        if (filters.lgaId) query = query.eq("local_governments_id", filters.lgaId);
-        if (filters.wardId) query = query.eq("wards_id", filters.wardId);
-        if (filters.puId) query = query.eq("polling_units_id", String(filters.puId));
-        const { data, error } = await query;
-        if (error) throw error;
-        rows.push(...((data || []) as ExportResult[]));
-        if (!data || data.length < 500) break;
-      }
-      if (!rows.length) {
-        printWindow?.close();
-        toast.error("No results in this selection to export.");
+      const summary = await fetchLgaResultSummary(
+        sheetFilters,
+        AbortSignal.timeout(60_000),
+        canRead,
+      );
+      if (!canRead()) return;
+      if (!summary.rows.length) {
+        toast.error("No LGAs in this selection to export.");
         return;
       }
-      const table = resultExportTable(rows);
+      const table = lgaSummaryTable(summary);
       if (format === "csv") {
         const blob = new Blob([resultCsv(table)], { type: "text/csv;charset=utf-8" });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
-        link.download = `election-results-${selectedElection}-${stateId || "national"}.csv`;
+        link.download = `election-lga-totals-${selectedElection}-${stateId || "national"}.csv`;
         link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
-        toast.success(`Exported ${rows.length} results.`);
-      } else if (printWindow) {
-        const doc = printWindow.document;
-        doc.title = `Election results - ${selectedElection}`;
+        toast.success(`Exported ${summary.rows.length} LGA totals.`);
+      } else {
+        document.getElementById("election-results-print-frame")?.remove();
+        const frame = document.createElement("iframe");
+        printFrame = frame;
+        frame.id = "election-results-print-frame";
+        frame.title = "Printable election results";
+        frame.hidden = true;
+        frame.srcdoc =
+          '<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body></body></html>';
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("Could not prepare the printable report.")),
+            5000,
+          );
+          frame.addEventListener(
+            "load",
+            () => {
+              clearTimeout(timeout);
+              resolve();
+            },
+            { once: true },
+          );
+          document.body.append(frame);
+        });
+        if (!canRead()) {
+          frame.remove();
+          return;
+        }
+        const printWindow = frame.contentWindow;
+        const doc = frame.contentDocument;
+        if (!printWindow || !doc?.body) throw new Error("Could not open the print preview.");
+        doc.title = `${selectedElection.replaceAll("_", " ")} election · LGA totals`;
         const style = doc.createElement("style");
-        style.textContent =
-          "@page{size:landscape;margin:12mm}body{font:11px Arial,sans-serif}h1{font-size:18px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #aaa;padding:4px;word-break:break-word}thead{display:table-header-group}tr{break-inside:avoid}";
+        style.textContent = `
+          @page { size: A4 landscape; margin: 12mm; }
+          body { margin: 0; color: #17251e; font: 10pt Arial, sans-serif; }
+          h1, h2 { margin: 0 0 4mm; } h1 { font-size: 18pt; } h2 { font-size: 13pt; }
+          p { margin: 0 0 5mm; color: #40574b; }
+          section + section { margin-top: 10mm; }
+          table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+          thead { display: table-header-group; background: #e5f1e9; }
+          tr { break-inside: avoid; }
+          th, td { border: 1px solid #b7c9bf; padding: 1.8mm 1.2mm; text-align: right; font-variant-numeric: tabular-nums; }
+          th:first-child { width: 24%; text-align: left; overflow-wrap: anywhere; }
+          tbody tr:nth-child(even) { background: #f4f8f5; }
+          tbody tr:last-child { background: #e5f1e9; font-weight: bold; }
+          @media print { section + section { break-before: page; margin-top: 0; } }
+        `;
         doc.head.append(style);
         const heading = doc.createElement("h1");
-        heading.textContent = `${selectedElection} election results (${rows.length})`;
-        const report = doc.createElement("table");
-        const head = doc.createElement("thead");
-        const body = doc.createElement("tbody");
-        table.forEach((row, index) => {
-          const tr = doc.createElement("tr");
-          row.forEach((value) => {
-            const cell = doc.createElement(index === 0 ? "th" : "td");
-            cell.textContent = String(value);
-            tr.append(cell);
+        heading.textContent = doc.title;
+        const details = doc.createElement("p");
+        const stateName = stateId
+          ? (locations.find((location: Location) => location.id === `state_${stateId}`)?.name ??
+            `State ${stateId}`)
+          : "All states";
+        details.textContent = `${stateName} · ${summary.grandTotal.submissions.toLocaleString()} submissions`;
+        doc.body.replaceChildren(heading, details);
+        for (const { title, rows } of lgaSummaryPrintSections(table)) {
+          const section = doc.createElement("section");
+          const label = doc.createElement("h2");
+          label.textContent = title;
+          const report = doc.createElement("table");
+          const head = doc.createElement("thead");
+          const body = doc.createElement("tbody");
+          rows.forEach((row, index) => {
+            const tr = doc.createElement("tr");
+            row.forEach((value, column) => {
+              const cell = doc.createElement(index === 0 || column === 0 ? "th" : "td");
+              if (cell.tagName === "TH") cell.setAttribute("scope", index === 0 ? "col" : "row");
+              cell.textContent = typeof value === "number" ? value.toLocaleString() : value;
+              tr.append(cell);
+            });
+            (index === 0 ? head : body).append(tr);
           });
-          (index === 0 ? head : body).append(tr);
-        });
-        report.append(head, body);
-        doc.body.replaceChildren(heading, report);
-        printWindow.focus();
+          report.append(head, body);
+          section.append(label, report);
+          doc.body.append(section);
+        }
+        printWindow.addEventListener("afterprint", () => frame.remove(), { once: true });
         printWindow.print();
       }
     } catch (error) {
-      printWindow?.close();
+      printFrame?.remove();
       toast.error(getFriendlyErrorMessage(error));
     } finally {
       setResultActionBusy(false);
     }
   };
-
   const confirmDeletion = async () => {
     if (
       !import.meta.env.DEV ||
@@ -1255,16 +1310,7 @@ function ElectionsDashboard({ stats, electionResults, user, locations }: any) {
           <div className="flex flex-wrap items-center justify-end gap-2">
             {(user.role !== "state_admin" || user.stateId) && (
               <Link
-                to={liveResultsSheetHref(pathname, {
-                  election: selectedElection,
-                  stateId:
-                    user.role === "state_admin"
-                      ? user.stateId
-                      : (filters.stateId ?? voterStateFilter),
-                  lgaId: filters.lgaId,
-                  wardId: filters.wardId,
-                  puId: filters.puId,
-                })}
+                to={liveResultsSheetHref(pathname, sheetFilters)}
                 target="_blank"
                 rel="noopener"
                 title="Open LGA totals in a new tab"
