@@ -40,7 +40,7 @@ import {
   Cell,
   LabelList,
 } from "recharts";
-import { useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { cn, getFriendlyErrorMessage } from "../lib/utils";
 import ResultFilters from "../components/ResultFilters";
 import AgentModal from "../components/AgentModal";
@@ -52,9 +52,20 @@ import Voters from "./Voters";
 import Volunteers from "./Volunteers";
 import { clearAllImageCache } from "../lib/imageStorage";
 import { resultCsv, resultExportTable, type ExportResult } from "../lib/resultExport";
-import { openLiveResultsSheet } from "../components/LiveResultsSheet";
+import {
+  LiveResultsSheet,
+  RESULT_ELECTIONS,
+  liveResultsSheetHref,
+  readLiveResultsSelection,
+} from "../components/LiveResultsSheet";
 
 export default function Dashboard() {
+  const { pathname, search } = useLocation();
+  const navigate = useNavigate();
+  const leaveResultsSheet = React.useCallback(
+    () => navigate(pathname, { replace: true }),
+    [navigate, pathname],
+  );
   const {
     user,
     stats,
@@ -145,6 +156,28 @@ export default function Dashboard() {
   }, [states, voterStateFilter]);
 
   if (!user) return null;
+
+  const sheetSelection = readLiveResultsSelection(search);
+  if (sheetSelection) {
+    if (user.role === "national_admin" || (user.role === "state_admin" && user.stateId)) {
+      const stateId = user.role === "state_admin" ? user.stateId : sheetSelection.stateId;
+      return (
+        <LiveResultsSheet
+          key={JSON.stringify([sheetSelection, stateId, user.id])}
+          selection={{ ...sheetSelection, stateId, locations }}
+          onClose={leaveResultsSheet}
+        />
+      );
+    }
+    return (
+      <main className="p-6">
+        <p role="alert">This account cannot view the Live Results Sheet.</p>
+        <Link to={pathname} className="underline">
+          Back to dashboard
+        </Link>
+      </main>
+    );
+  }
 
   const allowedLocations = getDescendantLocations(user.locationId);
   const allowedLocationIds = allowedLocations.map((l) => l.id);
@@ -883,6 +916,7 @@ function CanvassingDashboard({
 }
 function ElectionsDashboard({ stats, electionResults, user, locations }: any) {
   const { clearElectionResults, voterStateFilter } = useApp();
+  const { pathname } = useLocation();
   const [selectedElection, setSelectedElection] = React.useState<string>("presidential");
   const [resultActionBusy, setResultActionBusy] = React.useState(false);
   const [showExportMenu, setShowExportMenu] = React.useState(false);
@@ -1053,7 +1087,7 @@ function ElectionsDashboard({ stats, electionResults, user, locations }: any) {
     "#be123c",
   ];
 
-  const availableElections = ["presidential", "senate", "house", "governorship", "state_house"];
+  const availableElections = RESULT_ELECTIONS;
 
   const exportResults = async (format: "csv" | "pdf") => {
     if (user.role !== "national_admin" && user.role !== "state_admin") return;
@@ -1219,13 +1253,9 @@ function ElectionsDashboard({ stats, electionResults, user, locations }: any) {
           aria-label="Election result actions"
         >
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <button
-              type="button"
-              title="Open LGA totals in a new tab"
-              disabled={user.role === "state_admin" && !user.stateId}
-              onClick={() => {
-                setShowExportMenu(false);
-                const status = openLiveResultsSheet({
+            {(user.role !== "state_admin" || user.stateId) && (
+              <Link
+                to={liveResultsSheetHref(pathname, {
                   election: selectedElection,
                   stateId:
                     user.role === "state_admin"
@@ -1234,17 +1264,16 @@ function ElectionsDashboard({ stats, electionResults, user, locations }: any) {
                   lgaId: filters.lgaId,
                   wardId: filters.wardId,
                   puId: filters.puId,
-                  locations,
-                });
-                if (status === "blocked")
-                  toast.error("Allow the new tab to open the Live Results Sheet.");
-                if (status === "sign-in-required")
-                  toast.error("Sign in to open the Live Results Sheet.");
-              }}
-              className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-[#004d25] px-3 py-2 text-sm font-semibold text-white hover:bg-[#006331] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Layers size={16} /> Live Results Sheet
-            </button>
+                })}
+                target="_blank"
+                rel="noopener"
+                title="Open LGA totals in a new tab"
+                onClick={() => setShowExportMenu(false)}
+                className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-[#004d25] px-3 py-2 text-sm font-semibold text-white hover:bg-[#006331]"
+              >
+                <Layers size={16} /> Live Results Sheet
+              </Link>
+            )}
             <div className="relative">
               <button
                 type="button"

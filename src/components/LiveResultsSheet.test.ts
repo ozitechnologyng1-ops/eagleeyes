@@ -1,5 +1,22 @@
 import { expect, it } from "vite-plus/test";
-import { summarizeLgaResults } from "./LiveResultsSheet";
+import {
+  liveResultsSheetHref,
+  readLiveResultsSelection,
+  summarizeLgaResults,
+} from "./LiveResultsSheet";
+
+it("restores the election and jurisdiction filters from a copied sheet URL", () => {
+  const selection = {
+    election: "governorship",
+    stateId: 24,
+    lgaId: 512,
+    wardId: 42,
+    puId: "24-01-02-003",
+  };
+  const url = new URL(liveResultsSheetHref("/dashboard", selection), "https://example.test");
+  expect(readLiveResultsSelection(url.search)).toEqual(selection);
+  expect(readLiveResultsSelection("?stateId=24")).toBeNull();
+});
 
 it("sums all submissions by LGA and includes LGAs with no submissions", () => {
   const lgas = [

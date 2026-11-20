@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { createRoot } from "react-dom/client";
 import { RefreshCw, X } from "lucide-react";
 import type { Location } from "../context/AppContext";
 import { readAgentSession, SESSION_CHANGED_EVENT, SESSION_KEY } from "../lib/agentSession";
@@ -39,7 +38,7 @@ type Selection = {
 };
 
 const PAGE_SIZE = 500;
-const REFRESH_INTERVAL = 15_000;
+const REFRESH_INTERVAL = 60_000;
 const numberFormat = new Intl.NumberFormat();
 const cell = "border-b border-r border-slate-200 px-3 py-2 whitespace-nowrap";
 const rowNumber =
@@ -126,63 +125,48 @@ function columnLetter(index: number) {
   return label;
 }
 
-export function openLiveResultsSheet(selection: Selection) {
-  const token = readAgentSession()?.token;
-  if (!token) return "sign-in-required";
-  const sheetWindow = window.open("", "_blank");
-  if (!sheetWindow) return "blocked";
+export const RESULT_ELECTIONS = ["presidential", "senate", "house", "governorship", "state_house"];
 
-  const sheetDocument = sheetWindow.document;
-  sheetDocument.title = "Live Results Sheet";
-  sheetDocument.documentElement.lang = document.documentElement.lang || "en";
-  const viewport = sheetDocument.createElement("meta");
-  viewport.name = "viewport";
-  viewport.content = "width=device-width, initial-scale=1";
-  sheetDocument.head.append(viewport);
-  for (const style of document.querySelectorAll('link[rel="stylesheet"], style')) {
-    sheetDocument.head.append(sheetDocument.importNode(style, true));
+type SheetFilters = Omit<Selection, "locations">;
+
+export function liveResultsSheetHref(pathname: string, filters: SheetFilters) {
+  const params = new URLSearchParams({ view: "live-results", election: filters.election });
+  for (const key of ["stateId", "lgaId", "wardId", "puId"] as const) {
+    const value = filters[key];
+    if (value) params.set(key, String(value));
   }
-
-  const host = sheetDocument.createElement("div");
-  sheetDocument.body.append(host);
-  const root = createRoot(host);
-  const closeSheet = () => sheetWindow.close();
-  const isSessionCurrent = () => readAgentSession()?.token === token;
-  const checkSession = () => {
-    if (!isSessionCurrent()) closeSheet();
-  };
-  const onStorage = (event: StorageEvent) => {
-    if (event.key === SESSION_KEY || event.key === null) checkSession();
-  };
-  const dispose = () => {
-    window.removeEventListener("pagehide", closeSheet);
-    window.removeEventListener(SESSION_CHANGED_EVENT, checkSession);
-    window.removeEventListener("storage", onStorage);
-    root.unmount();
-  };
-  window.addEventListener("pagehide", closeSheet, { once: true });
-  window.addEventListener(SESSION_CHANGED_EVENT, checkSession);
-  window.addEventListener("storage", onStorage);
-  sheetWindow.addEventListener("pagehide", dispose, { once: true });
-  root.render(
-    <LiveResultsSheet
-      selection={selection}
-      onClose={closeSheet}
-      isSessionCurrent={isSessionCurrent}
-    />,
-  );
-  return "opened";
+  return pathname + "?" + params.toString();
 }
 
-function LiveResultsSheet({
+export function readLiveResultsSelection(search: string): SheetFilters | null {
+  const params = new URLSearchParams(search);
+  if (params.get("view") !== "live-results") return null;
+  const election = params.get("election") ?? "";
+  const numericId = (key: string) => {
+    const value = params.get(key);
+    if (!value || !/^[1-9]\d*$/.test(value)) return undefined;
+    const id = Number(value);
+    return Number.isSafeInteger(id) ? id : undefined;
+  };
+  return {
+    election: RESULT_ELECTIONS.includes(election) ? election : "presidential",
+    stateId: numericId("stateId"),
+    lgaId: numericId("lgaId"),
+    wardId: numericId("wardId"),
+    puId:
+      numericId("puId") ??
+      (/^\d{2}-\d{2}-\d{2}-\d{3}$/.test(params.get("puId") ?? "") ? params.get("puId") : undefined),
+  };
+}
+
+export function LiveResultsSheet({
   selection,
   onClose,
-  isSessionCurrent,
 }: {
   selection: Selection;
   onClose: () => void;
-  isSessionCurrent: () => boolean;
 }) {
+  const [sessionToken] = useState(() => readAgentSession()?.token);
   const { election, stateId, lgaId, wardId, puId, locations } = selection;
   const [snapshot, setSnapshot] = useState<
     ReturnType<typeof summarizeLgaResults> & { checkedAt: Date }
@@ -199,13 +183,28 @@ function LiveResultsSheet({
     id === null ? "Unassigned" : (states.get(`state_${id}`) ?? `State ${id}`);
 
   useEffect(() => {
+    const checkSession = () => {
+      if (!sessionToken || readAgentSession()?.token !== sessionToken) onClose();
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === SESSION_KEY || event.key === null) checkSession();
+    };
+    window.addEventListener(SESSION_CHANGED_EVENT, checkSession);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(SESSION_CHANGED_EVENT, checkSession);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [sessionToken, onClose]);
+
+  useEffect(() => {
     const controller = new AbortController();
     const { signal } = controller;
     let timer: ReturnType<typeof setTimeout>;
     let directory: Lga[] | undefined;
     const canRead = () => {
       if (signal.aborted) return false;
-      if (isSessionCurrent()) return true;
+      if (sessionToken && readAgentSession()?.token === sessionToken) return true;
       controller.abort();
       onClose();
       return false;
@@ -272,12 +271,11 @@ function LiveResultsSheet({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [election, stateId, lgaId, wardId, puId, refreshVersion, isSessionCurrent, onClose]);
+  }, [election, stateId, lgaId, wardId, puId, refreshVersion, sessionToken, onClose]);
 
   const parties = snapshot?.parties ?? REGISTERED_PARTIES;
   const headers = [
     "LGA",
-    "State",
     "Submissions",
     "Registered",
     "Accredited",
@@ -297,7 +295,7 @@ function LiveResultsSheet({
   ];
 
   return (
-    <main className="flex h-dvh flex-col bg-white text-slate-900">
+    <main className="fixed inset-0 z-[100] flex flex-col bg-white text-slate-900">
       <header className="flex shrink-0 items-start justify-between gap-3 bg-[#004d25] px-4 py-3 text-white sm:px-6">
         <div>
           <h1 className="text-lg font-bold">Live Results Sheet</h1>
@@ -309,7 +307,7 @@ function LiveResultsSheet({
         <button
           type="button"
           onClick={onClose}
-          aria-label="Close live results sheet"
+          aria-label="Back to dashboard"
           className="cursor-pointer rounded-md p-2 hover:bg-white/15"
         >
           <X size={21} />
@@ -321,7 +319,7 @@ function LiveResultsSheet({
             ? "Updating totals…"
             : failed
               ? "Refresh failed. Retrying automatically."
-              : "Auto-refresh · every 15 seconds"}
+              : "Auto-refresh · every minute"}
         </span>
         <div className="flex items-center gap-3">
           {snapshot && (
@@ -390,9 +388,8 @@ function LiveResultsSheet({
                 >
                   {row.name}
                 </th>
-                <td className={cell}>{stateName(row.stateId)}</td>
                 {figures(row).map((value, column) => (
-                  <td key={headers[column + 2]} className={`${cell} text-right tabular-nums`}>
+                  <td key={headers[column + 1]} className={`${cell} text-right tabular-nums`}>
                     {numberFormat.format(value)}
                   </td>
                 ))}
@@ -406,9 +403,8 @@ function LiveResultsSheet({
                 <th scope="row" className={`${cell} ${lgaColumn} bg-emerald-100 text-left`}>
                   Grand total
                 </th>
-                <td className={cell} />
                 {figures(snapshot.grandTotal).map((value, column) => (
-                  <td key={headers[column + 2]} className={`${cell} text-right tabular-nums`}>
+                  <td key={headers[column + 1]} className={`${cell} text-right tabular-nums`}>
                     {numberFormat.format(value)}
                   </td>
                 ))}
