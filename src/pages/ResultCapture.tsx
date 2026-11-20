@@ -51,10 +51,21 @@ export default function ResultCapture() {
   const [puError, setPuError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [ownUploads, setOwnUploads] = useState<
-    { id: string; created_at: string; status: string | null }[]
-  >([]);
+  const [submissionCheck, setSubmissionCheck] = useState<{
+    key: string;
+    rows: { id: string; agent_id: string | null; created_at: string; status: string | null }[];
+    failed: boolean;
+  }>();
+  const [submissionCheckVersion, setSubmissionCheckVersion] = useState(0);
   const [selectedElection, setSelectedElection] = useState("");
+  const submissionKey = JSON.stringify([user?.id, selectedPu, selectedElection]);
+  const currentCheck = submissionCheck?.key === submissionKey ? submissionCheck : undefined;
+  const ownUploads = currentCheck?.rows.filter((result) => result.agent_id === user?.id) ?? [];
+  const canStartCapture = Boolean(
+    selectedElection &&
+    (user?.role !== "pu_agent" ||
+      (currentCheck && !currentCheck.failed && currentCheck.rows.length === 0 && !isDeleting)),
+  );
 
   const nationalElections = [
     { id: "presidential", name: "Presidential Election" },
@@ -99,27 +110,31 @@ export default function ResultCapture() {
       ? user.locationName || `PU ${selectedPu}`
       : puOptions.find((pu) => String(pu.id) === selectedPu)?.name || `PU ${selectedPu}`;
   useEffect(() => {
-    if (user?.role !== "pu_agent" || !selectedPu || !selectedElection) {
-      setOwnUploads([]);
+    if (user?.role !== "pu_agent" || !selectedPu || !selectedElection || step !== "select_election")
       return;
-    }
     let cancelled = false;
     supabase
       .from("election_results")
-      .select("id,created_at,status")
-      .eq("agent_id", user.id)
+      .select("id,agent_id,created_at,status")
       .eq("polling_units_id", selectedPu)
       .eq("election_type", selectedElection)
       .order("created_at", { ascending: false })
       .then(({ data, error }) => {
         if (cancelled) return;
-        if (error) toast.error("Could not load your uploaded results.");
-        else setOwnUploads(data || []);
+        setSubmissionCheck({ key: submissionKey, rows: data ?? [], failed: Boolean(error) });
       });
     return () => {
       cancelled = true;
     };
-  }, [user?.id, user?.role, selectedPu, selectedElection, electionResults]);
+  }, [
+    user?.role,
+    selectedPu,
+    selectedElection,
+    step,
+    submissionKey,
+    submissionCheckVersion,
+    electionResults,
+  ]);
 
   const removeOwnUpload = async (id: string) => {
     if (
@@ -131,7 +146,8 @@ export default function ResultCapture() {
     setIsDeleting(true);
     try {
       await deleteResult(id);
-      setOwnUploads((current) => current.filter((result) => result.id !== id));
+      setSubmissionCheck(undefined);
+      setSubmissionCheckVersion((version) => version + 1);
       toast.success("Your result was deleted. You can upload it again.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not delete result.");
@@ -331,6 +347,14 @@ export default function ResultCapture() {
       );
       setStep("success");
     } catch (error: any) {
+      if (error?.code === "23505") {
+        setSubmissionCheck(undefined);
+        setStep("select_election");
+        toast.error(
+          "A result already exists for this polling unit and election. Delete your original upload or contact an admin before replacing it.",
+        );
+        return;
+      }
       toast.error(
         error?.code === "42501"
           ? "This account cannot submit for the selected polling unit. Check your assignment or sign in again."
@@ -375,8 +399,8 @@ export default function ResultCapture() {
           </button>
           <ChevronRight size={16} />
           <button
-            onClick={() => selectedElection && setStep("camera")}
-            disabled={!selectedElection}
+            onClick={() => canStartCapture && setStep("camera")}
+            disabled={!canStartCapture}
             className={cn(
               "disabled:opacity-50 hover:text-gray-900 disabled:cursor-not-allowed",
               step === "camera" || step === "scanning" ? "text-[#004d25] font-semibold" : "",
@@ -470,6 +494,32 @@ export default function ResultCapture() {
                 </button>
               ))}
             </div>
+            {user?.role === "pu_agent" && selectedElection && !currentCheck && (
+              <p role="status" className="mt-4 text-sm text-gray-500">
+                Checking for a submitted result…
+              </p>
+            )}
+            {currentCheck?.failed && (
+              <p role="alert" className="mt-4 text-sm text-red-700">
+                Could not check for an existing result.{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSubmissionCheck(undefined);
+                    setSubmissionCheckVersion((version) => version + 1);
+                  }}
+                  className="cursor-pointer underline"
+                >
+                  Retry
+                </button>
+              </p>
+            )}
+            {Boolean(currentCheck?.rows.length && !ownUploads.length) && (
+              <p role="status" className="mt-4 text-sm text-amber-800">
+                A result is already recorded for this election and polling unit. Contact an admin if
+                it needs correcting.
+              </p>
+            )}
             {user?.role === "pu_agent" && selectedElection && ownUploads.length > 0 && (
               <section
                 className="mt-6 rounded-lg border border-gray-200 p-4"
@@ -512,7 +562,7 @@ export default function ResultCapture() {
                 </button>
               )}
               <button
-                disabled={!selectedElection}
+                disabled={!canStartCapture}
                 onClick={() => setStep("camera")}
                 className="flex-1 bg-[#004d25] text-white font-semibold py-3 rounded-lg hover:bg-[#006331] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >

@@ -1429,6 +1429,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     imageFile: File | null,
   ) => {
     try {
+      const { data: existing, error: lookupError } = await supabase
+        .from("election_results")
+        .select("id")
+        .eq("polling_units_id", puId)
+        .eq("election_type", electionId)
+        .limit(1);
+      if (lookupError) throw lookupError;
+      if (existing?.length) {
+        throw Object.assign(
+          new Error("A result already exists for this polling unit and election."),
+          {
+            code: "23505",
+          },
+        );
+      }
       setStats((prev) => ({ ...prev, uploadProgress: 10 }));
 
       let imageUrl = null;
