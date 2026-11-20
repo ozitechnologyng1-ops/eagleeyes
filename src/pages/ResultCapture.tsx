@@ -1,5 +1,14 @@
 import React, { useEffect, useState } from "react";
-import { Camera, Upload, CheckCircle, AlertTriangle, ChevronRight, Search, X } from "lucide-react";
+import {
+  Camera,
+  Upload,
+  CheckCircle,
+  AlertTriangle,
+  ChevronRight,
+  Search,
+  X,
+  Trash2,
+} from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { cn } from "../lib/utils";
 import { useNavigate } from "react-router-dom";
@@ -17,7 +26,15 @@ type Step =
   | "success";
 
 export default function ResultCapture() {
-  const { user, submitResult, activeElectionGroup, analyzeResultImage, isMockMode } = useApp();
+  const {
+    user,
+    submitResult,
+    deleteResult,
+    electionResults,
+    activeElectionGroup,
+    analyzeResultImage,
+    isMockMode,
+  } = useApp();
   const navigate = useNavigate();
 
   // Skip PU selection if user is a pu_agent
@@ -33,6 +50,10 @@ export default function ResultCapture() {
   const [puLoading, setPuLoading] = useState(false);
   const [puError, setPuError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [ownUploads, setOwnUploads] = useState<
+    { id: string; created_at: string; status: string | null }[]
+  >([]);
   const [selectedElection, setSelectedElection] = useState("");
 
   const nationalElections = [
@@ -77,6 +98,47 @@ export default function ResultCapture() {
     user?.role === "pu_agent"
       ? user.locationName || `PU ${selectedPu}`
       : puOptions.find((pu) => String(pu.id) === selectedPu)?.name || `PU ${selectedPu}`;
+  useEffect(() => {
+    if (user?.role !== "pu_agent" || !selectedPu || !selectedElection) {
+      setOwnUploads([]);
+      return;
+    }
+    let cancelled = false;
+    supabase
+      .from("election_results")
+      .select("id,created_at,status")
+      .eq("agent_id", user.id)
+      .eq("polling_units_id", selectedPu)
+      .eq("election_type", selectedElection)
+      .order("created_at", { ascending: false })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) toast.error("Could not load your uploaded results.");
+        else setOwnUploads(data || []);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.role, selectedPu, selectedElection, electionResults]);
+
+  const removeOwnUpload = async (id: string) => {
+    if (
+      !window.confirm(
+        "Delete your uploaded result so you can upload it again? The old image will remain in storage.",
+      )
+    )
+      return;
+    setIsDeleting(true);
+    try {
+      await deleteResult(id);
+      setOwnUploads((current) => current.filter((result) => result.id !== id));
+      toast.success("Your result was deleted. You can upload it again.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not delete result.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   useEffect(() => {
     if (user?.role === "pu_agent") {
@@ -408,6 +470,38 @@ export default function ResultCapture() {
                 </button>
               ))}
             </div>
+            {user?.role === "pu_agent" && selectedElection && ownUploads.length > 0 && (
+              <section
+                className="mt-6 rounded-lg border border-gray-200 p-4"
+                aria-label="Your uploaded results"
+              >
+                <h3 className="font-semibold text-gray-900">Your uploaded results</h3>
+                <p className="text-sm text-gray-500">
+                  Delete an upload here before submitting a replacement.
+                </p>
+                <div className="mt-2 divide-y">
+                  {ownUploads.map((result) => (
+                    <div
+                      key={result.id}
+                      className="flex items-center justify-between gap-3 py-2 text-sm"
+                    >
+                      <span>
+                        {new Date(result.created_at).toLocaleString()} ·{" "}
+                        {result.status || "Submitted"}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={isDeleting}
+                        onClick={() => removeOwnUpload(result.id)}
+                        className="inline-flex items-center gap-1 text-red-700 disabled:opacity-50"
+                      >
+                        <Trash2 size={15} /> Delete
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
             <div className="flex gap-4 mt-8">
               {user?.role !== "pu_agent" && (
                 <button

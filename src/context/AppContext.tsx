@@ -164,7 +164,7 @@ interface AppState {
   voterLoadedCount: number;
   voterSearchLatencyMs: number | null;
   voterLoadError: { message: string; page: number } | null;
-  electionResults: Record<string, any>;
+  electionResults: any[];
   login: (phone: string, password: string) => Promise<void>;
   logout: () => void;
   updateUser: (updates: Partial<User>) => Promise<void>;
@@ -178,6 +178,8 @@ interface AppState {
     data: any,
     imageFile: File | null,
   ) => Promise<void>;
+  deleteResult: (id: string) => Promise<void>;
+  clearElectionResults: (electionType: string) => Promise<void>;
   addAgent: (agent: Omit<Agent, "id">) => Promise<void>;
   updateAgent: (id: string, updates: Partial<Agent>) => Promise<void>;
   updateAgentStatus: (id: string, status: Agent["status"]) => Promise<void>;
@@ -1484,6 +1486,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const deleteResult = async (id: string) => {
+    if (
+      !user ||
+      (user.role !== "pu_agent" && !(import.meta.env.DEV && user.role === "national_admin"))
+    ) {
+      throw new Error("You cannot delete election results.");
+    }
+    const { data, error } = await supabase
+      .from("election_results")
+      .delete()
+      .eq("id", id)
+      .select("id");
+    if (error) throw error;
+    if (!data?.length)
+      throw new Error("Result was not deleted. Check your access or refresh the page.");
+    await refreshElectionStats();
+  };
+
+  const clearElectionResults = async (electionType: string) => {
+    if (!import.meta.env.DEV || user?.role !== "national_admin") {
+      throw new Error("Election clearing is available only to national admins in development.");
+    }
+    if (
+      !["presidential", "senate", "house", "governorship", "state_house"].includes(electionType)
+    ) {
+      throw new Error("Invalid election type.");
+    }
+    const { error } = await supabase
+      .from("election_results")
+      .delete()
+      .eq("election_type", electionType);
+    if (error) throw error;
+    await refreshElectionStats();
+  };
+
   const analyzeResultImage = async (file: File): Promise<{ results: any; ai_used?: string }> => {
     try {
       if (!["image/jpeg", "image/png", "image/webp"].includes(file.type))
@@ -1853,6 +1890,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         logVoterContact,
         addVoterNote,
         submitResult,
+        deleteResult,
+        clearElectionResults,
         toggleMockMode,
         endAllMockElections,
         setActiveElectionGroup,

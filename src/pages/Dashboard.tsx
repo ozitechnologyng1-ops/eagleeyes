@@ -25,6 +25,7 @@ import {
   Check,
   MessageCircle,
   Trash2,
+  Download,
 } from "lucide-react";
 import {
   BarChart,
@@ -50,6 +51,8 @@ import { supabase } from "../lib/supabase";
 import Voters from "./Voters";
 import Volunteers from "./Volunteers";
 import { clearAllImageCache } from "../lib/imageStorage";
+import { resultCsv, resultExportTable, type ExportResult } from "../lib/resultExport";
+import { openLiveResultsSheet } from "../components/LiveResultsSheet";
 
 export default function Dashboard() {
   const {
@@ -879,7 +882,29 @@ function CanvassingDashboard({
   );
 }
 function ElectionsDashboard({ stats, electionResults, user, locations }: any) {
+  const { clearElectionResults, voterStateFilter } = useApp();
   const [selectedElection, setSelectedElection] = React.useState<string>("presidential");
+  const [resultActionBusy, setResultActionBusy] = React.useState(false);
+  const [showExportMenu, setShowExportMenu] = React.useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = React.useState<{
+    step: 1 | 2;
+    election: string;
+    count: number;
+  } | null>(null);
+  const [typedElection, setTypedElection] = React.useState("");
+  const deleteDialogRef = React.useRef<HTMLDialogElement>(null);
+  const deleteInputRef = React.useRef<HTMLInputElement>(null);
+  const deleteCancelRef = React.useRef<HTMLButtonElement>(null);
+  const deleteStep = deleteConfirmation?.step;
+  React.useEffect(() => {
+    const dialog = deleteDialogRef.current;
+    if (!dialog || !deleteStep) return;
+    if (!dialog.open) dialog.showModal();
+    if (deleteStep === 1) deleteInputRef.current?.focus();
+    else deleteCancelRef.current?.focus();
+  }, [deleteStep]);
+  const electionMatches =
+    deleteConfirmation !== null && typedElection.trim() === deleteConfirmation.election;
   const [filters, setFilters] = React.useState<any>({});
   const [chartTab, setChartTab] = React.useState<"parties" | "geography">("parties");
   const [showAllParties, setShowAllParties] = React.useState(false);
@@ -1030,6 +1055,143 @@ function ElectionsDashboard({ stats, electionResults, user, locations }: any) {
 
   const availableElections = ["presidential", "senate", "house", "governorship", "state_house"];
 
+  const exportResults = async (format: "csv" | "pdf") => {
+    if (user.role !== "national_admin" && user.role !== "state_admin") return;
+    setShowExportMenu(false);
+    const printWindow = format === "pdf" ? window.open("", "_blank") : null;
+    if (format === "pdf" && !printWindow) {
+      toast.error("Allow the export window to open, then try again.");
+      return;
+    }
+    const stateId = user.role === "state_admin" ? user.stateId : filters.stateId;
+    if (user.role === "state_admin" && !stateId) {
+      toast.error("Your account has no assigned state.");
+      return;
+    }
+    setResultActionBusy(true);
+    try {
+      const rows: ExportResult[] = [];
+      for (let offset = 0; ; offset += 500) {
+        let query = supabase
+          .from("election_results")
+          .select(
+            "id,election_type,state_id,local_governments_id,wards_id,polling_units_id,agent_id,created_at,status,total_valid,total_rejected,total_cast,image_url,results_json",
+          )
+          .eq("election_type", selectedElection)
+          .order("id")
+          .range(offset, offset + 499);
+        if (stateId) query = query.eq("state_id", stateId);
+        if (filters.lgaId) query = query.eq("local_governments_id", filters.lgaId);
+        if (filters.wardId) query = query.eq("wards_id", filters.wardId);
+        if (filters.puId) query = query.eq("polling_units_id", String(filters.puId));
+        const { data, error } = await query;
+        if (error) throw error;
+        rows.push(...((data || []) as ExportResult[]));
+        if (!data || data.length < 500) break;
+      }
+      if (!rows.length) {
+        printWindow?.close();
+        toast.error("No results in this selection to export.");
+        return;
+      }
+      const table = resultExportTable(rows);
+      if (format === "csv") {
+        const blob = new Blob([resultCsv(table)], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `election-results-${selectedElection}-${stateId || "national"}.csv`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        toast.success(`Exported ${rows.length} results.`);
+      } else if (printWindow) {
+        const doc = printWindow.document;
+        doc.title = `Election results - ${selectedElection}`;
+        const style = doc.createElement("style");
+        style.textContent =
+          "@page{size:landscape;margin:12mm}body{font:11px Arial,sans-serif}h1{font-size:18px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #aaa;padding:4px;word-break:break-word}thead{display:table-header-group}tr{break-inside:avoid}";
+        doc.head.append(style);
+        const heading = doc.createElement("h1");
+        heading.textContent = `${selectedElection} election results (${rows.length})`;
+        const report = doc.createElement("table");
+        const head = doc.createElement("thead");
+        const body = doc.createElement("tbody");
+        table.forEach((row, index) => {
+          const tr = doc.createElement("tr");
+          row.forEach((value) => {
+            const cell = doc.createElement(index === 0 ? "th" : "td");
+            cell.textContent = String(value);
+            tr.append(cell);
+          });
+          (index === 0 ? head : body).append(tr);
+        });
+        report.append(head, body);
+        doc.body.replaceChildren(heading, report);
+        printWindow.focus();
+        printWindow.print();
+      }
+    } catch (error) {
+      printWindow?.close();
+      toast.error(getFriendlyErrorMessage(error));
+    } finally {
+      setResultActionBusy(false);
+    }
+  };
+
+  const confirmDeletion = async () => {
+    if (
+      !import.meta.env.DEV ||
+      user.role !== "national_admin" ||
+      !deleteConfirmation ||
+      resultActionBusy ||
+      !electionMatches
+    )
+      return;
+    if (deleteConfirmation.step === 1) {
+      setDeleteConfirmation({ ...deleteConfirmation, step: 2 });
+      return;
+    }
+    setResultActionBusy(true);
+    try {
+      await clearElectionResults(deleteConfirmation.election);
+      deleteDialogRef.current?.close();
+      setDeleteConfirmation(null);
+      toast.success("Selected election results cleared.");
+    } catch (error) {
+      toast.error(getFriendlyErrorMessage(error));
+    } finally {
+      setResultActionBusy(false);
+    }
+  };
+
+  const prepareElectionClear = async () => {
+    if (!import.meta.env.DEV || user.role !== "national_admin" || resultActionBusy) return;
+    setResultActionBusy(true);
+    try {
+      const { count, error: countError } = await supabase
+        .from("election_results")
+        .select("id", { count: "exact", head: true })
+        .eq("election_type", selectedElection);
+      if (countError) throw countError;
+      if (!count) {
+        toast.error("No results to clear for this election.");
+        return;
+      }
+      setTypedElection("");
+      setDeleteConfirmation({ step: 1, election: selectedElection, count });
+    } catch (error) {
+      toast.error(getFriendlyErrorMessage(error));
+    } finally {
+      setResultActionBusy(false);
+    }
+  };
+
+  const closeDeletePicker = () => {
+    if (resultActionBusy) return;
+    setDeleteConfirmation(null);
+    deleteDialogRef.current?.close();
+  };
+
   return (
     <div className="space-y-6">
       <ResultFilters user={user} locations={locations} onFilterChange={setFilters} />
@@ -1050,6 +1212,167 @@ function ElectionsDashboard({ stats, electionResults, user, locations }: any) {
           </button>
         ))}
       </div>
+
+      {(user.role === "national_admin" || user.role === "state_admin") && (
+        <section
+          className="bg-white rounded-xl border border-gray-200 p-4"
+          aria-label="Election result actions"
+        >
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              title="Open LGA totals in a new tab"
+              disabled={user.role === "state_admin" && !user.stateId}
+              onClick={() => {
+                setShowExportMenu(false);
+                const status = openLiveResultsSheet({
+                  election: selectedElection,
+                  stateId:
+                    user.role === "state_admin"
+                      ? user.stateId
+                      : (filters.stateId ?? voterStateFilter),
+                  lgaId: filters.lgaId,
+                  wardId: filters.wardId,
+                  puId: filters.puId,
+                  locations,
+                });
+                if (status === "blocked")
+                  toast.error("Allow the new tab to open the Live Results Sheet.");
+                if (status === "sign-in-required")
+                  toast.error("Sign in to open the Live Results Sheet.");
+              }}
+              className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-[#004d25] px-3 py-2 text-sm font-semibold text-white hover:bg-[#006331] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Layers size={16} /> Live Results Sheet
+            </button>
+            <div className="relative">
+              <button
+                type="button"
+                disabled={resultActionBusy}
+                aria-expanded={showExportMenu}
+                onClick={() => setShowExportMenu((open) => !open)}
+                className="inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Download size={16} /> Export
+              </button>
+              {showExportMenu && (
+                <div className="absolute right-0 top-full z-20 mt-1 min-w-36 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
+                  <button
+                    type="button"
+                    onClick={() => exportResults("csv")}
+                    className="w-full cursor-pointer rounded px-3 py-2 text-left text-sm hover:bg-gray-100"
+                  >
+                    CSV
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => exportResults("pdf")}
+                    className="w-full cursor-pointer rounded px-3 py-2 text-left text-sm hover:bg-gray-100"
+                  >
+                    PDF
+                  </button>
+                </div>
+              )}
+            </div>
+            {import.meta.env.DEV && user.role === "national_admin" && (
+              <button
+                type="button"
+                disabled={resultActionBusy}
+                onClick={prepareElectionClear}
+                className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-red-300 px-3 py-2 text-sm text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Trash2 size={16} /> Delete results (dev)
+              </button>
+            )}
+          </div>
+        </section>
+      )}
+      {deleteConfirmation && import.meta.env.DEV && user.role === "national_admin" && (
+        <dialog
+          ref={deleteDialogRef}
+          aria-labelledby="delete-results-title"
+          aria-describedby="delete-results-description"
+          className="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-xl bg-white p-5 text-gray-900 shadow-xl backdrop:bg-black/50"
+          onCancel={(event) => {
+            event.preventDefault();
+            closeDeletePicker();
+          }}
+        >
+          <h2 id="delete-results-title" className="text-lg font-semibold">
+            {deleteConfirmation.step === 1 ? "Delete test results" : "Are you sure?"}
+          </h2>
+          <p id="delete-results-description" className="mt-2 text-sm text-gray-700">
+            {deleteConfirmation.step === 1 ? (
+              <>
+                Type <strong>{deleteConfirmation.election}</strong> to continue. This clears all{" "}
+                {deleteConfirmation.election.replaceAll("_", " ")} results across every state (
+                {deleteConfirmation.count.toLocaleString()} currently found).
+              </>
+            ) : (
+              <>
+                Permanently delete all {deleteConfirmation.election.replaceAll("_", " ")} results
+                across every state?
+              </>
+            )}
+          </p>
+          {deleteConfirmation.step === 1 ? (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void confirmDeletion();
+              }}
+            >
+              <input
+                ref={deleteInputRef}
+                aria-label="Election name"
+                aria-describedby="delete-results-description"
+                autoComplete="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                value={typedElection}
+                onChange={(event) => setTypedElection(event.target.value)}
+                className="mt-4 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              />
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="submit"
+                  disabled={!electionMatches}
+                  className="cursor-pointer rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  OK
+                </button>
+                <button
+                  type="button"
+                  onClick={closeDeletePicker}
+                  className="cursor-pointer rounded-lg border border-gray-300 px-4 py-2 text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          ) : (
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={confirmDeletion}
+                disabled={resultActionBusy}
+                className="cursor-pointer rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {resultActionBusy ? "Deleting…" : "Yes, delete"}
+              </button>
+              <button
+                ref={deleteCancelRef}
+                type="button"
+                onClick={closeDeletePicker}
+                disabled={resultActionBusy}
+                className="cursor-pointer rounded-lg border border-gray-300 px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                No
+              </button>
+            </div>
+          )}
+        </dialog>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
         <StatCard
