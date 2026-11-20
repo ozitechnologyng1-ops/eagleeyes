@@ -95,4 +95,47 @@ describe("server agent operations", () => {
     expect(rpc).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(body)).not.toContain("synthetic-new-password");
   });
+
+  it.each([true, false])(
+    "only explains a duplicate phone to a state admin when the account is in scope (%s)",
+    async (inState) => {
+      const phone = "08031234567";
+      authorize.mockResolvedValue(
+        access({ action: "create", values: { phone, role: "pu_agent", state_id: 24 } }),
+      );
+      rpc.mockResolvedValue({
+        data: null,
+        error: { code: "23505", message: "Phone already assigned" },
+      });
+      const lookup = {
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({ data: inState ? { id: "existing" } : null }),
+      };
+      from.mockReturnValue(lookup);
+      const response = await admin(request());
+      expect(lookup.eq).toHaveBeenCalledWith("state_id", 24);
+      expect(lookup.eq).toHaveBeenCalledWith("phone", phone);
+      expect(response.status).toBe(inState ? 409 : 400);
+      const body = await response.json();
+      expect(body.error).toContain(inState ? "Edit the existing agent" : "Agent change rejected");
+      expect(body).not.toHaveProperty("agent");
+    },
+  );
+
+  it("does not look up duplicate phones for a registration outside the state admin’s scope", async () => {
+    authorize.mockResolvedValue(
+      access({
+        action: "create",
+        values: { phone: "08031234567", role: "pu_agent", state_id: 27 },
+      }),
+    );
+    rpc.mockResolvedValue({
+      data: null,
+      error: { code: "23505", message: "Phone already assigned" },
+    });
+    expect((await admin(request())).status).toBe(400);
+    expect(from).not.toHaveBeenCalled();
+  });
 });

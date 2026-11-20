@@ -98,11 +98,39 @@ Deno.serve(async (req: Request) => {
       p_target_id: body.action === "create" ? null : body.id,
       p_values: values,
     });
-    if (error)
+    if (error) {
+      const caller = session.agent;
+      const phoneConflict =
+        error.code === "23505" &&
+        (error.message === "Phone already assigned" ||
+          error.message.includes('"agents_phone_key"'));
+      if (body.action === "create" && phoneConflict && typeof values.phone === "string") {
+        const message =
+          "This phone number is already registered to an agent. Edit the existing agent or enter a different number.";
+        if (caller.role === "national_admin") return reply({ error: message }, 409);
+        if (
+          caller.role === "state_admin" &&
+          caller.state_id != null &&
+          values.state_id === caller.state_id &&
+          (values.role === "pu_agent" ||
+            values.role === "ward_admin" ||
+            values.role === "lga_admin")
+        ) {
+          const { data: existing } = await client
+            .from("agents")
+            .select("id")
+            .eq("state_id", caller.state_id)
+            .eq("phone", values.phone)
+            .limit(1)
+            .maybeSingle();
+          if (existing) return reply({ error: message }, 409);
+        }
+      }
       return reply(
         { error: "Agent change rejected; check permissions and field values" },
         error.code === "28000" ? 401 : error.code === "42501" ? 403 : 400,
       );
+    }
     let sms;
     let smsDispatch;
     if (registrationPassword && data?.id && (body.action === "create" || body.notifySms === true)) {

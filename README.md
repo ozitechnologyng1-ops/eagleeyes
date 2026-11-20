@@ -36,3 +36,7 @@ Normal next/previous navigation uses saved row-ID cursors instead of scanning sk
 Search waits 250 ms after typing. Superseded row, count and dashboard-stat requests are cancelled. Temporary network/service failures retry once after 750 ms; permission, validation and database errors do not retry automatically. A row-loading failure shows a short message and Try again, distinct from a successful empty search. The displayed request duration measures when the row page is ready, excluding the subsequent background count.
 
 Existing agent sessions and database row-level security remain required. No database functions, indexes or permissions are deployed by these client changes. Automated request tests cover shared filters for rows/counts, cursor bounds, early row delivery, count failures and cancellation; authenticated browser latency and visual checks must be verified separately.
+
+## Agent registration
+
+State admins can register polling-unit agents from the Voters tab within their assigned state. An agent phone number can be used on only one account. If the person is already registered in that state, edit their existing entry in the Agents tab.

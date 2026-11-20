@@ -117,7 +117,7 @@ export default function Voters() {
       stateId: voter.stateId || user?.stateId || null,
       lgaId: voter.lgaId || null,
       wardId: voter.wardId || null,
-      puId: voter.puNumberId || (voter.puId ? parseInt(voter.puId, 10) || null : null),
+      puId: voter.puNumberId ?? null,
       role: "pu_agent",
     });
     setShowRegisterAgentModal(true);
