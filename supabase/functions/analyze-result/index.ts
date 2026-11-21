@@ -9,8 +9,6 @@ Deno.serve(
     authorizeAgentRequest,
     () => Deno.env.get("OPENAI"),
     fetch,
-    () => Deno.env.get("GROQ_API_KEY"),
-    () => Deno.env.get("GEMINI_API_KEY") || Deno.env.get("VITE_GOOGLE_AI_KEY"),
     async ({ session: { agent }, client, body }, result) => {
       if (agent.role !== "pu_agent") return null;
       const unavailable =

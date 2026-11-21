@@ -70,6 +70,72 @@ const authorized = vi.fn(async () => ({
 }));
 
 describe("Supabase result analysis", () => {
+  it("preserves clear printed counts and refuses to turn unreadable votes into zeros", () => {
+    expect(
+      validateResult({
+        ...result,
+        number_of_voters_on_register: "1,200",
+        number_of_spoiled_ballot_papers: "NIL",
+        political_party_results: [{ party: " ADC ", votes_in_figures: "78" }],
+      }),
+    ).toMatchObject({
+      number_of_voters_on_register: 1200,
+      number_of_spoiled_ballot_papers: 0,
+      total_votes_cast: 80,
+      political_party_results: [{ party: "ADC", votes_in_figures: 78 }],
+    });
+    expect(() =>
+      validateResult({
+        ...result,
+        political_party_results: [{ party: "ADC", votes_in_figures: null }],
+      }),
+    ).toThrow(/party vote entries/);
+  });
+
+  it("reports unreadable counts separately from an OpenAI outage", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(
+      Response.json({
+        output: [
+          {
+            content: [
+              {
+                type: "output_text",
+                text: JSON.stringify({ ...result, number_of_valid_votes: null }),
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    const handler = createAnalyzeResultHandler(authorized, () => "openai", fetcher as typeof fetch);
+    const response = await handler(request());
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      reason: "unreadable_result",
+      error: expect.stringContaining("valid votes"),
+    });
+  });
+
+  it("does not retry an AI provider when the polling-unit assignment check fails", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      Response.json({
+        output: [{ content: [{ type: "output_text", text: JSON.stringify(result) }] }],
+      }),
+    );
+    const handler = createAnalyzeResultHandler(
+      authorized,
+      () => "openai",
+      fetcher as typeof fetch,
+      async () => {
+        throw new Error("synthetic lookup failure");
+      },
+    );
+    const response = await handler(request());
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ reason: "assignment_unavailable" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects unauthorized and invalid image requests before provider calls", async () => {
     const fetcher = vi.fn();
     const denied = createAnalyzeResultHandler(
@@ -95,7 +161,7 @@ describe("Supabase result analysis", () => {
     expect(() => validateResult({ ...result, number_of_valid_votes: null })).toThrow();
   });
 
-  it("uses OpenAI first without storing the response", async () => {
+  it("uses only OpenAI without storing the response", async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -108,8 +174,6 @@ describe("Supabase result analysis", () => {
       authorized,
       () => "test-openai",
       fetcher as typeof fetch,
-      () => "test-groq",
-      () => "test-gemini",
     );
     const response = await handler(request());
     expect(response.status).toBe(200);
@@ -126,67 +190,21 @@ describe("Supabase result analysis", () => {
     expect(body.input[0].content[1].type).toBe("input_image");
   });
 
-  it("falls back to Groq when OpenAI returns 401", async () => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ error: { code: "invalid_api_key" } }), {
-          status: 401,
-          headers: { "x-request-id": "synthetic-request-id" },
-        }),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            choices: [{ message: { content: JSON.stringify(result) } }],
-          }),
-          { status: 200 },
-        ),
-      );
+  it.each([
+    [401, 502],
+    [429, 503],
+    [500, 502],
+  ])("reports OpenAI HTTP %s without calling another provider", async (upstreamStatus, status) => {
+    const fetcher = vi.fn().mockResolvedValue(new Response("{}", { status: upstreamStatus }));
     const handler = createAnalyzeResultHandler(
       authorized,
       () => "test-openai",
       fetcher as typeof fetch,
-      () => "test-groq",
     );
     const response = await handler(request());
-    expect(response.status).toBe(200);
-    expect((await response.json()).ai_used).toBe("llama-4-scout");
-    expect(fetcher.mock.calls[1][0]).toContain("api.groq.com");
-  });
-
-  it("falls back to Gemini and reports failure only after all providers fail", async () => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValueOnce(new Response("{}", { status: 401 }))
-      .mockResolvedValueOnce(new Response("{}", { status: 429 }))
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
-          }),
-          { status: 200 },
-        ),
-      );
-    const handler = createAnalyzeResultHandler(
-      authorized,
-      () => "test-openai",
-      fetcher as typeof fetch,
-      () => "test-groq",
-      () => "test-gemini",
-    );
-    const response = await handler(request());
-    expect(response.status).toBe(200);
-    expect((await response.json()).ai_used).toBe("gemini-3.1-flash-lite");
-    expect(fetcher.mock.calls[2][0]).toContain("gemini-3.1-flash-lite-preview");
-
-    const failing = createAnalyzeResultHandler(
-      authorized,
-      () => "test-openai",
-      vi.fn().mockResolvedValue(new Response("{}", { status: 401 })) as typeof fetch,
-    );
-    const failed = await failing(request());
-    expect(failed.status).toBe(502);
-    expect(await failed.json()).toMatchObject({ reason: "all_providers_failed" });
+    expect(response.status).toBe(status);
+    expect(await response.json()).toMatchObject({ reason: "openai_unavailable" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0][0]).toBe("https://api.openai.com/v1/responses");
   });
 });

@@ -43,6 +43,8 @@ State admins can register polling-unit agents from the Voters tab within their a
 
 ## Election results
 
+The scanner uses OpenAI only. It converts visibly written `NIL` to zero and asks for a clearer photo when a vote figure cannot be read.
+
 The Live Results Sheet and its CSV and PDF exports show **Total PU / Total submitted** by LGA. The first figure is the full LGA polling-unit directory count. The second reflects the selected election and jurisdiction filters. The sheet uses the `election_lga_polling_unit_totals` function in `supabase/security/13-lga-polling-unit-totals.forward.sql`.
 
 For polling-unit agents, `analyze-result` compares the printed election title and polling-unit code with the selected election and the agent’s assigned unit. It also checks printed state, LGA and ward names when the scanner reads them. The polling-unit display name is optional. The frontend and `analyze-result` must be released together because the scanner needs the selected election from the client. These checks run during scanning, while the result table continues to enforce its existing assignment and uniqueness rules.
